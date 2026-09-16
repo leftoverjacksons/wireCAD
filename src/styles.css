@@ -17,6 +17,7 @@
   --type-sketch: #6ad3a8;
   --type-list: #c58af0;
   --type-vector: #f0c674;
+  --type-plane: #b0b8c6;
 }
 
 * {
@@ -84,13 +85,87 @@ main {
   position: absolute;
   top: 12px;
   left: 12px;
+  right: 12px;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  background: #1c2027f2;
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  overflow: hidden;
   z-index: 3;
 }
 
+.toolbar-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.toolbar-tabs {
+  border-bottom: 1px solid var(--line);
+  padding: 0 4px;
+  align-items: center;
+}
+
+.toolbar-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 13px 5px;
+  cursor: pointer;
+}
+
+.toolbar-tab:hover {
+  color: var(--text);
+}
+
+.toolbar-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+}
+
+.toolbar-groups {
+  padding: 8px 6px 5px;
+  align-items: flex-start;
+}
+
+.tool-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.group-buttons {
+  display: flex;
+  gap: 5px;
+}
+
+.group-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.group-divider {
+  width: 1px;
+  background: var(--line);
+  margin: 2px 0 16px;
+}
+
 .tool-button {
-  background: #1c2027e6;
+  background: #242b36;
   border: 1px solid var(--line-bright);
   border-radius: 5px;
   color: var(--text);
@@ -128,7 +203,7 @@ main {
 
 .feature-dialog {
   position: absolute;
-  top: 54px;
+  top: 110px;
   left: 12px;
   width: 268px;
   background: #1c2027f2;
@@ -469,4 +544,8 @@ input[type='range'] {
 
 .port.type-vector {
   background: var(--type-vector);
+}
+
+.port.type-plane {
+  background: var(--type-plane);
 }

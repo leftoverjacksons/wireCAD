@@ -4,15 +4,19 @@ import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
 import type { NodeId, NodeSchema } from './core/types.js';
 import { mathNodes } from './nodes/math.js';
+import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
-import { FeatureDialog, createToolbar } from './ui/feature-dialog.js';
+import { FeatureDialog } from './ui/feature-dialog.js';
+import { tabs } from './ui/features.js';
 import { autoLayout } from './ui/layout.js';
 import { NodeEditor } from './ui/node-editor.js';
+import { Toolbar } from './ui/toolbar.js';
 import { Viewport } from './viewport.js';
 import type { MainToWorker, WorkerToMain } from './worker/protocol.js';
 
 const registry = new NodeRegistry<NodeSchema>();
 registry.registerAll(mathNodes);
+registry.registerAll(planeNodes);
 registry.registerAll(geometrySchemas);
 
 const graph = new Graph(registry);
@@ -26,21 +30,28 @@ const centreX = graph.addNode('math.divide', { label: 'Centre X', inputs: { b: 2
 const centreY = graph.addNode('math.divide', { label: 'Centre Y', inputs: { b: 2 } });
 const boreDepth = graph.addNode('math.add', { label: 'Bore depth', inputs: { b: 4 } });
 
+const basePlane = graph.addNode('plane.xy', { label: 'Base plane' });
+const borePlane = graph.addNode('plane.offset', { label: 'Bore plane', inputs: { distance: -2 } });
+
 const bodyProfile = graph.addNode('sketch.rectangle', { label: 'Body profile' });
 const body = graph.addNode('solid.extrude', { label: 'Body' });
-const boreProfile = graph.addNode('sketch.circle', { label: 'Bore profile', inputs: { z: -2 } });
+const boreProfile = graph.addNode('sketch.circle', { label: 'Bore profile' });
 const bore = graph.addNode('solid.extrude', { label: 'Bore' });
 const result = graph.addNode('solid.cut', { label: 'Result' });
 
+graph.connect({ node: basePlane.id, port: 'plane' }, { node: borePlane.id, port: 'plane' });
+graph.connect({ node: basePlane.id, port: 'plane' }, { node: bodyProfile.id, port: 'plane' });
+graph.connect({ node: borePlane.id, port: 'plane' }, { node: boreProfile.id, port: 'plane' });
+
 graph.connect({ node: width.id, port: 'result' }, { node: bodyProfile.id, port: 'width' });
-graph.connect({ node: depth.id, port: 'result' }, { node: bodyProfile.id, port: 'depth' });
+graph.connect({ node: depth.id, port: 'result' }, { node: bodyProfile.id, port: 'height' });
 graph.connect({ node: bodyProfile.id, port: 'profile' }, { node: body.id, port: 'profile' });
 graph.connect({ node: height.id, port: 'result' }, { node: body.id, port: 'distance' });
 
 graph.connect({ node: width.id, port: 'result' }, { node: centreX.id, port: 'a' });
 graph.connect({ node: depth.id, port: 'result' }, { node: centreY.id, port: 'a' });
-graph.connect({ node: centreX.id, port: 'result' }, { node: boreProfile.id, port: 'x' });
-graph.connect({ node: centreY.id, port: 'result' }, { node: boreProfile.id, port: 'y' });
+graph.connect({ node: centreX.id, port: 'result' }, { node: boreProfile.id, port: 'u' });
+graph.connect({ node: centreY.id, port: 'result' }, { node: boreProfile.id, port: 'v' });
 graph.connect({ node: boreRadius.id, port: 'result' }, { node: boreProfile.id, port: 'radius' });
 
 graph.connect({ node: height.id, port: 'result' }, { node: boreDepth.id, port: 'a' });
@@ -79,7 +90,7 @@ const dialog = new FeatureDialog(viewportEl, graph, {
   onArmedChanged: (armed) => document.body.classList.toggle('picking', armed),
 });
 
-const toolbar = createToolbar(viewportEl, (spec) => dialog.open(spec, selected));
+const toolbar = new Toolbar(viewportEl, tabs, (spec) => dialog.open(spec, selected));
 
 const undoButton = document.createElement('button');
 undoButton.type = 'button';
@@ -95,9 +106,8 @@ redoButton.textContent = 'Redo';
 redoButton.title = 'Ctrl+Shift+Z';
 redoButton.addEventListener('click', () => applyHistory('redo'));
 
-const spacer = document.createElement('div');
-spacer.className = 'toolbar-gap';
-toolbar.append(spacer, undoButton, redoButton);
+toolbar.appendAction(undoButton);
+toolbar.appendAction(redoButton);
 
 function refreshHistoryButtons(): void {
   undoButton.disabled = !history.canUndo;

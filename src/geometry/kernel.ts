@@ -1,7 +1,7 @@
 import ocFactory from 'opencascade.js/dist/opencascade.wasm.js';
 import wasmUrl from 'opencascade.js/dist/opencascade.wasm.wasm?url';
 import type { CacheEntry } from '../core/cache.js';
-import type { GeometryRef, Value } from '../core/types.js';
+import type { GeometryRef, PlaneValue, Value } from '../core/types.js';
 
 export interface OpenCascadeInstance {
   [key: string]: any;
@@ -26,8 +26,10 @@ export async function loadKernel(): Promise<OpenCascadeInstance> {
   return cached;
 }
 
-export function geometry(shape: Shape): GeometryRef {
-  return { kind: 'geometry', handle: shape };
+export function geometry(shape: Shape, plane?: PlaneValue): GeometryRef {
+  return plane === undefined
+    ? { kind: 'geometry', handle: shape }
+    : { kind: 'geometry', handle: shape, plane };
 }
 
 export function isGeometry(value: Value): value is GeometryRef {
@@ -40,11 +42,15 @@ export function isGeometry(value: Value): value is GeometryRef {
   );
 }
 
-export function shapeOf(value: Value, portId: string): Shape {
+export function geometryOf(value: Value, portId: string): GeometryRef {
   if (!isGeometry(value)) {
     throw new Error(`Input "${portId}" expects geometry`);
   }
-  return value.handle as Shape;
+  return value;
+}
+
+export function shapeOf(value: Value, portId: string): Shape {
+  return geometryOf(value, portId).handle as Shape;
 }
 
 function disposeValue(value: Value): void {

@@ -1,32 +1,12 @@
 import type { Graph } from '../core/graph.js';
 import type { NodeId, PortRef } from '../core/types.js';
 import type { FeatureSpec } from './features.js';
-import { buildFeature, candidatesFor, features, outputPortFor } from './features.js';
+import { buildFeature, candidatesFor, outputPortFor } from './features.js';
 
 export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
   onCommit(nodeId: NodeId): void;
   onArmedChanged(armed: boolean): void;
-}
-
-export function createToolbar(
-  container: HTMLElement,
-  onChoose: (spec: FeatureSpec) => void,
-): HTMLElement {
-  const bar = document.createElement('div');
-  bar.className = 'toolbar';
-
-  for (const spec of features) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'tool-button';
-    button.textContent = spec.label;
-    button.addEventListener('click', () => onChoose(spec));
-    bar.append(button);
-  }
-
-  container.append(bar);
-  return bar;
 }
 
 export class FeatureDialog {
@@ -145,7 +125,7 @@ export class FeatureDialog {
 
       const label = document.createElement('span');
       label.className = 'feature-label';
-      label.textContent = operand.label;
+      label.textContent = operand.optional === true ? `${operand.label} (opt)` : operand.label;
 
       const select = document.createElement('select');
       select.className = 'feature-select';
@@ -241,6 +221,7 @@ export class FeatureDialog {
     for (const operand of spec.operands) {
       const nodeId = this.chosen.get(operand.id);
       if (nodeId === undefined) {
+        if (operand.optional === true) continue;
         this.setMessage(`${operand.label} is required`);
         return;
       }

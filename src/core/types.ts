@@ -8,18 +8,37 @@ export interface Vec3 {
   readonly z: number;
 }
 
+/** Plain data, so it hashes, serializes and needs no disposal. */
+export interface PlaneValue {
+  readonly kind: 'plane';
+  readonly origin: Vec3;
+  readonly normal: Vec3;
+  readonly xAxis: Vec3;
+}
+
 export interface GeometryRef {
   readonly kind: 'geometry';
   readonly handle: unknown;
+  /** Present on profiles, so features built on them can follow the sketch plane. */
+  readonly plane?: PlaneValue;
 }
 
-export type Value = number | boolean | string | Vec3 | GeometryRef | Value[] | null;
+export type Value =
+  | number
+  | boolean
+  | string
+  | Vec3
+  | PlaneValue
+  | GeometryRef
+  | Value[]
+  | null;
 
 export type DataType =
   | 'number'
   | 'boolean'
   | 'string'
   | 'vector'
+  | 'plane'
   | 'geometry'
   | 'sketch'
   | 'list'
@@ -73,6 +92,16 @@ export function isVec3(v: Value): v is Vec3 {
     'x' in v &&
     'y' in v &&
     'z' in v
+  );
+}
+
+export function isPlane(v: Value): v is PlaneValue {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    !Array.isArray(v) &&
+    'kind' in v &&
+    (v as PlaneValue).kind === 'plane'
   );
 }
 

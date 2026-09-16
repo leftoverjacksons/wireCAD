@@ -5,7 +5,9 @@ import { COLUMN_GAP, NODE_WIDTH, ROW_GAP, nodeHeight } from './metrics.js';
 export interface OperandSpec {
   id: string;
   label: string;
-  type: Extract<DataType, 'sketch' | 'geometry'>;
+  type: Extract<DataType, 'sketch' | 'geometry' | 'plane'>;
+  /** Leaving it empty falls back to the node's declared port default. */
+  optional?: boolean;
 }
 
 export interface NumberSpec {
@@ -22,71 +24,119 @@ export interface FeatureSpec {
   numbers: readonly NumberSpec[];
 }
 
+export interface FeatureGroup {
+  label: string;
+  features: readonly FeatureSpec[];
+}
+
+export interface FeatureTab {
+  id: string;
+  label: string;
+  groups: readonly FeatureGroup[];
+}
+
+const sketchPlane: OperandSpec = {
+  id: 'plane',
+  label: 'Plane',
+  type: 'plane',
+  optional: true,
+};
+
+function combine(id: string, label: string): FeatureSpec {
+  return {
+    id,
+    label,
+    nodeType: `solid.${id}`,
+    operands: [
+      { id: 'base', label: 'Base', type: 'geometry' },
+      { id: 'tool', label: 'Tool', type: 'geometry' },
+    ],
+    numbers: [],
+  };
+}
+
+function datumPlane(id: string, label: string): FeatureSpec {
+  return { id, label, nodeType: `plane.${id}`, operands: [], numbers: [] };
+}
+
 /** Operand and number ids are the target node's input port ids, so building is generic. */
-export const features: readonly FeatureSpec[] = [
+export const tabs: readonly FeatureTab[] = [
   {
-    id: 'rectangle',
-    label: 'Rectangle',
-    nodeType: 'sketch.rectangle',
-    operands: [],
-    numbers: [
-      { id: 'width', label: 'Width', value: 40 },
-      { id: 'depth', label: 'Depth', value: 25 },
-      { id: 'x', label: 'X', value: 0 },
-      { id: 'y', label: 'Y', value: 0 },
-      { id: 'z', label: 'Z', value: 0 },
+    id: 'sketch',
+    label: 'Sketch',
+    groups: [
+      {
+        label: 'Create',
+        features: [
+          {
+            id: 'rectangle',
+            label: 'Rectangle',
+            nodeType: 'sketch.rectangle',
+            operands: [sketchPlane],
+            numbers: [
+              { id: 'width', label: 'Width', value: 40 },
+              { id: 'height', label: 'Height', value: 25 },
+              { id: 'u', label: 'U', value: 0 },
+              { id: 'v', label: 'V', value: 0 },
+            ],
+          },
+          {
+            id: 'circle',
+            label: 'Circle',
+            nodeType: 'sketch.circle',
+            operands: [sketchPlane],
+            numbers: [
+              { id: 'radius', label: 'Radius', value: 8 },
+              { id: 'u', label: 'U', value: 0 },
+              { id: 'v', label: 'V', value: 0 },
+            ],
+          },
+        ],
+      },
     ],
   },
   {
-    id: 'circle',
-    label: 'Circle',
-    nodeType: 'sketch.circle',
-    operands: [],
-    numbers: [
-      { id: 'radius', label: 'Radius', value: 8 },
-      { id: 'x', label: 'X', value: 0 },
-      { id: 'y', label: 'Y', value: 0 },
-      { id: 'z', label: 'Z', value: 0 },
+    id: 'solid',
+    label: 'Solid',
+    groups: [
+      {
+        label: 'Create',
+        features: [
+          {
+            id: 'extrude',
+            label: 'Extrude',
+            nodeType: 'solid.extrude',
+            operands: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
+            numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
+          },
+        ],
+      },
+      {
+        label: 'Combine',
+        features: [combine('cut', 'Cut'), combine('union', 'Union'), combine('intersect', 'Intersect')],
+      },
+      {
+        label: 'Construct',
+        features: [
+          datumPlane('xy', 'XY Plane'),
+          datumPlane('xz', 'XZ Plane'),
+          datumPlane('yz', 'YZ Plane'),
+          {
+            id: 'offset',
+            label: 'Offset Plane',
+            nodeType: 'plane.offset',
+            operands: [{ id: 'plane', label: 'Plane', type: 'plane' }],
+            numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
+          },
+        ],
+      },
     ],
-  },
-  {
-    id: 'extrude',
-    label: 'Extrude',
-    nodeType: 'solid.extrude',
-    operands: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
-    numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
-  },
-  {
-    id: 'cut',
-    label: 'Cut',
-    nodeType: 'solid.cut',
-    operands: [
-      { id: 'base', label: 'Base', type: 'geometry' },
-      { id: 'tool', label: 'Tool', type: 'geometry' },
-    ],
-    numbers: [],
-  },
-  {
-    id: 'union',
-    label: 'Union',
-    nodeType: 'solid.union',
-    operands: [
-      { id: 'base', label: 'Base', type: 'geometry' },
-      { id: 'tool', label: 'Tool', type: 'geometry' },
-    ],
-    numbers: [],
-  },
-  {
-    id: 'intersect',
-    label: 'Intersect',
-    nodeType: 'solid.intersect',
-    operands: [
-      { id: 'base', label: 'Base', type: 'geometry' },
-      { id: 'tool', label: 'Tool', type: 'geometry' },
-    ],
-    numbers: [],
   },
 ];
+
+export const features: readonly FeatureSpec[] = tabs.flatMap((tab) =>
+  tab.groups.flatMap((group) => group.features),
+);
 
 /** The output port on `nodeId` that can drive an operand of the given type. */
 export function outputPortFor(graph: Graph, nodeId: NodeId, type: DataType): PortRef | null {

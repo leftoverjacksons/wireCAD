@@ -22,10 +22,17 @@ is ready, typically around two seconds.
 
 ## Using it
 
-- **Toolbar** — Rectangle, Circle, Extrude, Cut, Union, Intersect. Each opens a
-  dialog. Operands are chosen by clicking a body or sketch in the 3D view, by
-  clicking a node in the graph, or from the dropdown. Selecting something before
-  pressing a button pre-fills the first operand.
+- **Toolbar** — a **Sketch** tab (Rectangle, Circle) and a **Solid** tab, whose
+  groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect) and
+  *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each button opens a dialog.
+  Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
+  node in the graph, or from the dropdown. Selecting something before pressing a
+  button pre-fills the first operand.
+- **Planes** — sketches sit on a plane rather than at a world Z offset, and an
+  extrude follows its profile's normal. A rectangle drawn on the XZ plane
+  extrudes along −Y. Sketch dimensions are in the plane's own U/V axes.
+- **Undo** — Ctrl+Z and Ctrl+Shift+Z, or the toolbar buttons. A slider drag is
+  one undo step.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a
   body to select it.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
@@ -75,7 +82,10 @@ tessellated meshes as transferred buffers.
 
 ## Known gaps
 
-- **No undo.** Cutting a wire or deleting a node is currently irreversible.
+- No face selection yet, so a sketch cannot be placed on a face of a solid —
+  only on a datum plane. Referencing a face across a rebuild is the topological
+  naming problem, and the plan is a geometric selector exposed as its own node,
+  so a mis-resolved reference is visible and repairable rather than silent.
 - No sketch constraint solver; sketches are parametric rectangles and circles.
 - No fillet, chamfer, sweep, loft, or patterns yet.
 - The bundled kernel is the full OpenCASCADE build (14 MB gzipped). A trimmed

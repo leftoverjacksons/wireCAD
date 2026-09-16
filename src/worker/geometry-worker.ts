@@ -7,6 +7,7 @@ import type { NodeId } from '../core/types.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { disposeCacheEntry, isGeometry, loadKernel, tessellate } from '../geometry/kernel.js';
 import { mathNodes } from '../nodes/math.js';
+import { planeNodes } from '../nodes/plane.js';
 import { createGeometryNodes } from '../nodes/solid.js';
 import type { MainToWorker, MeshPayload, NodeReport, SolveRequest, WorkerToMain } from './protocol.js';
 
@@ -131,6 +132,7 @@ async function start(): Promise<void> {
 
   registry = new NodeRegistry();
   registry.registerAll(mathNodes);
+  registry.registerAll(planeNodes);
   registry.registerAll(createGeometryNodes(oc));
   evaluator = new Evaluator(registry, new LruCache(256, disposeCacheEntry));
 
