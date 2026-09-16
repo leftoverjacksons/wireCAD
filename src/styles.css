@@ -100,9 +100,18 @@ main {
   cursor: pointer;
 }
 
-.tool-button:hover {
+.tool-button:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.tool-button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.toolbar-gap {
+  width: 14px;
 }
 
 .tool-primary {

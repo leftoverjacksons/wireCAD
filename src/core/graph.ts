@@ -9,7 +9,8 @@ export type GraphChange =
   | { kind: 'node-renamed'; nodeId: NodeId }
   | { kind: 'input-changed'; nodeId: NodeId; portId: PortId }
   | { kind: 'edge-added'; edgeId: EdgeId }
-  | { kind: 'edge-removed'; edgeId: EdgeId };
+  | { kind: 'edge-removed'; edgeId: EdgeId }
+  | { kind: 'document-replaced' };
 
 export type GraphListener = (change: GraphChange) => void;
 
@@ -38,6 +39,7 @@ export class Graph {
   private incoming = new Map<NodeId, Set<EdgeId>>();
   private listeners = new Set<GraphListener>();
   private counter = 0;
+  private suppressed = false;
 
   constructor(readonly registry: PortLookup) {}
 
@@ -46,6 +48,7 @@ export class Graph {
   }
 
   private emit(change: GraphChange): void {
+    if (this.suppressed) return;
     for (const listener of this.listeners) listener(change);
   }
 
@@ -145,29 +148,36 @@ export class Graph {
     this.emit({ kind: 'node-renamed', nodeId });
   }
 
-  connect(from: PortRef, to: PortRef, edgeId?: EdgeId): Edge {
-    const source = this.requireNode(from.node);
-    const target = this.requireNode(to.node);
+  /** The reason this connection would be refused, or null if it is allowed. */
+  canConnect(from: PortRef, to: PortRef): string | null {
+    const source = this.nodes.get(from.node);
+    if (source === undefined) return `Unknown node: ${from.node}`;
+    const target = this.nodes.get(to.node);
+    if (target === undefined) return `Unknown node: ${to.node}`;
 
     const outPort = this.registry.outputPort(source.type, from.port);
     if (outPort === undefined) {
-      throw new Error(`Node type ${source.type} has no output port "${from.port}"`);
+      return `Node type ${source.type} has no output port "${from.port}"`;
     }
     const inPort = this.registry.inputPort(target.type, to.port);
     if (inPort === undefined) {
-      throw new Error(`Node type ${target.type} has no input port "${to.port}"`);
+      return `Node type ${target.type} has no input port "${to.port}"`;
     }
     if (!typesCompatible(outPort.type, inPort.type)) {
-      throw new Error(
-        `Cannot connect ${outPort.type} to ${inPort.type} (${from.node}.${from.port} -> ${to.node}.${to.port})`,
-      );
+      return `Cannot connect ${outPort.type} to ${inPort.type}`;
     }
     if (this.incomingEdge(to.node, to.port) !== undefined) {
-      throw new Error(`Input port already connected: ${to.node}.${to.port}`);
+      return `Input "${inPort.label}" is already connected`;
     }
     if (this.reaches(to.node, from.node)) {
-      throw new Error(`Connection would create a cycle: ${from.node} -> ${to.node}`);
+      return 'That connection would create a cycle';
     }
+    return null;
+  }
+
+  connect(from: PortRef, to: PortRef, edgeId?: EdgeId): Edge {
+    const problem = this.canConnect(from, to);
+    if (problem !== null) throw new Error(problem);
 
     const id = edgeId ?? this.freshId('e');
     if (this.edges.has(id)) throw new Error(`Duplicate edge id: ${id}`);
@@ -269,25 +279,48 @@ export class Graph {
     };
   }
 
-  static fromJSON(registry: PortLookup, data: SerializedGraph): Graph {
-    if (data.version !== 1) throw new Error(`Unsupported document version: ${data.version}`);
-    const graph = new Graph(registry);
-    for (const node of data.nodes) {
-      graph.addNode(node.type, {
-        id: node.id,
-        position: node.position,
-        inputs: node.inputs,
-        ...(node.label !== undefined ? { label: node.label } : {}),
-      });
+  private load(data: SerializedGraph): void {
+    this.nodes.clear();
+    this.edges.clear();
+    this.outgoing.clear();
+    this.incoming.clear();
+    this.counter = 0;
+
+    const previous = this.suppressed;
+    this.suppressed = true;
+    try {
+      for (const node of data.nodes) {
+        this.addNode(node.type, {
+          id: node.id,
+          position: { ...node.position },
+          inputs: node.inputs,
+          ...(node.label !== undefined ? { label: node.label } : {}),
+        });
+      }
+      for (const edge of data.edges) this.connect(edge.from, edge.to, edge.id);
+    } finally {
+      this.suppressed = previous;
     }
-    for (const edge of data.edges) graph.connect(edge.from, edge.to, edge.id);
 
     let highest = 0;
     for (const id of [...data.nodes.map((n) => n.id), ...data.edges.map((e) => e.id)]) {
       const suffix = Number.parseInt(id.slice(1), 10);
       if (Number.isFinite(suffix) && suffix > highest) highest = suffix;
     }
-    graph.counter = highest;
+    this.counter = highest;
+  }
+
+  /** Replace the whole document in place, so existing views keep their handle on it. */
+  restore(data: SerializedGraph): void {
+    if (data.version !== 1) throw new Error(`Unsupported document version: ${data.version}`);
+    this.load(data);
+    this.emit({ kind: 'document-replaced' });
+  }
+
+  static fromJSON(registry: PortLookup, data: SerializedGraph): Graph {
+    if (data.version !== 1) throw new Error(`Unsupported document version: ${data.version}`);
+    const graph = new Graph(registry);
+    graph.load(data);
     return graph;
   }
 }

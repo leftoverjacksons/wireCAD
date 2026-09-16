@@ -4,6 +4,7 @@ import type { FeatureSpec } from './features.js';
 import { buildFeature, candidatesFor, features, outputPortFor } from './features.js';
 
 export interface FeatureDialogCallbacks {
+  onBeforeChange(): void;
   onCommit(nodeId: NodeId): void;
   onArmedChanged(armed: boolean): void;
 }
@@ -11,7 +12,7 @@ export interface FeatureDialogCallbacks {
 export function createToolbar(
   container: HTMLElement,
   onChoose: (spec: FeatureSpec) => void,
-): void {
+): HTMLElement {
   const bar = document.createElement('div');
   bar.className = 'toolbar';
 
@@ -25,6 +26,7 @@ export function createToolbar(
   }
 
   container.append(bar);
+  return bar;
 }
 
 export class FeatureDialog {
@@ -254,6 +256,7 @@ export class FeatureDialog {
     for (const number of spec.numbers) numbers[number.id] = this.numbers.get(number.id) ?? number.value;
 
     try {
+      this.callbacks.onBeforeChange();
       const nodeId = buildFeature(this.graph, spec, operands, numbers);
       this.close();
       this.callbacks.onCommit(nodeId);

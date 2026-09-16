@@ -1,5 +1,6 @@
 import './styles.css';
 import { Graph } from './core/graph.js';
+import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
 import type { NodeId, NodeSchema } from './core/types.js';
 import { mathNodes } from './nodes/math.js';
@@ -58,8 +59,10 @@ const statusEl = document.getElementById('kernel-status')!;
 const controls = document.getElementById('controls')!;
 
 let selected: NodeId | null = null;
+const history = new History(graph);
 
 const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
+  onBeforeChange: () => history.capture(),
   onDocumentChanged: () => requestSolve(),
   onSelectionChanged: (nodeId) => applySelection(nodeId, false),
   // The editor already holds this selection; only the viewport needs telling.
@@ -67,6 +70,7 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
 editor.frame();
 
 const dialog = new FeatureDialog(viewportEl, graph, {
+  onBeforeChange: () => history.capture(),
   onCommit: (nodeId) => {
     applySelection(nodeId, true);
     editor.reveal(nodeId);
@@ -75,7 +79,53 @@ const dialog = new FeatureDialog(viewportEl, graph, {
   onArmedChanged: (armed) => document.body.classList.toggle('picking', armed),
 });
 
-createToolbar(viewportEl, (spec) => dialog.open(spec, selected));
+const toolbar = createToolbar(viewportEl, (spec) => dialog.open(spec, selected));
+
+const undoButton = document.createElement('button');
+undoButton.type = 'button';
+undoButton.className = 'tool-button';
+undoButton.textContent = 'Undo';
+undoButton.title = 'Ctrl+Z';
+undoButton.addEventListener('click', () => applyHistory('undo'));
+
+const redoButton = document.createElement('button');
+redoButton.type = 'button';
+redoButton.className = 'tool-button';
+redoButton.textContent = 'Redo';
+redoButton.title = 'Ctrl+Shift+Z';
+redoButton.addEventListener('click', () => applyHistory('redo'));
+
+const spacer = document.createElement('div');
+spacer.className = 'toolbar-gap';
+toolbar.append(spacer, undoButton, redoButton);
+
+function refreshHistoryButtons(): void {
+  undoButton.disabled = !history.canUndo;
+  redoButton.disabled = !history.canRedo;
+}
+
+function applyHistory(action: 'undo' | 'redo'): void {
+  const changed = action === 'undo' ? history.undo() : history.redo();
+  if (!changed) return;
+  refreshHistoryButtons();
+  requestSolve();
+}
+
+document.addEventListener('keydown', (event) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  const target = event.target as HTMLElement | null;
+  // Leave text fields to their own native undo, which still fires input events.
+  if (target !== null && (target.tagName === 'INPUT' || target.tagName === 'SELECT')) return;
+
+  const key = event.key.toLowerCase();
+  if (key === 'z' && !event.shiftKey) {
+    event.preventDefault();
+    applyHistory('undo');
+  } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+    event.preventDefault();
+    applyHistory('redo');
+  }
+});
 
 /** A dialog waiting for an operand consumes the click instead of selecting. */
 function applySelection(nodeId: NodeId | null, syncEditor: boolean): void {
@@ -116,8 +166,20 @@ for (const slider of sliders) {
   range.max = String(slider.max);
   range.step = String(slider.step);
   range.value = String(graph.inputValue(slider.nodeId, 'value'));
+  // One snapshot per gesture, so a drag is a single undo step.
+  let captured = false;
+  range.addEventListener('pointerdown', () => {
+    captured = false;
+  });
+  range.addEventListener('keydown', () => {
+    captured = false;
+  });
   range.addEventListener('input', () => {
     const next = Number(range.value);
+    if (!captured) {
+      captured = true;
+      history.capture();
+    }
     readout.textContent = String(next);
     graph.setInput(slider.nodeId, 'value', next);
     requestSolve();
@@ -128,15 +190,25 @@ for (const slider of sliders) {
   sliderInputs.set(slider.nodeId, { range, readout });
 }
 
+function syncSlider(nodeId: NodeId): void {
+  const bound = sliderInputs.get(nodeId);
+  if (bound === undefined) return;
+  const value = String(graph.inputValue(nodeId, 'value'));
+  bound.range.value = value;
+  bound.readout.textContent = value;
+}
+
 // Editing a value in the node editor must move the slider that shows it: both
 // panels are views of one document, not separate copies of the number.
 graph.subscribe((change) => {
-  if (change.kind !== 'input-changed') return;
-  const bound = sliderInputs.get(change.nodeId);
-  if (bound === undefined || change.portId !== 'value') return;
-  const value = String(graph.inputValue(change.nodeId, 'value'));
-  bound.range.value = value;
-  bound.readout.textContent = value;
+  refreshHistoryButtons();
+  if (change.kind === 'document-replaced') {
+    for (const nodeId of sliderInputs.keys()) syncSlider(nodeId);
+    if (selected !== null && graph.getNode(selected) === undefined) applySelection(null, true);
+    return;
+  }
+  if (change.kind !== 'input-changed' || change.portId !== 'value') return;
+  syncSlider(change.nodeId);
 });
 
 // -------------------------------------------------------------------- solver
@@ -183,7 +255,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   statsEl.textContent =
     `${message.stats.evaluated} evaluated · ${message.stats.cached} cached · ` +
     `${message.stats.errored} errored\nsolve ${message.solveMs.toFixed(1)} ms · ` +
-    `mesh ${message.meshMs.toFixed(1)} ms · ${message.triangles} triangles` +
+    `mesh ${message.meshMs.toFixed(1)} ms · ${message.triangles} triangles sent` +
     (errors.length > 0 ? `\n${errors[0]!.error}` : '');
 
   inFlight = false;
@@ -217,4 +289,5 @@ splitter.addEventListener('pointerdown', (event) => {
   splitter.addEventListener('pointerup', onUp);
 });
 
+refreshHistoryButtons();
 statusEl.textContent = 'loading OpenCASCADE kernel…';

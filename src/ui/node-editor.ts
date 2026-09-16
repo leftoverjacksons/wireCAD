@@ -15,6 +15,8 @@ import {
 } from './metrics.js';
 
 export interface NodeEditorCallbacks {
+  /** Called immediately before a mutation, so history can snapshot the old state. */
+  onBeforeChange(): void;
   onDocumentChanged(): void;
   onSelectionChanged(nodeId: NodeId | null): void;
 }
@@ -28,7 +30,14 @@ interface NodeView {
 
 type Drag =
   | { kind: 'pan'; pointerId: number; startX: number; startY: number; panX: number; panY: number }
-  | { kind: 'node'; pointerId: number; nodeId: NodeId; offsetX: number; offsetY: number }
+  | {
+      kind: 'node';
+      pointerId: number;
+      nodeId: NodeId;
+      offsetX: number;
+      offsetY: number;
+      captured: boolean;
+    }
   | { kind: 'wire'; pointerId: number; origin: PortRef; fromOutput: boolean };
 
 const MIN_ZOOM = 0.15;
@@ -186,9 +195,19 @@ export class NodeEditor {
           field.className = 'port-value';
           field.value = String(this.graph.inputValue(nodeId, input.id) ?? 0);
           field.addEventListener('pointerdown', (event) => event.stopPropagation());
+
+          let captured = false;
+          field.addEventListener('focus', () => {
+            captured = false;
+          });
           field.addEventListener('input', () => {
             const next = Number(field.value);
             if (Number.isNaN(next)) return;
+            // One snapshot per editing session, not per keystroke.
+            if (!captured) {
+              captured = true;
+              this.callbacks.onBeforeChange();
+            }
             this.graph.setInput(nodeId, input.id, next);
             this.callbacks.onDocumentChanged();
           });
@@ -303,6 +322,7 @@ export class NodeEditor {
     const wireHit = target.closest<SVGPathElement>('.wire-hit');
     if (wireHit !== null && wireHit.dataset.edgeId !== undefined) {
       event.preventDefault();
+      this.callbacks.onBeforeChange();
       this.graph.disconnect(wireHit.dataset.edgeId);
       this.callbacks.onDocumentChanged();
       return;
@@ -322,6 +342,7 @@ export class NodeEditor {
           nodeId,
           offsetX: point.x - node.position.x,
           offsetY: point.y - node.position.y,
+          captured: false,
         };
         this.container.setPointerCapture(event.pointerId);
       }
@@ -353,6 +374,7 @@ export class NodeEditor {
       const existing = this.graph.incomingEdge(nodeId, portId);
       if (existing !== undefined) {
         origin = existing.from;
+        this.callbacks.onBeforeChange();
         this.graph.disconnect(existing.id);
         this.callbacks.onDocumentChanged();
         this.beginGhost(event, origin, true);
@@ -403,10 +425,19 @@ export class NodeEditor {
 
     if (drag.kind === 'node') {
       const point = this.toGraphPoint(event);
-      this.graph.setPosition(drag.nodeId, {
+      const next = {
         x: Math.round(point.x - drag.offsetX),
         y: Math.round(point.y - drag.offsetY),
-      });
+      };
+      const current = this.graph.requireNode(drag.nodeId).position;
+      if (next.x === current.x && next.y === current.y) return;
+
+      // One snapshot per drag, taken only once the node actually moves.
+      if (!drag.captured) {
+        drag.captured = true;
+        this.callbacks.onBeforeChange();
+      }
+      this.graph.setPosition(drag.nodeId, next);
       return;
     }
 
@@ -441,12 +472,15 @@ export class NodeEditor {
     const from = drag.fromOutput ? drag.origin : target;
     const to = drag.fromOutput ? target : drag.origin;
 
-    try {
-      this.graph.connect(from, to);
-      this.callbacks.onDocumentChanged();
-    } catch (thrown) {
-      this.flash(thrown instanceof Error ? thrown.message : String(thrown));
+    const problem = this.graph.canConnect(from, to);
+    if (problem !== null) {
+      this.flash(problem);
+      return;
     }
+
+    this.callbacks.onBeforeChange();
+    this.graph.connect(from, to);
+    this.callbacks.onDocumentChanged();
   }
 
   private endDrag(): void {
@@ -485,6 +519,7 @@ export class NodeEditor {
     if (target.tagName === 'INPUT') return;
 
     event.preventDefault();
+    this.callbacks.onBeforeChange();
     this.graph.removeNode(this.selected);
     this.select(null);
     this.callbacks.onDocumentChanged();
