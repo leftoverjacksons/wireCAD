@@ -6,6 +6,7 @@ import { NodeRegistry } from '../core/registry.js';
 import type { NodeId } from '../core/types.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { disposeCacheEntry, isGeometry, loadKernel, tessellate } from '../geometry/kernel.js';
+import { createFaceNodes } from '../nodes/face.js';
 import { mathNodes } from '../nodes/math.js';
 import { planeNodes } from '../nodes/plane.js';
 import { createGeometryNodes } from '../nodes/solid.js';
@@ -48,13 +49,23 @@ function solve(request: SolveRequest): void {
 
   for (const node of graph.allNodes()) {
     const definition = registry.require(node.type);
-    const consumed = new Set(graph.outgoingEdges(node.id).map((edge) => edge.from.port));
 
-    // Solids show only where nothing consumes them; sketches always show, so
-    // they can be picked as operands even once a feature is built on them.
+    // A solid is superseded only by something that produces geometry from it.
+    // A query node such as face.plane reads the solid without replacing it, so
+    // the body must stay on screen.
+    const supersededBy = (portId: string): boolean =>
+      graph
+        .outgoingEdges(node.id)
+        .filter((edge) => edge.from.port === portId)
+        .some((edge) =>
+          registry
+            .require(graph.requireNode(edge.to.node).type)
+            .outputs.some((port) => port.type === 'geometry'),
+        );
+
+    // Sketches always show, so a profile stays pickable once a feature uses it.
     const displayable = definition.outputs.find(
-      (port) =>
-        port.type === 'sketch' || (port.type === 'geometry' && !consumed.has(port.id)),
+      (port) => port.type === 'sketch' || (port.type === 'geometry' && !supersededBy(port.id)),
     );
     if (displayable === undefined) continue;
 
@@ -75,7 +86,12 @@ function solve(request: SolveRequest): void {
       kind: displayable.type === 'sketch' ? 'sketch' : 'solid',
       ...buffers,
     });
-    transfer.push(buffers.positions.buffer, buffers.normals.buffer, buffers.indices.buffer);
+    transfer.push(
+      buffers.positions.buffer,
+      buffers.normals.buffer,
+      buffers.indices.buffer,
+      buffers.faceIds.buffer,
+    );
     sentHashes.set(node.id, nodeResult.hash);
   }
 
@@ -134,6 +150,7 @@ async function start(): Promise<void> {
   registry.registerAll(mathNodes);
   registry.registerAll(planeNodes);
   registry.registerAll(createGeometryNodes(oc));
+  registry.registerAll(createFaceNodes(oc));
   evaluator = new Evaluator(registry, new LruCache(256, disposeCacheEntry));
 
   ready = true;

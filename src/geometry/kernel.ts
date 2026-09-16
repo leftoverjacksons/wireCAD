@@ -1,7 +1,7 @@
 import ocFactory from 'opencascade.js/dist/opencascade.wasm.js';
 import wasmUrl from 'opencascade.js/dist/opencascade.wasm.wasm?url';
 import type { CacheEntry } from '../core/cache.js';
-import type { GeometryRef, PlaneValue, Value } from '../core/types.js';
+import type { GeometryRef, PlaneValue, Value, Vec3 } from '../core/types.js';
 
 export interface OpenCascadeInstance {
   [key: string]: any;
@@ -12,10 +12,25 @@ export interface Shape {
   [key: string]: any;
 }
 
+export interface FaceInfo {
+  /** Centroid of the tessellated face, area-weighted. */
+  origin: Vec3;
+  /** Outward normal, area-weighted; meaningful when `planar`. */
+  normal: Vec3;
+  area: number;
+  planar: boolean;
+  /** Triangles for one face are contiguous, so this doubles as a render group. */
+  triangleStart: number;
+  triangleCount: number;
+}
+
 export interface MeshBuffers {
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;
+  /** Owning face ordinal per triangle. */
+  faceIds: Uint32Array;
+  faces: FaceInfo[];
 }
 
 let cached: OpenCascadeInstance | null = null;
@@ -79,6 +94,8 @@ export function tessellate(
 
   const positions: number[] = [];
   const indices: number[] = [];
+  const faceIds: number[] = [];
+  const faces: FaceInfo[] = [];
   const reversedFlag = oc.TopAbs_Orientation.TopAbs_REVERSED.value;
 
   const explorer = new oc.TopExp_Explorer_2(
@@ -97,6 +114,7 @@ export function tessellate(
       const transform = location.Transformation();
       const reversed = face.Orientation_1().value === reversedFlag;
       const base = positions.length / 3;
+      const triangleStart = indices.length / 3;
 
       const nodeCount = triangulation.NbNodes();
       for (let i = 1; i <= nodeCount; i++) {
@@ -105,6 +123,7 @@ export function tessellate(
       }
 
       const triangleCount = triangulation.NbTriangles();
+      const ordinal = faces.length;
       for (let i = 1; i <= triangleCount; i++) {
         const triangle = triangulation.Triangle(i);
         const a = base + triangle.Value(1) - 1;
@@ -112,7 +131,11 @@ export function tessellate(
         const c = base + triangle.Value(3) - 1;
         if (reversed) indices.push(a, c, b);
         else indices.push(a, b, c);
+        faceIds.push(ordinal);
       }
+
+      const emitted = indices.length / 3 - triangleStart;
+      if (emitted > 0) faces.push(summariseFace(positions, indices, triangleStart, emitted));
     }
 
     location.delete();
@@ -126,7 +149,110 @@ export function tessellate(
     positions: new Float32Array(positions),
     normals: computeNormals(positions, indices),
     indices: new Uint32Array(indices),
+    faceIds: new Uint32Array(faceIds),
+    faces,
   };
+}
+
+/** Area-weighted centroid and normal, plus how flat the face actually is. */
+function summariseFace(
+  positions: number[],
+  indices: number[],
+  triangleStart: number,
+  triangleCount: number,
+): FaceInfo {
+  let totalArea = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  let centroidX = 0;
+  let centroidY = 0;
+  let centroidZ = 0;
+
+  const end = triangleStart + triangleCount;
+  for (let t = triangleStart; t < end; t++) {
+    const ia = indices[t * 3]! * 3;
+    const ib = indices[t * 3 + 1]! * 3;
+    const ic = indices[t * 3 + 2]! * 3;
+
+    const ax = positions[ia]!;
+    const ay = positions[ia + 1]!;
+    const az = positions[ia + 2]!;
+    const ux = positions[ib]! - ax;
+    const uy = positions[ib + 1]! - ay;
+    const uz = positions[ib + 2]! - az;
+    const vx = positions[ic]! - ax;
+    const vy = positions[ic + 1]! - ay;
+    const vz = positions[ic + 2]! - az;
+
+    const cx = uy * vz - uz * vy;
+    const cy = uz * vx - ux * vz;
+    const cz = ux * vy - uy * vx;
+    const area = Math.hypot(cx, cy, cz) / 2;
+
+    totalArea += area;
+    sumX += cx;
+    sumY += cy;
+    sumZ += cz;
+    centroidX += (area * (ax + positions[ib]! + positions[ic]!)) / 3;
+    centroidY += (area * (ay + positions[ib + 1]! + positions[ic + 1]!)) / 3;
+    centroidZ += (area * (az + positions[ib + 2]! + positions[ic + 2]!)) / 3;
+  }
+
+  const magnitude = Math.hypot(sumX, sumY, sumZ);
+  const normal: Vec3 =
+    magnitude === 0
+      ? { x: 0, y: 0, z: 0 }
+      : { x: sumX / magnitude, y: sumY / magnitude, z: sumZ / magnitude };
+
+  const origin: Vec3 =
+    totalArea === 0
+      ? { x: 0, y: 0, z: 0 }
+      : { x: centroidX / totalArea, y: centroidY / totalArea, z: centroidZ / totalArea };
+
+  return {
+    origin,
+    normal,
+    area: totalArea,
+    planar: isPlanar(positions, indices, triangleStart, triangleCount, normal),
+    triangleStart,
+    triangleCount,
+  };
+}
+
+function isPlanar(
+  positions: number[],
+  indices: number[],
+  triangleStart: number,
+  triangleCount: number,
+  normal: Vec3,
+): boolean {
+  const end = triangleStart + triangleCount;
+  for (let t = triangleStart; t < end; t++) {
+    const ia = indices[t * 3]! * 3;
+    const ib = indices[t * 3 + 1]! * 3;
+    const ic = indices[t * 3 + 2]! * 3;
+
+    const ax = positions[ia]!;
+    const ay = positions[ia + 1]!;
+    const az = positions[ia + 2]!;
+    const ux = positions[ib]! - ax;
+    const uy = positions[ib + 1]! - ay;
+    const uz = positions[ib + 2]! - az;
+    const vx = positions[ic]! - ax;
+    const vy = positions[ic + 1]! - ay;
+    const vz = positions[ic + 2]! - az;
+
+    const cx = uy * vz - uz * vy;
+    const cy = uz * vx - ux * vz;
+    const cz = ux * vy - uy * vx;
+    const magnitude = Math.hypot(cx, cy, cz);
+    if (magnitude === 0) continue;
+
+    const alignment = (cx * normal.x + cy * normal.y + cz * normal.z) / magnitude;
+    if (alignment < 0.9995) return false;
+  }
+  return true;
 }
 
 function computeNormals(positions: number[], indices: number[]): Float32Array {

@@ -3,10 +3,13 @@ import { Graph } from './core/graph.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
 import type { NodeId, NodeSchema } from './core/types.js';
+import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
+import type { FaceHit } from './viewport.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
+import type { PickedFace } from './ui/feature-dialog.js';
 import { tabs } from './ui/features.js';
 import { autoLayout } from './ui/layout.js';
 import { NodeEditor } from './ui/node-editor.js';
@@ -18,6 +21,7 @@ const registry = new NodeRegistry<NodeSchema>();
 registry.registerAll(mathNodes);
 registry.registerAll(planeNodes);
 registry.registerAll(geometrySchemas);
+registry.registerAll(faceSchemas);
 
 const graph = new Graph(registry);
 
@@ -138,14 +142,41 @@ document.addEventListener('keydown', (event) => {
 });
 
 /** A dialog waiting for an operand consumes the click instead of selecting. */
-function applySelection(nodeId: NodeId | null, syncEditor: boolean): void {
-  if (nodeId !== null && dialog.isArmed && dialog.offerNode(nodeId)) return;
+function applySelection(
+  nodeId: NodeId | null,
+  syncEditor: boolean,
+  face: PickedFace | null = null,
+): void {
+  if (nodeId !== null && dialog.isArmed && dialog.offerPick(nodeId, face)) return;
   selected = nodeId;
   if (syncEditor) editor.setSelection(nodeId);
   viewport.setHighlight(nodeId);
 }
 
-viewport.onPick((nodeId) => applySelection(nodeId, true));
+/**
+ * Turn a picked face into the selector the face.plane node will re-resolve with:
+ * its normal, and its position among the faces pointing the same way.
+ */
+function describePickedFace(hit: FaceHit): PickedFace | null {
+  if (hit.faceIndex === null) return null;
+  const faces = viewport.facesOf(hit.nodeId);
+  if (faces === undefined) return null;
+
+  const picked = faces[hit.faceIndex];
+  if (picked === undefined || !picked.planar) return null;
+
+  const rank = matchingFaces(faces, picked.normal).findIndex((match) => match.face === picked);
+  return rank < 0 ? null : { normal: picked.normal, rank };
+}
+
+viewport.onPick((hit) => {
+  viewport.setFaceHighlight(hit);
+  if (hit === null) {
+    applySelection(null, true);
+    return;
+  }
+  applySelection(hit.nodeId, true, describePickedFace(hit));
+});
 
 // ------------------------------------------------------------------ controls
 
@@ -301,3 +332,7 @@ splitter.addEventListener('pointerdown', (event) => {
 
 refreshHistoryButtons();
 statusEl.textContent = 'loading OpenCASCADE kernel…';
+
+if (import.meta.env.DEV) {
+  Reflect.set(window, 'wirecad', { graph, viewport, editor, history });
+}

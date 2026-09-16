@@ -165,7 +165,7 @@ function overlaps(
 }
 
 /** Place a new node one column right of its producers, nudged clear of neighbours. */
-function placeDownstream(graph: Graph, nodeId: NodeId): void {
+export function placeDownstream(graph: Graph, nodeId: NodeId): void {
   const height = nodeHeight(graph.registry.require(graph.requireNode(nodeId).type));
   const sources = graph.incomingEdges(nodeId).map((edge) => graph.requireNode(edge.from.node));
 

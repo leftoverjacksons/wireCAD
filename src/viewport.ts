@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { NodeId } from './core/types.js';
+import type { FaceInfo } from './geometry/kernel.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
+
+export interface FaceHit {
+  nodeId: NodeId;
+  faceIndex: number | null;
+}
 
 export class Viewport {
   private readonly scene = new THREE.Scene();
@@ -9,6 +15,10 @@ export class Viewport {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly controls: OrbitControls;
   private readonly meshes = new Map<NodeId, THREE.Mesh>();
+  private readonly kinds = new Map<NodeId, MeshKind>();
+  private readonly faces = new Map<NodeId, FaceInfo[]>();
+  private readonly faceIds = new Map<NodeId, Uint32Array>();
+
   private readonly material = new THREE.MeshStandardMaterial({
     color: 0xe8944a,
     metalness: 0.0,
@@ -45,10 +55,17 @@ export class Viewport {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
-  private readonly kinds = new Map<NodeId, MeshKind>();
+  private readonly faceMaterial = new THREE.MeshStandardMaterial({
+    color: 0x5fb0ff,
+    metalness: 0.0,
+    roughness: 0.4,
+    emissive: 0x12355c,
+  });
+
   private readonly raycaster = new THREE.Raycaster();
-  private pickListener: ((nodeId: NodeId | null) => void) | null = null;
+  private pickListener: ((hit: FaceHit | null) => void) | null = null;
   private highlighted: NodeId | null = null;
+  private highlightedFace: FaceHit | null = null;
   private framed = false;
 
   constructor(private readonly container: HTMLElement) {
@@ -114,16 +131,35 @@ export class Viewport {
 
       this.raycaster.setFromCamera(ndc, this.camera);
       const hits = this.raycaster.intersectObjects([...this.meshes.values()], false);
-      const picked = hits[0]?.object.userData.nodeId;
-      this.pickListener?.(typeof picked === 'string' ? picked : null);
+      const hit = hits[0];
+      if (hit === undefined) {
+        this.pickListener?.(null);
+        return;
+      }
+
+      const nodeId = hit.object.userData.nodeId;
+      if (typeof nodeId !== 'string') {
+        this.pickListener?.(null);
+        return;
+      }
+
+      // Three's faceIndex is the triangle index; map it back to the B-rep face.
+      const ids = this.faceIds.get(nodeId);
+      const triangle = hit.faceIndex;
+      const faceIndex =
+        triangle !== undefined && triangle !== null && ids !== undefined && triangle < ids.length
+          ? (ids[triangle] ?? null)
+          : null;
+
+      this.pickListener?.({ nodeId, faceIndex });
     });
   }
 
-  onPick(listener: (nodeId: NodeId | null) => void): void {
+  onPick(listener: (hit: FaceHit | null) => void): void {
     this.pickListener = listener;
   }
 
-  private materialFor(nodeId: NodeId): THREE.Material {
+  private baseMaterial(nodeId: NodeId): THREE.Material {
     const isSketch = this.kinds.get(nodeId) === 'sketch';
     if (nodeId === this.highlighted) {
       return isSketch ? this.sketchHighlightMaterial : this.highlightMaterial;
@@ -131,14 +167,63 @@ export class Viewport {
     return isSketch ? this.sketchMaterial : this.material;
   }
 
+  /** One render group per B-rep face, so a single face can carry its own material. */
+  private applyMaterials(nodeId: NodeId): void {
+    const mesh = this.meshes.get(nodeId);
+    if (mesh === undefined) return;
+
+    const faces = this.faces.get(nodeId) ?? [];
+    const base = this.baseMaterial(nodeId);
+
+    if (faces.length === 0) {
+      mesh.geometry.clearGroups();
+      mesh.material = base;
+      return;
+    }
+
+    const hot: number =
+      this.highlightedFace !== null && this.highlightedFace.nodeId === nodeId
+        ? (this.highlightedFace.faceIndex ?? -1)
+        : -1;
+
+    mesh.geometry.clearGroups();
+    for (let index = 0; index < faces.length; index++) {
+      const face = faces[index]!;
+      mesh.geometry.addGroup(
+        face.triangleStart * 3,
+        face.triangleCount * 3,
+        index === hot ? 1 : 0,
+      );
+    }
+    mesh.material = [base, this.faceMaterial];
+  }
+
   setHighlight(nodeId: NodeId | null): void {
     if (this.highlighted === nodeId) return;
     this.highlighted = nodeId;
-    for (const [id, mesh] of this.meshes) mesh.material = this.materialFor(id);
+    for (const id of this.meshes.keys()) this.applyMaterials(id);
+  }
+
+  setFaceHighlight(hit: FaceHit | null): void {
+    const same =
+      this.highlightedFace?.nodeId === hit?.nodeId &&
+      this.highlightedFace?.faceIndex === hit?.faceIndex;
+    if (same) return;
+
+    const previous = this.highlightedFace;
+    this.highlightedFace = hit !== null && hit.faceIndex !== null ? hit : null;
+    if (previous !== null) this.applyMaterials(previous.nodeId);
+    if (this.highlightedFace !== null) this.applyMaterials(this.highlightedFace.nodeId);
+  }
+
+  facesOf(nodeId: NodeId): readonly FaceInfo[] | undefined {
+    return this.faces.get(nodeId);
   }
 
   setMesh(payload: MeshPayload): void {
     this.kinds.set(payload.nodeId, payload.kind);
+    this.faces.set(payload.nodeId, payload.faces);
+    this.faceIds.set(payload.nodeId, payload.faceIds);
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(payload.positions, 3));
@@ -150,15 +235,15 @@ export class Viewport {
     if (existing !== undefined) {
       existing.geometry.dispose();
       existing.geometry = geometry;
-      existing.material = this.materialFor(payload.nodeId);
-      return;
+    } else {
+      const mesh = new THREE.Mesh(geometry, this.material);
+      mesh.userData.nodeId = payload.nodeId;
+      mesh.renderOrder = payload.kind === 'sketch' ? 1 : 0;
+      this.meshes.set(payload.nodeId, mesh);
+      this.scene.add(mesh);
     }
 
-    const mesh = new THREE.Mesh(geometry, this.materialFor(payload.nodeId));
-    mesh.userData.nodeId = payload.nodeId;
-    mesh.renderOrder = payload.kind === 'sketch' ? 1 : 0;
-    this.meshes.set(payload.nodeId, mesh);
-    this.scene.add(mesh);
+    this.applyMaterials(payload.nodeId);
   }
 
   retain(visible: readonly NodeId[]): void {
@@ -169,6 +254,9 @@ export class Viewport {
       mesh.geometry.dispose();
       this.meshes.delete(nodeId);
       this.kinds.delete(nodeId);
+      this.faces.delete(nodeId);
+      this.faceIds.delete(nodeId);
+      if (this.highlightedFace?.nodeId === nodeId) this.highlightedFace = null;
     }
   }
 

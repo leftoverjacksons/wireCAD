@@ -31,6 +31,9 @@ is ready, typically around two seconds.
 - **Planes** — sketches sit on a plane rather than at a world Z offset, and an
   extrude follows its profile's normal. A rectangle drawn on the XZ plane
   extrudes along −Y. Sketch dimensions are in the plane's own U/V axes.
+- **Sketching on a face** — start a sketch, then click a flat face of a solid in
+  the 3D view. That creates a `Face Plane` node holding the reference, and the
+  sketch rides the face when the model changes underneath it.
 - **Undo** — Ctrl+Z and Ctrl+Shift+Z, or the toolbar buttons. A slider drag is
   one undo step.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a
@@ -80,12 +83,30 @@ main thread posts the whole document on every change — affordable precisely
 because unchanged nodes are a hash lookup — and gets back per-node status plus
 tessellated meshes as transferred buffers.
 
+## Referring to a face
+
+Naming a face so it survives a rebuild is the topological naming problem: face
+ordering is not stable across kernel rebuilds, so "face 7" silently becomes a
+different face the moment the model changes.
+
+A `Face Plane` node stores a reference direction and a rank instead, and
+re-resolves on every solve: among the planar faces pointing that way, take the
+n-th counting from the furthest along the normal. The top of a box stays the top
+of a box when the box is resized, and a boss added on top takes rank 0 while the
+original top becomes rank 1 rather than being confused with it.
+
+Two properties matter more than the heuristic itself. The reference is an
+ordinary node with ordinary numeric inputs, so a wrong match is visible in the
+graph and can be corrected by editing a field. And when nothing matches, the
+node fails loudly — `Rank 5 is out of range: only 1 face(s) face that way` —
+instead of quietly attaching to whatever face happens to be there.
+
+The stronger approach is to name faces by provenance, using the kernel's own
+`Modified`/`Generated` history to track which operation produced which face.
+That can replace the matching rule without changing the graph.
+
 ## Known gaps
 
-- No face selection yet, so a sketch cannot be placed on a face of a solid —
-  only on a datum plane. Referencing a face across a rebuild is the topological
-  naming problem, and the plan is a geometric selector exposed as its own node,
-  so a mis-resolved reference is visible and repairable rather than silent.
 - No sketch constraint solver; sketches are parametric rectangles and circles.
 - No fillet, chamfer, sweep, loft, or patterns yet.
 - The bundled kernel is the full OpenCASCADE build (14 MB gzipped). A trimmed
