@@ -41,6 +41,14 @@ is ready, typically around two seconds.
   node already wired to its plane.
 - **Undo** — Ctrl+Z and Ctrl+Shift+Z, or the toolbar buttons. A slider drag is
   one undo step.
+- **Files** — *New*, *Open* (Ctrl+O) and *Save* (Ctrl+S) work on a `.json`
+  document containing the whole graph. The document also autosaves to browser
+  storage as you work, so a refresh resumes where you left off rather than
+  reopening the starter model. *New* is an ordinary edit, so Ctrl+Z brings the
+  previous model back.
+- **Export** — *STL* writes a binary mesh for printing, *STEP* writes the actual
+  B-rep for other CAD tools, both in millimetres. Exports cover the selected
+  body, or every visible body when nothing is selected; sketches are excluded.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a
   body to select it.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
@@ -111,6 +119,11 @@ The stronger approach is to name faces by provenance, using the kernel's own
 That can replace the matching rule without changing the graph.
 
 ## Known gaps
+
+- A sketch cannot be reopened and redrawn; its points are editable on the node,
+  but there is no "edit sketch" mode yet.
+- Profiles are single closed loops, so a shape with a hole in it needs a boolean
+  rather than an inner loop.
 
 - No sketch constraint solver; sketches are parametric rectangles and circles.
 - No fillet, chamfer, sweep, loft, or patterns yet.

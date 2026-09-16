@@ -9,7 +9,25 @@ export interface SolveRequest {
   document: SerializedGraph;
 }
 
-export type MainToWorker = SolveRequest;
+export type ExportFormat = 'stl' | 'step';
+
+export interface ExportRequest {
+  type: 'export';
+  requestId: number;
+  format: ExportFormat;
+  document: SerializedGraph;
+  nodeIds: NodeId[];
+}
+
+export type MainToWorker = SolveRequest | ExportRequest;
+
+export interface ExportedMessage {
+  type: 'exported';
+  requestId: number;
+  format: ExportFormat;
+  /** Always backed by a fresh, transferable ArrayBuffer — never the WASM heap. */
+  data: Uint8Array<ArrayBuffer>;
+}
 
 export interface ReadyMessage {
   type: 'ready';
@@ -54,4 +72,4 @@ export interface FailedMessage {
   message: string;
 }
 
-export type WorkerToMain = ReadyMessage | SolvedMessage | FailedMessage;
+export type WorkerToMain = ReadyMessage | SolvedMessage | FailedMessage | ExportedMessage;

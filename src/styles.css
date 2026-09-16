@@ -357,6 +357,12 @@ input[type='range'] {
   accent-color: var(--accent);
 }
 
+.panel-empty {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 #stats {
   margin-top: 10px;
   color: var(--muted);

@@ -5,13 +5,26 @@ import { Graph } from '../core/graph.js';
 import { NodeRegistry } from '../core/registry.js';
 import type { NodeId, PlaneValue } from '../core/types.js';
 import { isPlane } from '../core/types.js';
+import { compoundOf } from '../geometry/build.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { disposeCacheEntry, isGeometry, loadKernel, tessellate } from '../geometry/kernel.js';
+import { writeStep } from '../geometry/step.js';
+import { writeBinaryStl } from '../geometry/stl.js';
 import { createFaceNodes } from '../nodes/face.js';
 import { mathNodes } from '../nodes/math.js';
 import { planeNodes } from '../nodes/plane.js';
 import { createGeometryNodes } from '../nodes/solid.js';
-import type { MainToWorker, MeshPayload, NodeReport, SolveRequest, WorkerToMain } from './protocol.js';
+import type {
+  ExportRequest,
+  MainToWorker,
+  MeshPayload,
+  NodeReport,
+  SolveRequest,
+  WorkerToMain,
+} from './protocol.js';
+
+/** Finer than the display mesh: an exported STL is what gets printed. */
+const EXPORT_DEFLECTION = 0.02;
 
 let oc: OpenCascadeInstance;
 let registry: NodeRegistry;
@@ -19,7 +32,7 @@ let evaluator: Evaluator;
 
 /** Hash of the mesh most recently transferred for a node, to avoid re-sending. */
 const sentHashes = new Map<NodeId, string>();
-const pending: SolveRequest[] = [];
+const pending: MainToWorker[] = [];
 let ready = false;
 
 function post(message: WorkerToMain, transfer: Transferable[] = []): void {
@@ -127,9 +140,41 @@ function solve(request: SolveRequest): void {
   );
 }
 
-function handle(request: SolveRequest): void {
+/** Export re-solves, which is nearly free: every shape is already cached. */
+function exportShapes(request: ExportRequest): void {
+  const graph = Graph.fromJSON(registry, request.document);
+  const result = evaluator.evaluate(graph);
+
+  const shapes: Shape[] = [];
+  for (const nodeId of request.nodeIds) {
+    const nodeResult = result.results.get(nodeId);
+    if (nodeResult === undefined) continue;
+    if (nodeResult.status === 'error' || nodeResult.status === 'skipped') continue;
+
+    for (const port of registry.require(graph.requireNode(nodeId).type).outputs) {
+      if (port.type !== 'geometry') continue;
+      const value = nodeResult.outputs[port.id];
+      if (value !== undefined && isGeometry(value)) shapes.push(value.handle as Shape);
+    }
+  }
+
+  if (shapes.length === 0) throw new Error('Nothing solid to export');
+
+  const shape = compoundOf(oc, shapes);
+  const data =
+    request.format === 'step'
+      ? writeStep(oc, shape)
+      : writeBinaryStl(tessellate(oc, shape, EXPORT_DEFLECTION, 0.2));
+
+  post({ type: 'exported', requestId: request.requestId, format: request.format, data }, [
+    data.buffer,
+  ]);
+}
+
+function handle(request: MainToWorker): void {
   try {
-    solve(request);
+    if (request.type === 'solve') solve(request);
+    else exportShapes(request);
   } catch (thrown) {
     post({
       type: 'failed',
@@ -141,7 +186,6 @@ function handle(request: SolveRequest): void {
 
 self.onmessage = (event: MessageEvent<MainToWorker>) => {
   const message = event.data;
-  if (message.type !== 'solve') return;
   if (!ready) {
     // Keep only the newest request; older parameter values are already stale.
     pending.length = 0;

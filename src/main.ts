@@ -1,24 +1,26 @@
 import './styles.css';
+import { documentToText, parseDocument } from './core/document.js';
 import { Graph } from './core/graph.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
-import type { NodeId, NodeSchema, PlaneValue } from './core/types.js';
+import type { GraphNode, NodeId, NodeSchema, PlaneValue } from './core/types.js';
+import { makePlane } from './geometry/plane.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
-import type { FaceHit } from './viewport.js';
-import { makePlane } from './geometry/plane.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { PlaneChoice } from './ui/features.js';
-import { SketchMode } from './ui/sketch-mode.js';
 import { tabs } from './ui/features.js';
-import { autoLayout } from './ui/layout.js';
+import { download, pickFile, readAutosave, timestampedName, writeAutosave } from './ui/file-io.js';
 import { NodeEditor } from './ui/node-editor.js';
+import { SketchMode } from './ui/sketch-mode.js';
+import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
+import type { FaceHit } from './viewport.js';
 import { Viewport } from './viewport.js';
-import type { MainToWorker, WorkerToMain } from './worker/protocol.js';
+import type { ExportFormat, MainToWorker, WorkerToMain } from './worker/protocol.js';
 
 const registry = new NodeRegistry<NodeSchema>();
 registry.registerAll(mathNodes);
@@ -28,47 +30,18 @@ registry.registerAll(faceSchemas);
 
 const graph = new Graph(registry);
 
-const width = graph.addNode('math.number', { label: 'Width', inputs: { value: 60 } });
-const depth = graph.addNode('math.number', { label: 'Depth', inputs: { value: 40 } });
-const height = graph.addNode('math.number', { label: 'Height', inputs: { value: 20 } });
-const boreRadius = graph.addNode('math.number', { label: 'Bore radius', inputs: { value: 8 } });
-
-const centreX = graph.addNode('math.divide', { label: 'Centre X', inputs: { b: 2 } });
-const centreY = graph.addNode('math.divide', { label: 'Centre Y', inputs: { b: 2 } });
-const boreDepth = graph.addNode('math.add', { label: 'Bore depth', inputs: { b: 4 } });
-
-const basePlane = graph.addNode('plane.xy', { label: 'Base plane' });
-const borePlane = graph.addNode('plane.offset', { label: 'Bore plane', inputs: { distance: -2 } });
-
-const bodyProfile = graph.addNode('sketch.rectangle', { label: 'Body profile' });
-const body = graph.addNode('solid.extrude', { label: 'Body' });
-const boreProfile = graph.addNode('sketch.circle', { label: 'Bore profile' });
-const bore = graph.addNode('solid.extrude', { label: 'Bore' });
-const result = graph.addNode('solid.cut', { label: 'Result' });
-
-graph.connect({ node: basePlane.id, port: 'plane' }, { node: borePlane.id, port: 'plane' });
-graph.connect({ node: basePlane.id, port: 'plane' }, { node: bodyProfile.id, port: 'plane' });
-graph.connect({ node: borePlane.id, port: 'plane' }, { node: boreProfile.id, port: 'plane' });
-
-graph.connect({ node: width.id, port: 'result' }, { node: bodyProfile.id, port: 'width' });
-graph.connect({ node: depth.id, port: 'result' }, { node: bodyProfile.id, port: 'height' });
-graph.connect({ node: bodyProfile.id, port: 'profile' }, { node: body.id, port: 'profile' });
-graph.connect({ node: height.id, port: 'result' }, { node: body.id, port: 'distance' });
-
-graph.connect({ node: width.id, port: 'result' }, { node: centreX.id, port: 'a' });
-graph.connect({ node: depth.id, port: 'result' }, { node: centreY.id, port: 'a' });
-graph.connect({ node: centreX.id, port: 'result' }, { node: boreProfile.id, port: 'u' });
-graph.connect({ node: centreY.id, port: 'result' }, { node: boreProfile.id, port: 'v' });
-graph.connect({ node: boreRadius.id, port: 'result' }, { node: boreProfile.id, port: 'radius' });
-
-graph.connect({ node: height.id, port: 'result' }, { node: boreDepth.id, port: 'a' });
-graph.connect({ node: boreProfile.id, port: 'profile' }, { node: bore.id, port: 'profile' });
-graph.connect({ node: boreDepth.id, port: 'result' }, { node: bore.id, port: 'distance' });
-
-graph.connect({ node: body.id, port: 'solid' }, { node: result.id, port: 'base' });
-graph.connect({ node: bore.id, port: 'solid' }, { node: result.id, port: 'tool' });
-
-autoLayout(graph);
+// Prefer whatever the last session left behind over the starter model.
+const autosaved = readAutosave();
+let restoredFromAutosave = false;
+if (autosaved !== null) {
+  try {
+    graph.restore(parseDocument(autosaved));
+    restoredFromAutosave = true;
+  } catch {
+    restoredFromAutosave = false;
+  }
+}
+if (!restoredFromAutosave) buildStarterModel(graph);
 
 const viewportEl = document.getElementById('viewport')!;
 const viewport = new Viewport(viewportEl);
@@ -82,8 +55,8 @@ const history = new History(graph);
 const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onBeforeChange: () => history.capture(),
   onDocumentChanged: () => requestSolve(),
-  onSelectionChanged: (nodeId) => applySelection(nodeId, false),
   // The editor already holds this selection; only the viewport needs telling.
+  onSelectionChanged: (nodeId) => applySelection(nodeId, false),
 });
 editor.frame();
 
@@ -132,20 +105,83 @@ const dialog = new FeatureDialog(viewportEl, graph, {
 
 const toolbar = new Toolbar(viewportEl, tabs, (spec) => dialog.open(spec, selected));
 
-const undoButton = document.createElement('button');
-undoButton.type = 'button';
-undoButton.className = 'tool-button';
-undoButton.textContent = 'Undo';
-undoButton.title = 'Ctrl+Z';
-undoButton.addEventListener('click', () => applyHistory('undo'));
+// --------------------------------------------------------------- file actions
 
-const redoButton = document.createElement('button');
-redoButton.type = 'button';
-redoButton.className = 'tool-button';
-redoButton.textContent = 'Redo';
-redoButton.title = 'Ctrl+Shift+Z';
-redoButton.addEventListener('click', () => applyHistory('redo'));
+function actionButton(label: string, title: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tool-button';
+  button.textContent = label;
+  button.title = title;
+  button.addEventListener('click', onClick);
+  return button;
+}
 
+function newDocument(): void {
+  // Clearing is an ordinary document edit, so Ctrl+Z brings the model back.
+  history.capture();
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  applySelection(null, true);
+  requestSolve();
+  statusEl.textContent = 'new document';
+}
+
+function saveDocument(): void {
+  download(documentToText(graph.toJSON()), timestampedName('json'), 'application/json');
+  statusEl.textContent = 'document saved';
+}
+
+async function openDocument(): Promise<void> {
+  const file = await pickFile('.json,application/json');
+  if (file === null) return;
+
+  try {
+    const restored = parseDocument(await file.text());
+    history.capture();
+    graph.restore(restored);
+    applySelection(null, true);
+    editor.frame();
+    requestSolve();
+    statusEl.textContent = `opened ${file.name}`;
+  } catch (thrown) {
+    statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
+  }
+}
+
+function hasGeometryOutput(nodeId: NodeId): boolean {
+  const node = graph.getNode(nodeId);
+  if (node === undefined) return false;
+  return registry.require(node.type).outputs.some((port) => port.type === 'geometry');
+}
+
+function requestExport(format: ExportFormat): void {
+  const nodeIds =
+    selected !== null && hasGeometryOutput(selected) ? [selected] : viewport.solidNodes();
+
+  if (nodeIds.length === 0) {
+    statusEl.textContent = 'nothing solid to export';
+    return;
+  }
+
+  statusEl.textContent = `exporting ${format.toUpperCase()}…`;
+  const message: MainToWorker = {
+    type: 'export',
+    requestId: ++requestId,
+    format,
+    document: graph.toJSON(),
+    nodeIds,
+  };
+  worker.postMessage(message);
+}
+
+toolbar.appendAction(actionButton('New', 'Empty document', newDocument));
+toolbar.appendAction(actionButton('Open', 'Open a saved document', () => void openDocument()));
+toolbar.appendAction(actionButton('Save', 'Download this document', saveDocument));
+toolbar.appendAction(actionButton('STL', 'Export mesh for printing', () => requestExport('stl')));
+toolbar.appendAction(actionButton('STEP', 'Export solid for CAD', () => requestExport('step')));
+
+const undoButton = actionButton('Undo', 'Ctrl+Z', () => applyHistory('undo'));
+const redoButton = actionButton('Redo', 'Ctrl+Shift+Z', () => applyHistory('redo'));
 toolbar.appendAction(undoButton);
 toolbar.appendAction(redoButton);
 
@@ -174,8 +210,16 @@ document.addEventListener('keydown', (event) => {
   } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
     event.preventDefault();
     applyHistory('redo');
+  } else if (key === 's') {
+    event.preventDefault();
+    saveDocument();
+  } else if (key === 'o') {
+    event.preventDefault();
+    void openDocument();
   }
 });
+
+// ----------------------------------------------------------------- selection
 
 /** A dialog waiting for an operand consumes the click instead of selecting. */
 function applySelection(
@@ -216,55 +260,76 @@ viewport.onPick((hit) => {
 
 // ------------------------------------------------------------------ controls
 
-const sliders: Array<{ nodeId: NodeId; label: string; min: number; max: number; step: number }> = [
-  { nodeId: width.id, label: 'Width', min: 20, max: 160, step: 1 },
-  { nodeId: depth.id, label: 'Depth', min: 20, max: 160, step: 1 },
-  { nodeId: height.id, label: 'Height', min: 4, max: 80, step: 1 },
-  { nodeId: boreRadius.id, label: 'Bore radius', min: 2, max: 40, step: 0.5 },
-];
-
 const sliderInputs = new Map<NodeId, { range: HTMLInputElement; readout: HTMLElement }>();
 
-for (const slider of sliders) {
-  const wrapper = document.createElement('label');
-  wrapper.className = 'control';
+/** Named number nodes are the document's parameters, whatever document it is. */
+function parameterNodes(): GraphNode[] {
+  return graph.allNodes().filter((node) => node.type === 'math.number' && node.label !== undefined);
+}
 
-  const row = document.createElement('div');
-  row.className = 'label-row';
-  const name = document.createElement('span');
-  name.textContent = slider.label;
-  const readout = document.createElement('span');
-  readout.textContent = String(graph.inputValue(slider.nodeId, 'value'));
-  row.append(name, readout);
+function sliderRange(value: number): { min: number; max: number } {
+  const span = Math.max(10, Math.abs(value) * 3);
+  return value < 0 ? { min: -span, max: span } : { min: 0, max: span };
+}
 
-  const range = document.createElement('input');
-  range.type = 'range';
-  range.min = String(slider.min);
-  range.max = String(slider.max);
-  range.step = String(slider.step);
-  range.value = String(graph.inputValue(slider.nodeId, 'value'));
-  // One snapshot per gesture, so a drag is a single undo step.
-  let captured = false;
-  range.addEventListener('pointerdown', () => {
-    captured = false;
-  });
-  range.addEventListener('keydown', () => {
-    captured = false;
-  });
-  range.addEventListener('input', () => {
-    const next = Number(range.value);
-    if (!captured) {
-      captured = true;
-      history.capture();
-    }
-    readout.textContent = String(next);
-    graph.setInput(slider.nodeId, 'value', next);
-    requestSolve();
-  });
+function rebuildControls(): void {
+  controls.replaceChildren();
+  sliderInputs.clear();
 
-  wrapper.append(row, range);
-  controls.append(wrapper);
-  sliderInputs.set(slider.nodeId, { range, readout });
+  const parameters = parameterNodes();
+  if (parameters.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'panel-empty';
+    empty.textContent = 'Label a Number node to make it a parameter.';
+    controls.append(empty);
+    return;
+  }
+
+  for (const node of parameters) {
+    const current = Number(graph.inputValue(node.id, 'value') ?? 0);
+    const { min, max } = sliderRange(current);
+
+    const wrapper = document.createElement('label');
+    wrapper.className = 'control';
+
+    const row = document.createElement('div');
+    row.className = 'label-row';
+    const name = document.createElement('span');
+    name.textContent = node.label ?? 'Number';
+    const readout = document.createElement('span');
+    readout.textContent = String(current);
+    row.append(name, readout);
+
+    const range = document.createElement('input');
+    range.type = 'range';
+    range.min = String(min);
+    range.max = String(max);
+    range.step = '0.5';
+    range.value = String(current);
+
+    // One snapshot per gesture, so a drag is a single undo step.
+    let captured = false;
+    range.addEventListener('pointerdown', () => {
+      captured = false;
+    });
+    range.addEventListener('keydown', () => {
+      captured = false;
+    });
+    range.addEventListener('input', () => {
+      const next = Number(range.value);
+      if (!captured) {
+        captured = true;
+        history.capture();
+      }
+      readout.textContent = String(next);
+      graph.setInput(node.id, 'value', next);
+      requestSolve();
+    });
+
+    wrapper.append(row, range);
+    controls.append(wrapper);
+    sliderInputs.set(node.id, { range, readout });
+  }
 }
 
 function syncSlider(nodeId: NodeId): void {
@@ -275,17 +340,36 @@ function syncSlider(nodeId: NodeId): void {
   bound.readout.textContent = value;
 }
 
+rebuildControls();
+
+// ------------------------------------------------------------------ autosave
+
+let autosaveTimer = 0;
+function scheduleAutosave(): void {
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => {
+    if (!writeAutosave(documentToText(graph.toJSON()))) {
+      statusEl.textContent = 'autosave unavailable — save to a file instead';
+    }
+  }, 600);
+}
+
 // Editing a value in the node editor must move the slider that shows it: both
 // panels are views of one document, not separate copies of the number.
 graph.subscribe((change) => {
   refreshHistoryButtons();
+  scheduleAutosave();
+
   if (change.kind === 'document-replaced') {
-    for (const nodeId of sliderInputs.keys()) syncSlider(nodeId);
+    rebuildControls();
     if (selected !== null && graph.getNode(selected) === undefined) applySelection(null, true);
     return;
   }
-  if (change.kind !== 'input-changed' || change.portId !== 'value') return;
-  syncSlider(change.nodeId);
+  if (change.kind === 'node-added' || change.kind === 'node-removed' || change.kind === 'node-renamed') {
+    rebuildControls();
+    return;
+  }
+  if (change.kind === 'input-changed' && change.portId === 'value') syncSlider(change.nodeId);
 });
 
 // -------------------------------------------------------------------- solver
@@ -313,12 +397,20 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
 
   if (message.type === 'ready') {
     statusEl.textContent = `kernel ready in ${(message.loadMs / 1000).toFixed(2)} s`;
+    if (restoredFromAutosave) statusEl.textContent += ' · restored last session';
     requestSolve();
     return;
   }
 
+  if (message.type === 'exported') {
+    const mime = message.format === 'stl' ? 'model/stl' : 'application/step';
+    download(message.data, timestampedName(message.format), mime);
+    statusEl.textContent = `exported ${(message.data.byteLength / 1024).toFixed(0)} kB of ${message.format.toUpperCase()}`;
+    return;
+  }
+
   if (message.type === 'failed') {
-    statusEl.textContent = `solve failed: ${message.message}`;
+    statusEl.textContent = `failed: ${message.message}`;
     inFlight = false;
     return;
   }

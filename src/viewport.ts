@@ -343,6 +343,11 @@ export class Viewport {
     return this.faces.get(nodeId);
   }
 
+  /** Visible bodies, excluding sketch profiles, which do not belong in an export. */
+  solidNodes(): NodeId[] {
+    return [...this.kinds].filter(([, kind]) => kind === 'solid').map(([nodeId]) => nodeId);
+  }
+
   setMesh(payload: MeshPayload): void {
     this.kinds.set(payload.nodeId, payload.kind);
     this.faces.set(payload.nodeId, payload.faces);

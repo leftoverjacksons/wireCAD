@@ -2,6 +2,19 @@ import type { PlaneValue, Vec3 } from '../core/types.js';
 import type { OpenCascadeInstance, Shape } from './kernel.js';
 import { pointOnPlane } from './plane.js';
 
+/** Gather several shapes into one, so an export can carry every visible body. */
+export function compoundOf(oc: OpenCascadeInstance, shapes: readonly Shape[]): Shape {
+  if (shapes.length === 1) return shapes[0]!;
+  if (shapes.length === 0) throw new Error('Nothing to export');
+
+  const compound = new oc.TopoDS_Compound();
+  const builder = new oc.BRep_Builder();
+  builder.MakeCompound(compound);
+  for (const shape of shapes) builder.Add(compound, shape);
+  builder.delete?.();
+  return compound;
+}
+
 export function faceFromWire(oc: OpenCascadeInstance, wire: Shape): Shape {
   const maker = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
   if (!maker.IsDone()) {
