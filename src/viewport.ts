@@ -14,6 +14,15 @@ export class Viewport {
     metalness: 0.0,
     roughness: 0.45,
   });
+  private readonly highlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffc98a,
+    metalness: 0.0,
+    roughness: 0.35,
+    emissive: 0x4a2c0c,
+  });
+  private readonly raycaster = new THREE.Raycaster();
+  private pickListener: ((nodeId: NodeId | null) => void) | null = null;
+  private highlighted: NodeId | null = null;
   private framed = false;
 
   constructor(private readonly container: HTMLElement) {
@@ -46,6 +55,8 @@ export class Viewport {
     grid.rotation.x = Math.PI / 2;
     this.scene.add(grid);
 
+    this.installPicking();
+
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
 
@@ -53,6 +64,45 @@ export class Viewport {
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     });
+  }
+
+  /** Distinguishes a click from an orbit drag so picking does not fight the camera. */
+  private installPicking(): void {
+    const canvas = this.renderer.domElement;
+    let downX = 0;
+    let downY = 0;
+
+    canvas.addEventListener('pointerdown', (event) => {
+      downX = event.clientX;
+      downY = event.clientY;
+    });
+
+    canvas.addEventListener('pointerup', (event) => {
+      if (Math.hypot(event.clientX - downX, event.clientY - downY) > 4) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+
+      this.raycaster.setFromCamera(ndc, this.camera);
+      const hits = this.raycaster.intersectObjects([...this.meshes.values()], false);
+      const picked = hits[0]?.object.userData.nodeId;
+      this.pickListener?.(typeof picked === 'string' ? picked : null);
+    });
+  }
+
+  onPick(listener: (nodeId: NodeId | null) => void): void {
+    this.pickListener = listener;
+  }
+
+  setHighlight(nodeId: NodeId | null): void {
+    if (this.highlighted === nodeId) return;
+    this.highlighted = nodeId;
+    for (const [id, mesh] of this.meshes) {
+      mesh.material = id === nodeId ? this.highlightMaterial : this.material;
+    }
   }
 
   setMesh(payload: MeshPayload): void {
@@ -69,7 +119,11 @@ export class Viewport {
       return;
     }
 
-    const mesh = new THREE.Mesh(geometry, this.material);
+    const mesh = new THREE.Mesh(
+      geometry,
+      payload.nodeId === this.highlighted ? this.highlightMaterial : this.material,
+    );
+    mesh.userData.nodeId = payload.nodeId;
     this.meshes.set(payload.nodeId, mesh);
     this.scene.add(mesh);
   }

@@ -4,112 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:," />
-    <title>wireCAD — Phase 1</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #14171c;
-        --panel: #1c2027;
-        --line: #2b313b;
-        --text: #dfe4ec;
-        --muted: #8b95a5;
-        --evaluated: #f0a04b;
-        --cached: #4b9ef0;
-        --error: #f05b5b;
-        --skipped: #6b7280;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        height: 100%;
-      }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--text);
-        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-        display: grid;
-        grid-template-columns: 300px 1fr;
-        height: 100vh;
-        overflow: hidden;
-      }
-      aside {
-        border-right: 1px solid var(--line);
-        padding: 18px;
-        overflow-y: auto;
-        background: var(--panel);
-      }
-      h1 {
-        font-size: 14px;
-        margin: 0 0 2px;
-      }
-      #kernel-status {
-        color: var(--muted);
-        font-size: 12px;
-        margin-bottom: 20px;
-      }
-      h2 {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--muted);
-        margin: 22px 0 12px;
-      }
-      h2:first-of-type {
-        margin-top: 0;
-      }
-      label {
-        display: block;
-        margin-bottom: 14px;
-      }
-      .label-row {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 4px;
-      }
-      .label-row span:last-child {
-        color: var(--muted);
-      }
-      input[type='range'] {
-        width: 100%;
-        accent-color: var(--evaluated);
-      }
-      table {
-        border-collapse: collapse;
-        width: 100%;
-      }
-      td {
-        padding: 4px 8px 4px 0;
-        border-bottom: 1px solid var(--line);
-        vertical-align: top;
-      }
-      td.muted {
-        color: var(--muted);
-      }
-      .status.evaluated {
-        color: var(--evaluated);
-      }
-      .status.cached {
-        color: var(--cached);
-      }
-      .status.error {
-        color: var(--error);
-      }
-      .status.skipped {
-        color: var(--skipped);
-      }
-      #stats {
-        margin-top: 12px;
-        color: var(--muted);
-        font-size: 11px;
-      }
-      #viewport {
-        position: relative;
-        overflow: hidden;
-      }
-    </style>
+    <title>wireCAD</title>
   </head>
   <body>
     <aside>
@@ -120,12 +15,13 @@
       <div id="controls"></div>
 
       <h2>Solve</h2>
-      <table>
-        <tbody id="reports"></tbody>
-      </table>
       <div id="stats"></div>
     </aside>
-    <main id="viewport"></main>
+    <main>
+      <div id="viewport"></div>
+      <div class="splitter" id="splitter"></div>
+      <div id="node-editor"></div>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

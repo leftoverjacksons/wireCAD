@@ -1,0 +1,338 @@
+:root {
+  color-scheme: dark;
+  --bg: #14171c;
+  --panel: #1c2027;
+  --panel-raised: #222833;
+  --line: #2b313b;
+  --line-bright: #3a4250;
+  --text: #dfe4ec;
+  --muted: #8b95a5;
+  --accent: #f0a04b;
+  --evaluated: #f0a04b;
+  --cached: #4b9ef0;
+  --error: #f05b5b;
+  --skipped: #6b7280;
+  --type-number: #7fb2f0;
+  --type-geometry: #f0a04b;
+  --type-sketch: #6ad3a8;
+  --type-list: #c58af0;
+  --type-vector: #f0c674;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+aside {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+  overflow-y: auto;
+}
+
+h1 {
+  font-size: 14px;
+  margin: 0 0 2px;
+}
+
+h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 20px 0 10px;
+  font-weight: 600;
+}
+
+#kernel-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+main {
+  display: grid;
+  grid-template-rows: 1fr 6px 320px;
+  min-width: 0;
+  min-height: 0;
+}
+
+#viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.splitter {
+  background: var(--line);
+  cursor: row-resize;
+}
+
+.splitter:hover {
+  background: var(--line-bright);
+}
+
+/* ------------------------------------------------------------- parameters */
+
+label.control {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.label-row span:last-child {
+  color: var(--muted);
+}
+
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+#stats {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------------ node editor */
+
+.editor {
+  position: relative;
+  overflow: hidden;
+  background-color: #10131722;
+  background-image: radial-gradient(circle, var(--line) 1px, transparent 1px);
+  background-size: 22px 22px;
+  border-top: 1px solid var(--line);
+  outline: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.editor:active {
+  cursor: grabbing;
+}
+
+.editor-canvas {
+  position: absolute;
+  transform-origin: 0 0;
+  top: 0;
+  left: 0;
+}
+
+.editor-wires {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.wire {
+  fill: none;
+  stroke: var(--line-bright);
+  stroke-width: 1.8;
+}
+
+.wire-ghost {
+  stroke: var(--accent);
+  stroke-dasharray: 5 4;
+}
+
+.wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.wire-hit:hover + .wire {
+  stroke: var(--error);
+}
+
+.editor-hud {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  background: #14171ccc;
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.editor-hud-error {
+  color: var(--error);
+}
+
+.node {
+  position: absolute;
+  background: var(--panel-raised);
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px #0008;
+  user-select: none;
+}
+
+.node-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 18px #000a;
+}
+
+.node[data-status='evaluated'] .node-header {
+  border-left: 3px solid var(--evaluated);
+}
+
+.node[data-status='cached'] .node-header {
+  border-left: 3px solid var(--cached);
+}
+
+.node[data-status='error'] .node-header {
+  border-left: 3px solid var(--error);
+}
+
+.node[data-status='skipped'] .node-header {
+  border-left: 3px solid var(--skipped);
+}
+
+.node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 5px 5px 0 0;
+  cursor: move;
+  font-size: 12px;
+}
+
+.node-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-status {
+  color: var(--error);
+  font-size: 10px;
+}
+
+.node-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
+.port-label {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.port-hint {
+  color: var(--skipped);
+  font-style: italic;
+  margin-left: auto;
+}
+
+.output-label {
+  margin-left: auto;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.port-value {
+  margin-left: auto;
+  width: 74px;
+  background: #171b21;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 5px;
+  text-align: right;
+}
+
+.port-value:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.port {
+  position: absolute;
+  z-index: 2;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--panel);
+  cursor: crosshair;
+  background: var(--line-bright);
+}
+
+/* Keeps ports grabbable when zoomed out, where the dot itself is a few pixels. */
+.port::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+}
+
+.port:hover {
+  transform: translate(-50%, -50%) scale(1.35);
+}
+
+.port-in {
+  left: 0;
+}
+
+.port-out {
+  left: 100%;
+}
+
+.port.type-number {
+  background: var(--type-number);
+}
+
+.port.type-geometry {
+  background: var(--type-geometry);
+}
+
+.port.type-sketch {
+  background: var(--type-sketch);
+}
+
+.port.type-list {
+  background: var(--type-list);
+}
+
+.port.type-vector {
+  background: var(--type-vector);
+}
