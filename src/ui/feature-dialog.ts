@@ -58,8 +58,13 @@ export class FeatureDialog {
     for (const number of spec.numbers) this.numbers.set(number.id, number.value);
 
     if (preselected !== null) {
+      // A prior selection is a node, which cannot stand in for a picked face.
       const first = spec.operands[0];
-      if (first !== undefined && outputPortFor(this.graph, preselected, first.type) !== null) {
+      if (
+        first !== undefined &&
+        first.type !== 'face' &&
+        outputPortFor(this.graph, preselected, first.type) !== null
+      ) {
         this.chosen.set(first.id, { kind: 'node', nodeId: preselected });
       }
     }
@@ -88,6 +93,20 @@ export class FeatureDialog {
 
     const operand = spec.operands.find((candidate) => candidate.id === armed);
     if (operand === undefined) return false;
+
+    if (operand.type === 'face') {
+      if (face === null) {
+        this.setMessage('Click a flat face of a solid');
+        return false;
+      }
+      if (outputPortFor(this.graph, nodeId, 'geometry') === null) {
+        this.setMessage('That face is not on a solid');
+        return false;
+      }
+      this.chosen.set(armed, { kind: 'face', nodeId, normal: face.normal, rank: face.rank });
+      this.advance();
+      return true;
+    }
 
     if (operand.type === 'plane' && face !== null) {
       this.chosen.set(armed, { kind: 'face', nodeId, normal: face.normal, rank: face.rank });
@@ -149,10 +168,12 @@ export class FeatureDialog {
 
     const choice = this.chosen.get(operand.id);
 
-    if (choice?.kind === 'face') {
+    if (choice?.kind === 'face' || operand.type === 'face') {
       const chip = document.createElement('span');
       chip.className = 'feature-chip';
-      chip.textContent = this.describe(choice);
+      // A face can only come from clicking one, so there is no list to offer.
+      chip.textContent = choice === undefined ? 'none picked' : this.describe(choice);
+      if (choice === undefined) chip.classList.add('feature-chip-empty');
       row.append(chip);
     } else {
       const select = document.createElement('select');
@@ -237,10 +258,13 @@ export class FeatureDialog {
     message.className = 'feature-message';
     if (this.armedOperand !== null) {
       const operand = spec.operands.find((candidate) => candidate.id === this.armedOperand);
-      message.textContent =
-        operand?.type === 'plane'
-          ? 'Click a flat face in the view, or a plane node below.'
-          : 'Click a body or sketch in the view, or a node below.';
+      if (operand?.type === 'face') {
+        message.textContent = 'Click the face to leave open.';
+      } else if (operand?.type === 'plane') {
+        message.textContent = 'Click a flat face in the view, or a plane node below.';
+      } else {
+        message.textContent = 'Click a body or sketch in the view, or a node below.';
+      }
     }
     this.message = message;
     this.element.append(message);
@@ -271,6 +295,7 @@ export class FeatureDialog {
     created: NodeId[],
   ): PortRef {
     if (choice.kind === 'node') {
+      if (operand.type === 'face') throw new Error(`${operand.label} must be a picked face`);
       const port = outputPortFor(this.graph, choice.nodeId, operand.type);
       if (port === null) throw new Error(`${operand.label} is not a ${operand.type}`);
       return port;
@@ -304,16 +329,31 @@ export class FeatureDialog {
     const created: NodeId[] = [];
 
     try {
+      const numbers: Record<string, number> = {};
+      for (const number of spec.numbers) {
+        numbers[number.id] = this.numbers.get(number.id) ?? number.value;
+      }
+
       const operands: Record<string, PortRef> = {};
       for (const operand of spec.operands) {
         const choice = this.chosen.get(operand.id);
         if (choice === undefined) continue;
-        operands[operand.id] = this.resolveChoice(choice, operand, created);
-      }
 
-      const numbers: Record<string, number> = {};
-      for (const number of spec.numbers) {
-        numbers[number.id] = this.numbers.get(number.id) ?? number.value;
+        // A picked face wires the body it belongs to and writes its own selector.
+        if (operand.type === 'face') {
+          if (choice.kind !== 'face') throw new Error(`${operand.label} must be a picked face`);
+          const source = outputPortFor(this.graph, choice.nodeId, 'geometry');
+          if (source === null) throw new Error(`${operand.label} is not on a solid`);
+
+          operands[operand.id] = source;
+          numbers.nx = choice.normal.x;
+          numbers.ny = choice.normal.y;
+          numbers.nz = choice.normal.z;
+          numbers.rank = choice.rank;
+          continue;
+        }
+
+        operands[operand.id] = this.resolveChoice(choice, operand, created);
       }
 
       const nodeId = buildFeature(this.graph, spec, operands, numbers);

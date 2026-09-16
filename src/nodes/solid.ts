@@ -1,7 +1,7 @@
 import type { NodeDefinition, NodeSchema } from '../core/types.js';
 import { circleFace, polygonFace, rectangleFace } from '../geometry/build.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
-import { geometry, geometryOf, shapeOf } from '../geometry/kernel.js';
+import { geometry, geometryOf, kernelCall, shapeOf } from '../geometry/kernel.js';
 import { WORLD_XY } from '../geometry/plane.js';
 import { asList, asNumber, asPlane, asPositive } from './coerce.js';
 
@@ -171,7 +171,7 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       const tool = shapeOf(inputs.tool ?? null, 'tool');
 
       const operation = new oc[constructor](base, tool);
-      operation.Build();
+      kernelCall(schema.label, 'these two shapes cannot be combined', () => operation.Build());
       if (!operation.IsDone()) {
         operation.delete();
         throw new Error(`${schema.label} failed to build`);

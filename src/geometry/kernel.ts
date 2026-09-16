@@ -33,6 +33,13 @@ export interface MeshBuffers {
   faces: FaceInfo[];
 }
 
+export interface Tessellation {
+  /** Transferable: everything here survives structured cloning. */
+  mesh: MeshBuffers;
+  /** Kernel faces, parallel to `mesh.faces`. Cannot cross a worker boundary. */
+  faceHandles: Shape[];
+}
+
 let cached: OpenCascadeInstance | null = null;
 
 export async function loadKernel(): Promise<OpenCascadeInstance> {
@@ -55,6 +62,22 @@ export function isGeometry(value: Value): value is GeometryRef {
     'kind' in value &&
     (value as GeometryRef).kind === 'geometry'
   );
+}
+
+/**
+ * OpenCASCADE's C++ exceptions do not survive this Emscripten build: a rejected
+ * operation surfaces as an internal artefact such as "wasmTable.get(...) is not
+ * a function" rather than a reason. Name the operation and offer the likely
+ * cause instead of showing the reader something meaningless.
+ */
+export function kernelCall<T>(operation: string, likelyCause: string, fn: () => T): T {
+  try {
+    return fn();
+  } catch (thrown) {
+    const detail = thrown instanceof Error ? thrown.message : String(thrown);
+    const internal = /wasmTable|__cxa|is not a function|is not defined|memory access/i.test(detail);
+    throw new Error(internal ? `${operation} failed — ${likelyCause}` : `${operation} failed: ${detail}`);
+  }
 }
 
 export function geometryOf(value: Value, portId: string): GeometryRef {
@@ -89,13 +112,14 @@ export function tessellate(
   shape: Shape,
   deflection = 0.05,
   angular = 0.3,
-): MeshBuffers {
+): Tessellation {
   const mesher = new oc.BRepMesh_IncrementalMesh_2(shape, deflection, false, angular, false);
 
   const positions: number[] = [];
   const indices: number[] = [];
   const faceIds: number[] = [];
   const faces: FaceInfo[] = [];
+  const faceHandles: Shape[] = [];
   const reversedFlag = oc.TopAbs_Orientation.TopAbs_REVERSED.value;
 
   const explorer = new oc.TopExp_Explorer_2(
@@ -135,7 +159,10 @@ export function tessellate(
       }
 
       const emitted = indices.length / 3 - triangleStart;
-      if (emitted > 0) faces.push(summariseFace(positions, indices, triangleStart, emitted));
+      if (emitted > 0) {
+        faces.push(summariseFace(positions, indices, triangleStart, emitted));
+        faceHandles.push(face);
+      }
     }
 
     location.delete();
@@ -146,11 +173,14 @@ export function tessellate(
   mesher.delete?.();
 
   return {
-    positions: new Float32Array(positions),
-    normals: computeNormals(positions, indices),
-    indices: new Uint32Array(indices),
-    faceIds: new Uint32Array(faceIds),
-    faces,
+    mesh: {
+      positions: new Float32Array(positions),
+      normals: computeNormals(positions, indices),
+      indices: new Uint32Array(indices),
+      faceIds: new Uint32Array(faceIds),
+      faces,
+    },
+    faceHandles,
   };
 }
 

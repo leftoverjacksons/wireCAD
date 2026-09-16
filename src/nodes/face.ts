@@ -77,7 +77,7 @@ export function createFaceNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       };
 
       // A coarse mesh is enough: planar face normals do not depend on deflection.
-      const mesh = tessellate(oc, shape as Shape, 1.0, 0.6);
+      const { mesh } = tessellate(oc, shape as Shape, 1.0, 0.6);
       const matches = matchingFaces(mesh.faces, normal);
 
       if (matches.length === 0) {

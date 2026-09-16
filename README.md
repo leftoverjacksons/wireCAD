@@ -24,7 +24,8 @@ is ready, typically around two seconds.
 
 - **Toolbar** — a **Sketch** tab (Rectangle, Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect) and
-  *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each button opens a dialog.
+  *Modify* (Fillet, Shell), *Combine* (Cut, Union, Intersect) and *Construct*
+  (XY/XZ/YZ datum planes, Offset Plane). Each button opens a dialog.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
@@ -46,9 +47,18 @@ is ready, typically around two seconds.
   storage as you work, so a refresh resumes where you left off rather than
   reopening the starter model. *New* is an ordinary edit, so Ctrl+Z brings the
   previous model back.
+- **Fillet** rounds every edge of a solid at one radius. **Shell** hollows it to
+  a wall thickness, leaving open whichever face you click — the opening is
+  stored as the same normal-and-rank reference a face plane uses, so it survives
+  the model changing underneath it.
 - **Export** — *STL* writes a binary mesh for printing, *STEP* writes the actual
   B-rep for other CAD tools, both in millimetres. Exports cover the selected
   body, or every visible body when nothing is selected; sketches are excluded.
+
+Order matters for the modelling operations, as it does in any CAD system:
+shelling first and filleting the result works where filleting first and then
+trying to shell does not. When the kernel refuses an operation the node says so
+and the rest of the model stays cached, so it is cheap to try the other order.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a
   body to select it.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
@@ -126,7 +136,11 @@ That can replace the matching rule without changing the graph.
   rather than an inner loop.
 
 - No sketch constraint solver; sketches are parametric rectangles and circles.
-- No fillet, chamfer, sweep, loft, or patterns yet.
+- Fillet applies one radius to every edge; there is no per-edge selection yet.
+- No chamfer, draft, sweep, loft, or patterns yet.
+- Feature dialogs do not preview: nothing changes until you press Create.
+- The kernel's own failure reasons do not survive this WebAssembly build, so a
+  refused operation reports the likely cause rather than what OpenCASCADE said.
 - The bundled kernel is the full OpenCASCADE build (14 MB gzipped). A trimmed
   custom build would cut first-load cost substantially.
 - Geometry is verified in the browser rather than in the unit suite, because the

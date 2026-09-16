@@ -2,10 +2,19 @@ import type { Graph } from '../core/graph.js';
 import type { DataType, NodeId, PortRef, Vec3 } from '../core/types.js';
 import { COLUMN_GAP, NODE_WIDTH, ROW_GAP, nodeHeight } from './metrics.js';
 
+/**
+ * 'face' is not a port type. It means: pick a face, wire this geometry port to
+ * the body it belongs to, and write the selector into the node's nx/ny/nz/rank
+ * inputs — the same normal-and-rank reference the face nodes use.
+ */
+export type OperandKind = Extract<DataType, 'sketch' | 'geometry' | 'plane'> | 'face';
+
+export const FACE_SELECTOR_PORTS = ['nx', 'ny', 'nz', 'rank'] as const;
+
 export interface OperandSpec {
   id: string;
   label: string;
-  type: Extract<DataType, 'sketch' | 'geometry' | 'plane'>;
+  type: OperandKind;
   /** Leaving it empty falls back to the node's declared port default. */
   optional?: boolean;
 }
@@ -118,6 +127,25 @@ export const tabs: readonly FeatureTab[] = [
             nodeType: 'solid.extrude',
             operands: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
             numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
+          },
+        ],
+      },
+      {
+        label: 'Modify',
+        features: [
+          {
+            id: 'fillet',
+            label: 'Fillet',
+            nodeType: 'solid.fillet',
+            operands: [{ id: 'solid', label: 'Solid', type: 'geometry' }],
+            numbers: [{ id: 'radius', label: 'Radius', value: 2 }],
+          },
+          {
+            id: 'shell',
+            label: 'Shell',
+            nodeType: 'solid.shell',
+            operands: [{ id: 'solid', label: 'Open face', type: 'face' }],
+            numbers: [{ id: 'thickness', label: 'Thickness', value: 2 }],
           },
         ],
       },

@@ -266,6 +266,13 @@ main {
   white-space: nowrap;
 }
 
+.feature-chip-empty {
+  background: #1a1e25;
+  border-color: var(--line);
+  color: var(--muted);
+  font-style: italic;
+}
+
 .feature-pick {
   flex: none;
   background: transparent;

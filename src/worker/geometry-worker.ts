@@ -12,6 +12,7 @@ import { writeStep } from '../geometry/step.js';
 import { writeBinaryStl } from '../geometry/stl.js';
 import { createFaceNodes } from '../nodes/face.js';
 import { mathNodes } from '../nodes/math.js';
+import { createModifyNodes } from '../nodes/modify.js';
 import { planeNodes } from '../nodes/plane.js';
 import { createGeometryNodes } from '../nodes/solid.js';
 import type {
@@ -100,7 +101,7 @@ function solve(request: SolveRequest): void {
     visible.push(node.id);
     if (sentHashes.get(node.id) === nodeResult.hash) continue;
 
-    const buffers = tessellate(oc, value.handle as Shape);
+    const { mesh: buffers } = tessellate(oc, value.handle as Shape);
     triangles += buffers.indices.length / 3;
     meshes.push({
       nodeId: node.id,
@@ -164,7 +165,7 @@ function exportShapes(request: ExportRequest): void {
   const data =
     request.format === 'step'
       ? writeStep(oc, shape)
-      : writeBinaryStl(tessellate(oc, shape, EXPORT_DEFLECTION, 0.2));
+      : writeBinaryStl(tessellate(oc, shape, EXPORT_DEFLECTION, 0.2).mesh);
 
   post({ type: 'exported', requestId: request.requestId, format: request.format, data }, [
     data.buffer,
@@ -204,6 +205,7 @@ async function start(): Promise<void> {
   registry.registerAll(planeNodes);
   registry.registerAll(createGeometryNodes(oc));
   registry.registerAll(createFaceNodes(oc));
+  registry.registerAll(createModifyNodes(oc));
   evaluator = new Evaluator(registry, new LruCache(256, disposeCacheEntry));
 
   ready = true;
