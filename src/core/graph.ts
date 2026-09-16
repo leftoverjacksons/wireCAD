@@ -1,4 +1,4 @@
-import type { NodeRegistry } from './registry.js';
+import type { PortLookup } from './registry.js';
 import type { Edge, EdgeId, GraphNode, NodeId, PortId, PortRef, Value } from './types.js';
 import { typesCompatible } from './types.js';
 
@@ -39,7 +39,7 @@ export class Graph {
   private listeners = new Set<GraphListener>();
   private counter = 0;
 
-  constructor(readonly registry: NodeRegistry) {}
+  constructor(readonly registry: PortLookup) {}
 
   private freshId(prefix: string): string {
     return `${prefix}${++this.counter}`;
@@ -269,7 +269,7 @@ export class Graph {
     };
   }
 
-  static fromJSON(registry: NodeRegistry, data: SerializedGraph): Graph {
+  static fromJSON(registry: PortLookup, data: SerializedGraph): Graph {
     if (data.version !== 1) throw new Error(`Unsupported document version: ${data.version}`);
     const graph = new Graph(registry);
     for (const node of data.nodes) {

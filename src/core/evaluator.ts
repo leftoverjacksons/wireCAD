@@ -2,7 +2,7 @@ import { LruCache } from './cache.js';
 import type { Graph } from './graph.js';
 import { hash64, stableStringify } from './hash.js';
 import type { NodeRegistry } from './registry.js';
-import type { NodeId, PortId, Value } from './types.js';
+import type { NodeDefinition, NodeId, PortId, Value } from './types.js';
 
 export type NodeStatus = 'evaluated' | 'cached' | 'error' | 'skipped';
 
@@ -28,11 +28,12 @@ export interface EvalResult {
 
 export class Evaluator {
   constructor(
-    private readonly registry: NodeRegistry,
+    private readonly registry: NodeRegistry<NodeDefinition>,
     readonly cache: LruCache = new LruCache(),
   ) {}
 
   evaluate(graph: Graph): EvalResult {
+    this.cache.beginGeneration();
     const order = graph.topologicalOrder();
     const results = new Map<NodeId, NodeResult>();
     const stats: EvalStats = { evaluated: 0, cached: 0, errored: 0, skipped: 0 };

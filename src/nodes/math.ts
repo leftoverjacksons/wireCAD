@@ -1,18 +1,5 @@
-import type { NodeDefinition, Value } from '../core/types.js';
-
-function asNumber(value: Value, portId: string): number {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    throw new Error(`Input "${portId}" expects a number, got ${JSON.stringify(value)}`);
-  }
-  return value;
-}
-
-function asList(value: Value, portId: string): Value[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`Input "${portId}" expects a list, got ${JSON.stringify(value)}`);
-  }
-  return value;
-}
+import type { NodeDefinition } from '../core/types.js';
+import { asList, asNumber } from './coerce.js';
 
 function binary(
   type: string,

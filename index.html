@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:," />
-    <title>wireCAD — Phase 0 Engine</title>
+    <title>wireCAD — Phase 1</title>
     <style>
       :root {
         color-scheme: dark;
@@ -21,42 +21,44 @@
       * {
         box-sizing: border-box;
       }
+      html,
+      body {
+        height: 100%;
+      }
       body {
         margin: 0;
-        padding: 24px;
         background: var(--bg);
         color: var(--text);
-        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        height: 100vh;
+        overflow: hidden;
+      }
+      aside {
+        border-right: 1px solid var(--line);
+        padding: 18px;
+        overflow-y: auto;
+        background: var(--panel);
       }
       h1 {
-        font-size: 16px;
-        font-weight: 600;
-        margin: 0 0 4px;
+        font-size: 14px;
+        margin: 0 0 2px;
       }
-      p.lede {
+      #kernel-status {
         color: var(--muted);
-        margin: 0 0 24px;
-        max-width: 70ch;
-      }
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(240px, 300px) 1fr;
-        gap: 24px;
-        align-items: start;
-      }
-      .panel {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 16px;
-      }
-      .panel h2 {
         font-size: 12px;
+        margin-bottom: 20px;
+      }
+      h2 {
+        font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
         color: var(--muted);
-        margin: 0 0 12px;
-        font-weight: 600;
+        margin: 22px 0 12px;
+      }
+      h2:first-of-type {
+        margin-top: 0;
       }
       label {
         display: block;
@@ -78,23 +80,13 @@
         border-collapse: collapse;
         width: 100%;
       }
-      th {
-        text-align: left;
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--muted);
-        font-weight: 600;
-        padding: 0 12px 8px 0;
-        border-bottom: 1px solid var(--line);
-      }
       td {
-        padding: 7px 12px 7px 0;
+        padding: 4px 8px 4px 0;
         border-bottom: 1px solid var(--line);
         vertical-align: top;
       }
-      .status {
-        font-size: 12px;
+      td.muted {
+        color: var(--muted);
       }
       .status.evaluated {
         color: var(--evaluated);
@@ -108,47 +100,32 @@
       .status.skipped {
         color: var(--skipped);
       }
-      .stats {
-        margin-top: 14px;
+      #stats {
+        margin-top: 12px;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
       }
-      .stats b {
-        color: var(--text);
-        font-weight: 600;
+      #viewport {
+        position: relative;
+        overflow: hidden;
       }
     </style>
   </head>
   <body>
-    <h1>wireCAD — Phase 0 engine</h1>
-    <p class="lede">
-      Parametric graph with content-addressed evaluation. Move a slider and watch which nodes
-      actually recompute: only the changed node's downstream cone is marked
-      <span style="color: var(--evaluated)">evaluated</span>; everything else is served
-      <span style="color: var(--cached)">cached</span>. Geometry nodes replace these math nodes in
-      Phase 1 — the caching mechanism is unchanged.
-    </p>
-    <div class="layout">
-      <div class="panel">
-        <h2>Parameters</h2>
-        <div id="controls"></div>
-      </div>
-      <div class="panel">
-        <h2>Solve</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Node</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Output</th>
-            </tr>
-          </thead>
-          <tbody id="results"></tbody>
-        </table>
-        <div class="stats" id="stats"></div>
-      </div>
-    </div>
+    <aside>
+      <h1>wireCAD</h1>
+      <div id="kernel-status"></div>
+
+      <h2>Parameters</h2>
+      <div id="controls"></div>
+
+      <h2>Solve</h2>
+      <table>
+        <tbody id="reports"></tbody>
+      </table>
+      <div id="stats"></div>
+    </aside>
+    <main id="viewport"></main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

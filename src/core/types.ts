@@ -32,12 +32,16 @@ export interface PortDef {
   readonly default?: Value;
 }
 
-export interface NodeDefinition {
+/** Ports and presentation. The main thread knows this much without a kernel. */
+export interface NodeSchema {
   readonly type: string;
   readonly label: string;
   readonly category: string;
   readonly inputs: readonly PortDef[];
   readonly outputs: readonly PortDef[];
+}
+
+export interface NodeDefinition extends NodeSchema {
   evaluate(inputs: Record<PortId, Value>): Record<PortId, Value>;
 }
 

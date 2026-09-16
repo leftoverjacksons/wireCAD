@@ -5,36 +5,67 @@ export interface CacheEntry {
   readonly error: string | null;
 }
 
+export type DisposeEntry = (entry: CacheEntry) => void;
+
+interface Slot {
+  entry: CacheEntry;
+  generation: number;
+}
+
+/**
+ * Entries touched during the current generation are never evicted, so kernel
+ * shapes cannot be freed while the in-flight solve still references them.
+ */
 export class LruCache {
-  private entries = new Map<string, CacheEntry>();
+  private entries = new Map<string, Slot>();
+  private generation = 0;
   private hits = 0;
   private misses = 0;
 
-  constructor(private readonly maxEntries = 4096) {}
+  constructor(
+    private readonly maxEntries = 4096,
+    private readonly dispose?: DisposeEntry,
+  ) {}
+
+  beginGeneration(): void {
+    this.generation++;
+  }
 
   get(key: string): CacheEntry | undefined {
-    const entry = this.entries.get(key);
-    if (entry === undefined) {
+    const slot = this.entries.get(key);
+    if (slot === undefined) {
       this.misses++;
       return undefined;
     }
+    slot.generation = this.generation;
     this.entries.delete(key);
-    this.entries.set(key, entry);
+    this.entries.set(key, slot);
     this.hits++;
-    return entry;
+    return slot.entry;
   }
 
   set(key: string, entry: CacheEntry): void {
-    if (this.entries.has(key)) this.entries.delete(key);
-    this.entries.set(key, entry);
-    while (this.entries.size > this.maxEntries) {
-      const oldest = this.entries.keys().next();
-      if (oldest.done) break;
-      this.entries.delete(oldest.value);
+    const existing = this.entries.get(key);
+    if (existing !== undefined) {
+      this.entries.delete(key);
+      this.dispose?.(existing.entry);
+    }
+    this.entries.set(key, { entry, generation: this.generation });
+    this.evict();
+  }
+
+  private evict(): void {
+    if (this.entries.size <= this.maxEntries) return;
+    for (const [key, slot] of this.entries) {
+      if (this.entries.size <= this.maxEntries) break;
+      if (slot.generation === this.generation) continue;
+      this.entries.delete(key);
+      this.dispose?.(slot.entry);
     }
   }
 
   clear(): void {
+    for (const slot of this.entries.values()) this.dispose?.(slot.entry);
     this.entries.clear();
     this.hits = 0;
     this.misses = 0;
