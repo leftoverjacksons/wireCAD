@@ -34,6 +34,11 @@ is ready, typically around two seconds.
 - **Sketching on a face** — start a sketch, then click a flat face of a solid in
   the 3D view. That creates a `Face Plane` node holding the reference, and the
   sketch rides the face when the model changes underneath it.
+- **Sketch mode** — *Create Sketch* asks for a plane or a face, then aligns the
+  camera to it, dims everything else and gives you Line, Rectangle and Circle.
+  Points snap to a 1 mm grid. A polyline closes by clicking its first point or
+  pressing Enter; Escape cancels and creates nothing. Finishing emits a profile
+  node already wired to its plane.
 - **Undo** — Ctrl+Z and Ctrl+Shift+Z, or the toolbar buttons. A slider drag is
   one undo step.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a

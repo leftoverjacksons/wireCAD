@@ -153,6 +153,19 @@ describe('Evaluator', () => {
     expect(recovered.results.get(divide.id)?.outputs.result).toBe(5);
   });
 
+  it('treats a literal list input as part of the cache key', () => {
+    const { graph, evaluator } = setup();
+    const sum = graph.addNode('math.sum', { inputs: { values: [1, 2, 3] } });
+
+    expect(evaluator.evaluate(graph).results.get(sum.id)?.outputs.result).toBe(6);
+
+    graph.setInput(sum.id, 'values', [1, 2, 4]);
+    const second = evaluator.evaluate(graph);
+
+    expect(second.stats.evaluated).toBe(1);
+    expect(second.results.get(sum.id)?.outputs.result).toBe(7);
+  });
+
   it('does not invalidate cached results when a node is moved or renamed', () => {
     const { graph, evaluator } = setup();
     const value = graph.addNode('math.number', { inputs: { value: 3 } });

@@ -1,6 +1,6 @@
 import type { EvalStats, NodeStatus } from '../core/evaluator.js';
 import type { SerializedGraph } from '../core/graph.js';
-import type { NodeId } from '../core/types.js';
+import type { NodeId, PlaneValue } from '../core/types.js';
 import type { FaceInfo } from '../geometry/kernel.js';
 
 export interface SolveRequest {
@@ -40,6 +40,8 @@ export interface SolvedMessage {
   reports: NodeReport[];
   visible: NodeId[];
   meshes: MeshPayload[];
+  /** Resolved planes, so the interface can sketch on whatever a node produced. */
+  planes: Record<NodeId, PlaneValue>;
   stats: EvalStats;
   solveMs: number;
   meshMs: number;

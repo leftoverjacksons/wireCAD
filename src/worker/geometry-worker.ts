@@ -3,7 +3,8 @@ import { LruCache } from '../core/cache.js';
 import { Evaluator } from '../core/evaluator.js';
 import { Graph } from '../core/graph.js';
 import { NodeRegistry } from '../core/registry.js';
-import type { NodeId } from '../core/types.js';
+import type { NodeId, PlaneValue } from '../core/types.js';
+import { isPlane } from '../core/types.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { disposeCacheEntry, isGeometry, loadKernel, tessellate } from '../geometry/kernel.js';
 import { createFaceNodes } from '../nodes/face.js';
@@ -39,6 +40,13 @@ function solve(request: SolveRequest): void {
         ? { nodeId, status: nodeResult.status }
         : { nodeId, status: nodeResult.status, error: nodeResult.error },
     );
+  }
+
+  const planes: Record<NodeId, PlaneValue> = {};
+  for (const [nodeId, nodeResult] of result.results) {
+    for (const value of Object.values(nodeResult.outputs)) {
+      if (isPlane(value)) planes[nodeId] = value;
+    }
   }
 
   const visible: NodeId[] = [];
@@ -109,6 +117,7 @@ function solve(request: SolveRequest): void {
       reports,
       visible,
       meshes,
+      planes,
       stats: result.stats,
       solveMs,
       meshMs: performance.now() - meshStart,

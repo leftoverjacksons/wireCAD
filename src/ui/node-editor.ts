@@ -1,7 +1,8 @@
 import type { NodeStatus } from '../core/evaluator.js';
 import type { Graph, GraphChange } from '../core/graph.js';
 import type { PortLookup } from '../core/registry.js';
-import type { Edge, EdgeId, NodeId, NodeSchema, PortRef } from '../core/types.js';
+import type { Edge, EdgeId, NodeId, NodeSchema, PortRef, Value } from '../core/types.js';
+import { isPlane } from '../core/types.js';
 import type { NodeReport } from '../worker/protocol.js';
 import {
   HEADER_HEIGHT,
@@ -42,6 +43,15 @@ type Drag =
 
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM = 2.5;
+
+/** What an unwired, non-numeric input is currently holding. */
+function describeLiteral(value: Value): string {
+  if (value === null) return 'unconnected';
+  if (Array.isArray(value)) return `${value.length} values`;
+  if (isPlane(value)) return 'plane';
+  if (typeof value === 'object') return 'geometry';
+  return String(value);
+}
 
 function wirePath(x1: number, y1: number, x2: number, y2: number): string {
   const reach = Math.max(60, Math.abs(x2 - x1) * 0.5);
@@ -216,7 +226,7 @@ export class NodeEditor {
         } else if (!wired) {
           const hint = document.createElement('span');
           hint.className = 'port-hint';
-          hint.textContent = 'unconnected';
+          hint.textContent = describeLiteral(this.graph.inputValue(nodeId, input.id));
           rowEl.append(hint);
         }
       }

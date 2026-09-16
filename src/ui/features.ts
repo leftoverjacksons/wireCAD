@@ -1,5 +1,5 @@
 import type { Graph } from '../core/graph.js';
-import type { DataType, NodeId, PortRef } from '../core/types.js';
+import type { DataType, NodeId, PortRef, Vec3 } from '../core/types.js';
 import { COLUMN_GAP, NODE_WIDTH, ROW_GAP, nodeHeight } from './metrics.js';
 
 export interface OperandSpec {
@@ -22,6 +22,8 @@ export interface FeatureSpec {
   nodeType: string;
   operands: readonly OperandSpec[];
   numbers: readonly NumberSpec[];
+  /** 'sketch' hands off to interactive drawing instead of building a node. */
+  kind?: 'node' | 'sketch';
 }
 
 export interface FeatureGroup {
@@ -68,6 +70,14 @@ export const tabs: readonly FeatureTab[] = [
       {
         label: 'Create',
         features: [
+          {
+            id: 'sketch',
+            label: 'Create Sketch',
+            nodeType: 'sketch.polygon',
+            kind: 'sketch',
+            operands: [{ id: 'plane', label: 'Plane', type: 'plane' }],
+            numbers: [],
+          },
           {
             id: 'rectangle',
             label: 'Rectangle',
@@ -137,6 +147,45 @@ export const tabs: readonly FeatureTab[] = [
 export const features: readonly FeatureSpec[] = tabs.flatMap((tab) =>
   tab.groups.flatMap((group) => group.features),
 );
+
+/** Where a plane came from: an existing node, or a face that needs a reference node. */
+export type PlaneChoice =
+  | { kind: 'node'; nodeId: NodeId }
+  | { kind: 'face'; nodeId: NodeId; normal: Vec3; rank: number };
+
+/**
+ * Turn a plane choice into a port, creating the face reference node when the
+ * plane came from a picked face. Ids of anything created are appended to
+ * `created` so a failed build can be rolled back.
+ */
+export function resolvePlaneSource(
+  graph: Graph,
+  choice: PlaneChoice,
+  created: NodeId[],
+): PortRef {
+  if (choice.kind === 'node') {
+    const port = outputPortFor(graph, choice.nodeId, 'plane');
+    if (port === null) throw new Error('That node does not produce a plane');
+    return port;
+  }
+
+  const source = outputPortFor(graph, choice.nodeId, 'geometry');
+  if (source === null) throw new Error('A face reference needs a solid');
+
+  const node = graph.addNode('face.plane', {
+    inputs: {
+      nx: choice.normal.x,
+      ny: choice.normal.y,
+      nz: choice.normal.z,
+      rank: choice.rank,
+    },
+  });
+  created.push(node.id);
+  graph.connect(source, { node: node.id, port: 'solid' });
+  placeDownstream(graph, node.id);
+
+  return { node: node.id, port: 'plane' };
+}
 
 /** The output port on `nodeId` that can drive an operand of the given type. */
 export function outputPortFor(graph: Graph, nodeId: NodeId, type: DataType): PortRef | null {

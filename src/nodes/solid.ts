@@ -1,8 +1,9 @@
-import type { NodeDefinition, NodeSchema, PlaneValue } from '../core/types.js';
+import type { NodeDefinition, NodeSchema } from '../core/types.js';
+import { circleFace, polygonFace, rectangleFace } from '../geometry/build.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { geometry, geometryOf, shapeOf } from '../geometry/kernel.js';
-import { WORLD_XY, pointOnPlane } from '../geometry/plane.js';
-import { asNumber, asPlane, asPositive } from './coerce.js';
+import { WORLD_XY } from '../geometry/plane.js';
+import { asList, asNumber, asPlane, asPositive } from './coerce.js';
 
 export const rectangleSchema: NodeSchema = {
   type: 'sketch.rectangle',
@@ -27,6 +28,18 @@ export const circleSchema: NodeSchema = {
     { id: 'radius', label: 'Radius', type: 'number', default: 8 },
     { id: 'u', label: 'U', type: 'number', default: 0 },
     { id: 'v', label: 'V', type: 'number', default: 0 },
+  ],
+  outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
+};
+
+/** A drawn sketch: a closed polygon as a flat list of U/V pairs on its plane. */
+export const polygonSchema: NodeSchema = {
+  type: 'sketch.polygon',
+  label: 'Polygon',
+  category: 'Sketch',
+  inputs: [
+    { id: 'plane', label: 'Plane', type: 'plane', default: WORLD_XY },
+    { id: 'points', label: 'Points', type: 'list', default: [] },
   ],
   outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
 };
@@ -64,76 +77,12 @@ const booleanOperations = [
 export const geometrySchemas: readonly NodeSchema[] = [
   rectangleSchema,
   circleSchema,
+  polygonSchema,
   extrudeSchema,
   ...booleanOperations.map((operation) => operation.schema),
 ];
 
 export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
-  function faceFromWire(wire: Shape): Shape {
-    const maker = new oc.BRepBuilderAPI_MakeFace_15(wire, true);
-    if (!maker.IsDone()) {
-      maker.delete();
-      throw new Error('Profile does not bound a planar face');
-    }
-    const face = maker.Face();
-    maker.delete();
-    return face;
-  }
-
-  function rectangleFace(
-    plane: PlaneValue,
-    width: number,
-    height: number,
-    u: number,
-    v: number,
-  ): Shape {
-    const corners = [
-      pointOnPlane(plane, u, v),
-      pointOnPlane(plane, u + width, v),
-      pointOnPlane(plane, u + width, v + height),
-      pointOnPlane(plane, u, v + height),
-    ];
-
-    const wireMaker = new oc.BRepBuilderAPI_MakeWire_1();
-    for (let i = 0; i < corners.length; i++) {
-      const from = corners[i]!;
-      const to = corners[(i + 1) % corners.length]!;
-      const p1 = new oc.gp_Pnt_3(from.x, from.y, from.z);
-      const p2 = new oc.gp_Pnt_3(to.x, to.y, to.z);
-      const edgeMaker = new oc.BRepBuilderAPI_MakeEdge_3(p1, p2);
-      wireMaker.Add_1(edgeMaker.Edge());
-      edgeMaker.delete();
-      p1.delete();
-      p2.delete();
-    }
-
-    const wire = wireMaker.Wire();
-    wireMaker.delete();
-    return faceFromWire(wire);
-  }
-
-  function circleFace(plane: PlaneValue, radius: number, u: number, v: number): Shape {
-    const centre = pointOnPlane(plane, u, v);
-
-    const origin = new oc.gp_Pnt_3(centre.x, centre.y, centre.z);
-    const normal = new oc.gp_Dir_4(plane.normal.x, plane.normal.y, plane.normal.z);
-    const axis = new oc.gp_Ax2_3(origin, normal);
-    const circle = new oc.gp_Circ_2(axis, radius);
-
-    const edgeMaker = new oc.BRepBuilderAPI_MakeEdge_8(circle);
-    const wireMaker = new oc.BRepBuilderAPI_MakeWire_2(edgeMaker.Edge());
-    const wire = wireMaker.Wire();
-
-    wireMaker.delete();
-    edgeMaker.delete();
-    circle.delete();
-    axis.delete();
-    normal.delete();
-    origin.delete();
-
-    return faceFromWire(wire);
-  }
-
   const rectangle: NodeDefinition = {
     ...rectangleSchema,
     evaluate(inputs) {
@@ -141,6 +90,7 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       return {
         profile: geometry(
           rectangleFace(
+            oc,
             plane,
             asPositive(inputs.width ?? null, 'width'),
             asPositive(inputs.height ?? null, 'height'),
@@ -160,6 +110,7 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       return {
         profile: geometry(
           circleFace(
+            oc,
             plane,
             asPositive(inputs.radius ?? null, 'radius'),
             asNumber(inputs.u ?? null, 'u'),
@@ -168,6 +119,26 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
           plane,
         ),
       };
+    },
+  };
+
+  const polygon: NodeDefinition = {
+    ...polygonSchema,
+    evaluate(inputs) {
+      const plane = asPlane(inputs.plane ?? null, 'plane');
+      const raw = asList(inputs.points ?? null, 'points');
+
+      if (raw.length < 6) throw new Error('A profile needs at least three points');
+      if (raw.length % 2 !== 0) throw new Error('Points must be pairs of U and V');
+
+      const uv = raw.map((value, index) => {
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+          throw new Error(`Point value ${index} is not a number`);
+        }
+        return value;
+      });
+
+      return { profile: geometry(polygonFace(oc, plane, uv), plane) };
     },
   };
 
@@ -211,5 +182,5 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
     },
   }));
 
-  return [rectangle, circle, extrude, ...booleans];
+  return [rectangle, circle, polygon, extrude, ...booleans];
 }

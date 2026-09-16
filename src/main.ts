@@ -2,14 +2,17 @@ import './styles.css';
 import { Graph } from './core/graph.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
-import type { NodeId, NodeSchema } from './core/types.js';
+import type { NodeId, NodeSchema, PlaneValue } from './core/types.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
 import type { FaceHit } from './viewport.js';
+import { makePlane } from './geometry/plane.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
+import type { PlaneChoice } from './ui/features.js';
+import { SketchMode } from './ui/sketch-mode.js';
 import { tabs } from './ui/features.js';
 import { autoLayout } from './ui/layout.js';
 import { NodeEditor } from './ui/node-editor.js';
@@ -84,6 +87,30 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
 });
 editor.frame();
 
+let lastPlanes: Record<NodeId, PlaneValue> = {};
+
+/** Resolve a plane choice to the plane the graph will actually produce for it. */
+function planeValueFor(choice: PlaneChoice): PlaneValue | null {
+  if (choice.kind === 'node') return lastPlanes[choice.nodeId] ?? null;
+
+  const faces = viewport.facesOf(choice.nodeId);
+  if (faces === undefined) return null;
+
+  // Matched the same way face.plane will, so the preview cannot drift from it.
+  const match = matchingFaces(faces, choice.normal)[choice.rank];
+  return match === undefined ? null : makePlane(match.face.origin, match.face.normal);
+}
+
+const sketchMode = new SketchMode(viewportEl, graph, viewport, {
+  onBeforeChange: () => history.capture(),
+  onFinish: (nodeId) => {
+    applySelection(nodeId, true);
+    editor.reveal(nodeId);
+    requestSolve();
+  },
+  onExit: () => document.body.classList.remove('sketching'),
+});
+
 const dialog = new FeatureDialog(viewportEl, graph, {
   onBeforeChange: () => history.capture(),
   onCommit: (nodeId) => {
@@ -92,6 +119,15 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     requestSolve();
   },
   onArmedChanged: (armed) => document.body.classList.toggle('picking', armed),
+  onSketch: (choice) => {
+    const plane = planeValueFor(choice);
+    if (plane === null) {
+      statusEl.textContent = 'That plane has not been solved yet — try again in a moment.';
+      return;
+    }
+    document.body.classList.add('sketching');
+    sketchMode.enter(plane, choice);
+  },
 });
 
 const toolbar = new Toolbar(viewportEl, tabs, (spec) => dialog.open(spec, selected));
@@ -287,6 +323,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     return;
   }
 
+  lastPlanes = message.planes;
   for (const mesh of message.meshes) viewport.setMesh(mesh);
   viewport.retain(message.visible);
   viewport.frameOnce();

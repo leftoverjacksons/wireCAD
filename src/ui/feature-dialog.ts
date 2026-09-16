@@ -1,12 +1,14 @@
 import type { Graph } from '../core/graph.js';
 import type { NodeId, PortRef, Vec3 } from '../core/types.js';
-import type { FeatureSpec, OperandSpec } from './features.js';
-import { buildFeature, candidatesFor, outputPortFor, placeDownstream } from './features.js';
+import type { FeatureSpec, OperandSpec, PlaneChoice } from './features.js';
+import { buildFeature, candidatesFor, outputPortFor, resolvePlaneSource } from './features.js';
 
 export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
   onCommit(nodeId: NodeId): void;
   onArmedChanged(armed: boolean): void;
+  /** A sketch feature hands its plane off to interactive drawing. */
+  onSketch(choice: PlaneChoice): void;
 }
 
 export interface PickedFace {
@@ -14,9 +16,7 @@ export interface PickedFace {
   rank: number;
 }
 
-type OperandChoice =
-  | { kind: 'node'; nodeId: NodeId }
-  | { kind: 'face'; nodeId: NodeId; normal: Vec3; rank: number };
+type OperandChoice = PlaneChoice;
 
 export class FeatureDialog {
   private readonly element: HTMLElement;
@@ -275,23 +275,7 @@ export class FeatureDialog {
       if (port === null) throw new Error(`${operand.label} is not a ${operand.type}`);
       return port;
     }
-
-    const source = outputPortFor(this.graph, choice.nodeId, 'geometry');
-    if (source === null) throw new Error(`${operand.label} is not a solid`);
-
-    const node = this.graph.addNode('face.plane', {
-      inputs: {
-        nx: choice.normal.x,
-        ny: choice.normal.y,
-        nz: choice.normal.z,
-        rank: choice.rank,
-      },
-    });
-    created.push(node.id);
-    this.graph.connect(source, { node: node.id, port: 'solid' });
-    placeDownstream(this.graph, node.id);
-
-    return { node: node.id, port: 'plane' };
+    return resolvePlaneSource(this.graph, choice, created);
   }
 
   private commit(): void {
@@ -301,6 +285,18 @@ export class FeatureDialog {
     for (const operand of spec.operands) {
       if (this.chosen.has(operand.id) || operand.optional === true) continue;
       this.setMessage(`${operand.label} is required`);
+      return;
+    }
+
+    // A sketch feature creates nothing yet: drawing decides what gets built.
+    if (spec.kind === 'sketch') {
+      const choice = this.chosen.get(spec.operands[0]?.id ?? '');
+      if (choice === undefined) {
+        this.setMessage('Pick a plane or a flat face');
+        return;
+      }
+      this.close();
+      this.callbacks.onSketch(choice);
       return;
     }
 

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { NodeId } from './core/types.js';
+import type { NodeId, PlaneValue, Vec3 } from './core/types.js';
 import type { FaceInfo } from './geometry/kernel.js';
+import { planeYAxis } from './geometry/plane.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
 
 export interface FaceHit {
@@ -67,6 +68,16 @@ export class Viewport {
   private highlighted: NodeId | null = null;
   private highlightedFace: FaceHit | null = null;
   private framed = false;
+  private pickingEnabled = true;
+
+  private sketchLine: THREE.LineLoop | THREE.Line | null = null;
+  private sketchPoints: THREE.Points | null = null;
+  private readonly sketchLineMaterial = new THREE.LineBasicMaterial({ color: 0x6ad3a8 });
+  private readonly sketchPointMaterial = new THREE.PointsMaterial({
+    color: 0xf0a04b,
+    size: 7,
+    sizeAttenuation: false,
+  });
 
   constructor(private readonly container: HTMLElement) {
     this.scene.background = new THREE.Color(0x14171c);
@@ -114,13 +125,20 @@ export class Viewport {
     const canvas = this.renderer.domElement;
     let downX = 0;
     let downY = 0;
+    let armed = false;
 
     canvas.addEventListener('pointerdown', (event) => {
       downX = event.clientX;
       downY = event.clientY;
+      armed = this.pickingEnabled;
     });
 
     canvas.addEventListener('pointerup', (event) => {
+      // A click that began in another mode belongs to that mode, even if the
+      // mode ended between pointerdown and pointerup.
+      const wasArmed = armed;
+      armed = false;
+      if (!wasArmed || !this.pickingEnabled) return;
       if (Math.hypot(event.clientX - downX, event.clientY - downY) > 4) return;
 
       const rect = canvas.getBoundingClientRect();
@@ -157,6 +175,111 @@ export class Viewport {
 
   onPick(listener: (hit: FaceHit | null) => void): void {
     this.pickListener = listener;
+  }
+
+  get canvas(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
+  // ------------------------------------------------------------ sketch mode
+
+  setPickingEnabled(enabled: boolean): void {
+    this.pickingEnabled = enabled;
+  }
+
+  /** Look straight down a plane's normal, with the plane's V axis pointing up. */
+  alignToPlane(plane: PlaneValue): void {
+    const origin = new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z);
+    const normal = new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z);
+    const up = planeYAxis(plane);
+
+    const box = new THREE.Box3();
+    for (const mesh of this.meshes.values()) box.expandByObject(mesh);
+    const span = box.isEmpty() ? 120 : box.getSize(new THREE.Vector3()).length();
+
+    this.camera.up.set(up.x, up.y, up.z);
+    this.controls.target.copy(origin);
+    this.camera.position.copy(origin).add(normal.multiplyScalar(span * 1.2));
+    this.camera.updateProjectionMatrix();
+    this.controls.enableRotate = false;
+    this.controls.update();
+  }
+
+  releasePlaneAlignment(): void {
+    this.camera.up.set(0, 0, 1);
+    this.controls.enableRotate = true;
+    this.controls.update();
+  }
+
+  /** Where a screen position lands on the plane, in the plane's own U/V axes. */
+  planePoint(clientX: number, clientY: number, plane: PlaneValue): { u: number; v: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    const normal = new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z);
+    const origin = new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z);
+    const mathPlane = new THREE.Plane(normal, -normal.dot(origin));
+
+    const hit = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(mathPlane, hit) === null) return null;
+
+    const relative = hit.sub(origin);
+    const yAxis = planeYAxis(plane);
+    return {
+      u: relative.x * plane.xAxis.x + relative.y * plane.xAxis.y + relative.z * plane.xAxis.z,
+      v: relative.x * yAxis.x + relative.y * yAxis.y + relative.z * yAxis.z,
+    };
+  }
+
+  setSketchPreview(points: readonly Vec3[], closed: boolean): void {
+    this.clearSketchPreview();
+    if (points.length === 0) return;
+
+    const flat = new Float32Array(points.length * 3);
+    points.forEach((point, index) => {
+      flat[index * 3] = point.x;
+      flat[index * 3 + 1] = point.y;
+      flat[index * 3 + 2] = point.z;
+    });
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+
+    if (points.length > 1) {
+      this.sketchLine = closed
+        ? new THREE.LineLoop(geometry, this.sketchLineMaterial)
+        : new THREE.Line(geometry, this.sketchLineMaterial);
+      this.sketchLine.renderOrder = 4;
+      this.scene.add(this.sketchLine);
+    }
+
+    this.sketchPoints = new THREE.Points(geometry, this.sketchPointMaterial);
+    this.sketchPoints.renderOrder = 5;
+    this.scene.add(this.sketchPoints);
+  }
+
+  clearSketchPreview(): void {
+    if (this.sketchLine !== null) {
+      this.scene.remove(this.sketchLine);
+      this.sketchLine = null;
+    }
+    if (this.sketchPoints !== null) {
+      this.scene.remove(this.sketchPoints);
+      this.sketchPoints.geometry.dispose();
+      this.sketchPoints = null;
+    }
+  }
+
+  setDimmed(dimmed: boolean): void {
+    for (const material of [this.material, this.highlightMaterial]) {
+      material.transparent = dimmed;
+      material.opacity = dimmed ? 0.25 : 1;
+      material.needsUpdate = true;
+    }
   }
 
   private baseMaterial(nodeId: NodeId): THREE.Material {
