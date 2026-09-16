@@ -4,6 +4,7 @@ import { NodeRegistry } from './core/registry.js';
 import type { NodeId, NodeSchema } from './core/types.js';
 import { mathNodes } from './nodes/math.js';
 import { geometrySchemas } from './nodes/solid.js';
+import { FeatureDialog, createToolbar } from './ui/feature-dialog.js';
 import { autoLayout } from './ui/layout.js';
 import { NodeEditor } from './ui/node-editor.js';
 import { Viewport } from './viewport.js';
@@ -50,21 +51,41 @@ graph.connect({ node: bore.id, port: 'solid' }, { node: result.id, port: 'tool' 
 
 autoLayout(graph);
 
-const viewport = new Viewport(document.getElementById('viewport')!);
+const viewportEl = document.getElementById('viewport')!;
+const viewport = new Viewport(viewportEl);
 const statsEl = document.getElementById('stats')!;
 const statusEl = document.getElementById('kernel-status')!;
 const controls = document.getElementById('controls')!;
 
+let selected: NodeId | null = null;
+
 const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onDocumentChanged: () => requestSolve(),
-  onSelectionChanged: (nodeId) => viewport.setHighlight(nodeId),
+  onSelectionChanged: (nodeId) => applySelection(nodeId, false),
+  // The editor already holds this selection; only the viewport needs telling.
 });
 editor.frame();
 
-viewport.onPick((nodeId) => {
-  editor.setSelection(nodeId);
-  viewport.setHighlight(nodeId);
+const dialog = new FeatureDialog(viewportEl, graph, {
+  onCommit: (nodeId) => {
+    applySelection(nodeId, true);
+    editor.reveal(nodeId);
+    requestSolve();
+  },
+  onArmedChanged: (armed) => document.body.classList.toggle('picking', armed),
 });
+
+createToolbar(viewportEl, (spec) => dialog.open(spec, selected));
+
+/** A dialog waiting for an operand consumes the click instead of selecting. */
+function applySelection(nodeId: NodeId | null, syncEditor: boolean): void {
+  if (nodeId !== null && dialog.isArmed && dialog.offerNode(nodeId)) return;
+  selected = nodeId;
+  if (syncEditor) editor.setSelection(nodeId);
+  viewport.setHighlight(nodeId);
+}
+
+viewport.onPick((nodeId) => applySelection(nodeId, true));
 
 // ------------------------------------------------------------------ controls
 

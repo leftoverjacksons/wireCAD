@@ -533,6 +533,31 @@ export class NodeEditor {
     }
   }
 
+  /** Pan just enough to bring a node into view, keeping the current zoom. */
+  reveal(nodeId: NodeId): void {
+    const node = this.graph.getNode(nodeId);
+    if (node === undefined) return;
+
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    if (width === 0 || height === 0) return;
+
+    const schema = this.registry.require(node.type);
+    const left = this.pan.x + node.position.x * this.zoom;
+    const top = this.pan.y + node.position.y * this.zoom;
+    const right = left + NODE_WIDTH * this.zoom;
+    const bottom = top + nodeHeight(schema) * this.zoom;
+    const margin = 32;
+
+    if (right > width - margin) this.pan.x -= right - (width - margin);
+    else if (left < margin) this.pan.x += margin - left;
+
+    if (bottom > height - margin) this.pan.y -= bottom - (height - margin);
+    else if (top < margin) this.pan.y += margin - top;
+
+    this.applyTransform();
+  }
+
   frame(): void {
     const nodes = this.graph.allNodes();
     if (nodes.length === 0) return;

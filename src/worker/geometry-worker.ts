@@ -48,16 +48,20 @@ function solve(request: SolveRequest): void {
   for (const node of graph.allNodes()) {
     const definition = registry.require(node.type);
     const consumed = new Set(graph.outgoingEdges(node.id).map((edge) => edge.from.port));
-    const terminal = definition.outputs.find(
-      (port) => port.type === 'geometry' && !consumed.has(port.id),
+
+    // Solids show only where nothing consumes them; sketches always show, so
+    // they can be picked as operands even once a feature is built on them.
+    const displayable = definition.outputs.find(
+      (port) =>
+        port.type === 'sketch' || (port.type === 'geometry' && !consumed.has(port.id)),
     );
-    if (terminal === undefined) continue;
+    if (displayable === undefined) continue;
 
     const nodeResult = result.results.get(node.id);
     if (nodeResult === undefined) continue;
     if (nodeResult.status === 'error' || nodeResult.status === 'skipped') continue;
 
-    const value = nodeResult.outputs[terminal.id];
+    const value = nodeResult.outputs[displayable.id];
     if (value === undefined || !isGeometry(value)) continue;
 
     visible.push(node.id);
@@ -65,7 +69,11 @@ function solve(request: SolveRequest): void {
 
     const buffers = tessellate(oc, value.handle as Shape);
     triangles += buffers.indices.length / 3;
-    meshes.push({ nodeId: node.id, ...buffers });
+    meshes.push({
+      nodeId: node.id,
+      kind: displayable.type === 'sketch' ? 'sketch' : 'solid',
+      ...buffers,
+    });
     transfer.push(buffers.positions.buffer, buffers.normals.buffer, buffers.indices.buffer);
     sentHashes.set(node.id, nodeResult.hash);
   }

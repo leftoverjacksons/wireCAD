@@ -21,8 +21,11 @@ export interface NodeReport {
   error?: string;
 }
 
+export type MeshKind = 'solid' | 'sketch';
+
 export interface MeshPayload {
   nodeId: NodeId;
+  kind: MeshKind;
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;

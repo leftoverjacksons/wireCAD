@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { NodeId } from './core/types.js';
-import type { MeshPayload } from './worker/protocol.js';
+import type { MeshKind, MeshPayload } from './worker/protocol.js';
 
 export class Viewport {
   private readonly scene = new THREE.Scene();
@@ -14,12 +14,38 @@ export class Viewport {
     metalness: 0.0,
     roughness: 0.45,
   });
+  private readonly sketchMaterial = new THREE.MeshStandardMaterial({
+    color: 0x6ad3a8,
+    metalness: 0.0,
+    roughness: 0.6,
+    transparent: true,
+    opacity: 0.42,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
   private readonly highlightMaterial = new THREE.MeshStandardMaterial({
     color: 0xffc98a,
     metalness: 0.0,
     roughness: 0.35,
     emissive: 0x4a2c0c,
   });
+  private readonly sketchHighlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9cf5cd,
+    metalness: 0.0,
+    roughness: 0.5,
+    emissive: 0x1d5540,
+    transparent: true,
+    opacity: 0.65,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  private readonly kinds = new Map<NodeId, MeshKind>();
   private readonly raycaster = new THREE.Raycaster();
   private pickListener: ((nodeId: NodeId | null) => void) | null = null;
   private highlighted: NodeId | null = null;
@@ -97,15 +123,23 @@ export class Viewport {
     this.pickListener = listener;
   }
 
+  private materialFor(nodeId: NodeId): THREE.Material {
+    const isSketch = this.kinds.get(nodeId) === 'sketch';
+    if (nodeId === this.highlighted) {
+      return isSketch ? this.sketchHighlightMaterial : this.highlightMaterial;
+    }
+    return isSketch ? this.sketchMaterial : this.material;
+  }
+
   setHighlight(nodeId: NodeId | null): void {
     if (this.highlighted === nodeId) return;
     this.highlighted = nodeId;
-    for (const [id, mesh] of this.meshes) {
-      mesh.material = id === nodeId ? this.highlightMaterial : this.material;
-    }
+    for (const [id, mesh] of this.meshes) mesh.material = this.materialFor(id);
   }
 
   setMesh(payload: MeshPayload): void {
+    this.kinds.set(payload.nodeId, payload.kind);
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(payload.positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(payload.normals, 3));
@@ -116,14 +150,13 @@ export class Viewport {
     if (existing !== undefined) {
       existing.geometry.dispose();
       existing.geometry = geometry;
+      existing.material = this.materialFor(payload.nodeId);
       return;
     }
 
-    const mesh = new THREE.Mesh(
-      geometry,
-      payload.nodeId === this.highlighted ? this.highlightMaterial : this.material,
-    );
+    const mesh = new THREE.Mesh(geometry, this.materialFor(payload.nodeId));
     mesh.userData.nodeId = payload.nodeId;
+    mesh.renderOrder = payload.kind === 'sketch' ? 1 : 0;
     this.meshes.set(payload.nodeId, mesh);
     this.scene.add(mesh);
   }
@@ -135,6 +168,7 @@ export class Viewport {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
       this.meshes.delete(nodeId);
+      this.kinds.delete(nodeId);
     }
   }
 
