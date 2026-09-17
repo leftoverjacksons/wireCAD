@@ -153,6 +153,13 @@ export class Viewport {
     null;
 
   private readonly overlay: Array<THREE.LineSegments | THREE.Points> = [];
+  private readonly annotations: THREE.LineSegments[] = [];
+  private readonly cameraListeners = new Set<() => void>();
+  /** Dimensions are the interface talking about the sketch, not the sketch. */
+  private readonly annotationMaterial = new THREE.LineBasicMaterial({
+    color: 0x5cecff,
+    depthTest: false,
+  });
   // The sketch being edited sits on the face it defines, so it is drawn without
   // depth testing: what you are editing is never hidden by what it produces.
   private readonly overlayMaterial = new THREE.LineBasicMaterial({
@@ -260,6 +267,7 @@ export class Viewport {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
+    this.controls.addEventListener('change', () => this.cameraChanged());
 
     this.scene.add(new THREE.HemisphereLight(0xe8ecff, 0x171b45, 1.2));
 
@@ -698,7 +706,9 @@ export class Viewport {
 
     const box = new THREE.Box3();
     for (const mesh of this.meshes.values()) box.expandByObject(mesh);
-    const span = box.isEmpty() ? 120 : box.getSize(new THREE.Vector3()).length();
+    // Room to work in: a sketch is usually drawn a little larger than what it
+    // is drawn on, and dimensions sit outside the shape besides.
+    const span = (box.isEmpty() ? 120 : box.getSize(new THREE.Vector3()).length()) * 1.5;
 
     this.camera.up.set(up.x, up.y, up.z);
     this.controls.target.copy(origin);
@@ -836,12 +846,59 @@ export class Viewport {
     }
   }
 
+  /**
+   * The dimensions drawn on the sketch: witness lines, arrowheads and all.
+   *
+   * Only the lines. The numbers are laid over the canvas as text by whoever is
+   * editing the sketch, because a number you can type into beats one baked into
+   * the scene.
+   */
+  setSketchAnnotations(lines: ReadonlyArray<readonly [Vec3, Vec3]>): void {
+    this.clearSketchAnnotations();
+    if (lines.length === 0) return;
+
+    const flat = new Float32Array(lines.length * 6);
+    lines.forEach(([from, to], index) => {
+      flat.set([from.x, from.y, from.z, to.x, to.y, to.z], index * 6);
+    });
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+
+    const object = new THREE.LineSegments(geometry, this.annotationMaterial);
+    object.renderOrder = 8;
+    this.annotations.push(object);
+    this.scene.add(object);
+  }
+
+  private clearSketchAnnotations(): void {
+    for (const object of this.annotations) {
+      this.scene.remove(object);
+      object.geometry.dispose();
+    }
+    this.annotations.length = 0;
+  }
+
   clearSketchOverlay(): void {
     for (const object of this.overlay) {
       this.scene.remove(object);
       object.geometry.dispose();
     }
     this.overlay.length = 0;
+    this.clearSketchAnnotations();
+  }
+
+  /**
+   * Called whenever the view moves, for anything laid over the canvas in screen
+   * positions that have to follow it.
+   */
+  onCameraChange(listener: () => void): () => void {
+    this.cameraListeners.add(listener);
+    return () => this.cameraListeners.delete(listener);
+  }
+
+  private cameraChanged(): void {
+    for (const listener of this.cameraListeners) listener();
   }
 
   /** How far a click may miss, in model units, for a given screen slack. */
@@ -1123,5 +1180,6 @@ export class Viewport {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    this.cameraChanged();
   }
 }

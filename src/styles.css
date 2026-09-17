@@ -893,3 +893,35 @@ input[type='range'] {
   background: var(--bg);
   color: var(--accent);
 }
+
+/* Numbers drawn on a sketch: laid over the canvas, typed into in place. */
+.sketch-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.sketch-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.sketch-label-field {
+  min-width: 34px;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: #0f1235e6;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+
+.sketch-label-field:focus {
+  outline: none;
+  border-color: var(--highlight);
+  color: var(--highlight);
+}

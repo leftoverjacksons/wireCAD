@@ -2,6 +2,8 @@ import type { Graph } from '../core/graph.js';
 import type { NodeId, PlaneValue, Value, Vec3 } from '../core/types.js';
 import { pointOnPlane } from '../geometry/plane.js';
 import { dimensionPort } from '../nodes/constrained.js';
+import type { Annotation } from '../sketch/annotate.js';
+import { annotate } from '../sketch/annotate.js';
 import type { Draft } from '../sketch/draw.js';
 import { addCircle, addLine, addPoint, addRectangle, removeParts, uniqueName } from '../sketch/draw.js';
 import type { Constraint, Point, Sketch } from '../sketch/model.js';
@@ -17,7 +19,7 @@ export interface SketchSessionCallbacks {
 }
 
 type Selection = { kind: 'point' | 'entity'; index: number };
-type ToolId = 'select' | 'line' | 'rectangle' | 'circle' | 'point';
+type ToolId = 'select' | 'line' | 'rectangle' | 'circle' | 'point' | 'dimension';
 
 interface DrawTool {
   id: ToolId;
@@ -43,6 +45,11 @@ const DRAW_TOOLS: DrawTool[] = [
   { id: 'rectangle', label: 'Rectangle', hint: 'Click one corner, then the opposite corner.' },
   { id: 'circle', label: 'Circle', hint: 'Click the centre, then a point on the circle.' },
   { id: 'point', label: 'Point', hint: 'Click to place a point to constrain things against.' },
+  {
+    id: 'dimension',
+    label: 'Dimension',
+    hint: 'Click a line, a circle, or two points. Click a second line for an angle, or empty space to settle a length. Then type the number.',
+  },
 ];
 
 const CIRCLE_SEGMENTS = 48;
@@ -176,6 +183,13 @@ export class SketchSession {
   private readonly hintEl: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly toolButtons = new Map<ToolId, HTMLButtonElement>();
+  /** The numbers drawn on the sketch, one field per dimension. */
+  private readonly labelLayer: HTMLElement;
+  private readonly labels = new Map<string, HTMLInputElement>();
+  private annotations: Annotation[] = [];
+  private releaseCamera: (() => void) | null = null;
+  /** A dimension just made, whose number should be waiting to be typed over. */
+  private pendingLabel: string | null = null;
 
   private nodeId: NodeId | null = null;
   private plane: PlaneValue | null = null;
@@ -195,6 +209,11 @@ export class SketchSession {
     private readonly viewport: Viewport,
     private readonly callbacks: SketchSessionCallbacks,
   ) {
+    this.labelLayer = document.createElement('div');
+    this.labelLayer.className = 'sketch-labels';
+    this.labelLayer.hidden = true;
+    container.append(this.labelLayer);
+
     this.panel = document.createElement('div');
     this.panel.className = 'sketch-panel';
     this.panel.hidden = true;
@@ -232,18 +251,12 @@ export class SketchSession {
       relations.row.append(button);
     }
 
-    const dimension = document.createElement('button');
-    dimension.type = 'button';
-    dimension.className = 'tool-button tool-primary';
-    dimension.textContent = 'Dimension';
-    dimension.addEventListener('click', () => this.applyDimension());
-
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'tool-button';
     remove.textContent = 'Delete';
     remove.addEventListener('click', () => this.deletePicked());
-    relations.row.append(dimension, remove);
+    relations.row.append(remove);
 
     this.hintEl = document.createElement('div');
     this.hintEl.className = 'sketch-hint';
@@ -319,6 +332,8 @@ export class SketchSession {
     this.cursor = null;
 
     this.panel.hidden = false;
+    this.labelLayer.hidden = false;
+    this.releaseCamera = this.viewport.onCameraChange(() => this.placeLabels());
     this.viewport.setPickingEnabled(false);
     this.viewport.setDimmed(true);
     this.viewport.alignToPlane(plane);
@@ -354,6 +369,13 @@ export class SketchSession {
     this.picked = [];
     this.chain = [];
     this.result = null;
+
+    this.releaseCamera?.();
+    this.releaseCamera = null;
+    this.labelLayer.hidden = true;
+    this.labelLayer.replaceChildren();
+    this.labels.clear();
+    this.annotations = [];
 
     this.panel.hidden = true;
     this.viewport.clearSketchOverlay();
@@ -433,10 +455,19 @@ export class SketchSession {
   // --------------------------------------------------------------- tools
 
   private setTool(tool: ToolId): void {
+    // The dimension tool keeps whatever is already picked: pressing it with a
+    // line selected is the short way to dimension that line.
+    if (tool === 'dimension' && this.picked.length > 0 && this.applyDimension(true)) {
+      this.tool = tool;
+      for (const [id, button] of this.toolButtons) button.classList.toggle('is-active', id === tool);
+      this.hintEl.textContent = DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '';
+      return;
+    }
+
     this.tool = tool;
     this.chain = [];
     this.cursor = null;
-    if (tool !== 'select') this.picked = [];
+    if (tool !== 'select' && tool !== 'dimension') this.picked = [];
 
     for (const [id, button] of this.toolButtons) button.classList.toggle('is-active', id === tool);
     this.hintEl.textContent = DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '';
@@ -456,9 +487,16 @@ export class SketchSession {
     this.tryAdding(relation.apply(this.picked, draft.sketch), relation.label);
   }
 
-  private applyDimension(): void {
+  /**
+   * Turns what is picked into a dimension, if it says enough to be one.
+   *
+   * Returns false when the selection is not yet a dimension — one line could
+   * still become an angle if another is picked — so the tool knows to wait
+   * rather than complain.
+   */
+  private applyDimension(quiet = false): boolean {
     const draft = this.draft;
-    if (draft === null || this.result === null) return;
+    if (draft === null || this.result === null) return false;
 
     const sketch = draft.sketch;
     const chosenLines = lines(this.picked);
@@ -509,14 +547,25 @@ export class SketchSession {
     }
 
     if (constraint === null) {
-      this.hintEl.textContent =
-        'Dimension: pick a line, a circle, two points, or two lines for an angle.';
-      return;
+      if (!quiet) {
+        this.hintEl.textContent =
+          'Dimension: pick a line, a circle, two points, or two lines for an angle.';
+      }
+      return false;
     }
 
     const name = (constraint as { dimension: string }).dimension;
     draft.dimensions.set(name, value);
-    if (!this.tryAdding([constraint], 'Dimension')) draft.dimensions.delete(name);
+    if (!this.tryAdding([constraint], 'Dimension')) {
+      draft.dimensions.delete(name);
+      return false;
+    }
+
+    // Straight into typing over it, which is the whole point of putting the
+    // number on the drawing.
+    this.pendingLabel = name;
+    this.render();
+    return true;
   }
 
   private angleBetween(a: number, b: number): number {
@@ -714,13 +763,19 @@ export class SketchSession {
     if (at === null) return;
     event.preventDefault();
 
-    if (this.tool !== 'select') {
+    if (this.tool !== 'select' && this.tool !== 'dimension') {
       this.draw(at);
       return;
     }
 
     const hit = this.nearest(at, this.slack());
+
+    // Empty space settles a dimension that could have gone on being added to:
+    // one line is a length until a second line makes it an angle.
     if (hit === null) {
+      if (this.tool === 'dimension' && this.picked.length > 0) {
+        if (this.applyDimension()) return;
+      }
       this.picked = [];
       this.render();
       return;
@@ -732,7 +787,24 @@ export class SketchSession {
     if (already >= 0) this.picked.splice(already, 1);
     else this.picked.push(hit);
 
+    // A circle, two points or two lines can only mean one thing, so they are
+    // taken as soon as they are picked. A single line waits, in case the next
+    // click is the second line of an angle.
+    if (this.tool === 'dimension' && this.readyToDimension() && this.applyDimension(true)) return;
+
     this.render();
+  }
+
+  /** Whether the picks can only mean one dimension, with nothing to wait for. */
+  private readyToDimension(): boolean {
+    const sketch = this.draft?.sketch;
+    if (sketch === undefined) return false;
+
+    const chosenLines = lines(this.picked);
+    const chosenPoints = points(this.picked);
+    if (chosenPoints.length === 2 && chosenLines.length === 0) return true;
+    if (chosenLines.length === 2) return true;
+    return chosenLines.length === 1 && isCircle(sketch, chosenLines[0]!);
   }
 
   /** Points win over entities, because a point is the harder thing to hit. */
@@ -836,8 +908,136 @@ export class SketchSession {
     }));
 
     this.viewport.setSketchOverlay(segments, vertices);
+    this.renderAnnotations(solved);
     this.renderPreview();
     this.renderPanel(solved);
+  }
+
+  /**
+   * Draws the dimensions on the sketch, and puts their numbers over the canvas
+   * as fields.
+   *
+   * The lines go in the scene and the numbers do not: a number you can click
+   * into and type over is worth more than one baked into the geometry, and it
+   * is the whole of what makes a dimension feel like a dimension rather than a
+   * row in a list.
+   */
+  private renderAnnotations(solved: SolveResult): void {
+    const draft = this.draft;
+    const plane = this.plane;
+    if (draft === null || plane === null) return;
+
+    // Sizes are given in pixels, so they need what a pixel is worth here.
+    const scale = this.viewport.pickTolerance(plane, 1);
+    this.annotations = annotate(
+      draft.sketch,
+      solved.points,
+      solved.radii,
+      draft.dimensions,
+      scale,
+    );
+
+    this.viewport.setSketchAnnotations(
+      this.annotations.flatMap(({ lines: drawn }) =>
+        drawn.map(
+          ([from, to]) =>
+            [pointOnPlane(plane, from.u, from.v), pointOnPlane(plane, to.u, to.v)] as [Vec3, Vec3],
+        ),
+      ),
+    );
+
+    this.syncLabels();
+    this.placeLabels();
+  }
+
+  /** One field per drawn dimension, made and dropped as dimensions come and go. */
+  private syncLabels(): void {
+    const wanted = new Set(this.annotations.map((entry) => entry.dimension));
+
+    for (const [name, field] of this.labels) {
+      if (wanted.has(name)) continue;
+      field.parentElement?.remove();
+      this.labels.delete(name);
+    }
+
+    for (const entry of this.annotations) {
+      let field = this.labels.get(entry.dimension);
+      if (field === undefined) {
+        const holder = document.createElement('div');
+        holder.className = 'sketch-label';
+
+        field = document.createElement('input');
+        field.type = 'text';
+        field.inputMode = 'decimal';
+        field.className = 'sketch-label-field';
+        field.dataset.dimension = entry.dimension;
+        field.addEventListener('change', () => this.readLabel(entry.dimension));
+        field.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            field!.blur();
+            return;
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            field!.blur();
+          }
+          // Everything else is typing, and typing here is not the view's.
+          event.stopPropagation();
+        });
+
+        holder.append(field);
+        this.labelLayer.append(holder);
+        this.labels.set(entry.dimension, field);
+      }
+
+      // Not while it is being typed into: that is the person's text, not ours.
+      if (document.activeElement !== field) field.value = entry.text;
+      field.size = Math.max(entry.text.length, 2);
+    }
+
+    const pending = this.pendingLabel;
+    this.pendingLabel = null;
+    if (pending === null) return;
+
+    const field = this.labels.get(pending);
+    if (field === undefined) return;
+    field.focus();
+    field.select();
+  }
+
+  /** Puts each number where its dimension is, which the view moving changes. */
+  private placeLabels(): void {
+    const plane = this.plane;
+    if (plane === null || this.labelLayer.hidden) return;
+
+    const bounds = this.labelLayer.getBoundingClientRect();
+    for (const entry of this.annotations) {
+      const field = this.labels.get(entry.dimension);
+      const holder = field?.parentElement;
+      if (holder === null || holder === undefined) continue;
+
+      const at = this.viewport.screenPositionOf(
+        pointOnPlane(plane, entry.label.u, entry.label.v),
+      );
+      holder.style.left = `${at.x - bounds.left}px`;
+      holder.style.top = `${at.y - bounds.top}px`;
+    }
+  }
+
+  /** A number typed over a dimension is the dimension, as soon as it is typed. */
+  private readLabel(name: string): void {
+    const field = this.labels.get(name);
+    if (field === undefined) return;
+
+    const next = Number(field.value.replace(/[^0-9.+-]/g, ''));
+    if (Number.isNaN(next)) {
+      const entry = this.annotations.find((candidate) => candidate.dimension === name);
+      field.value = entry?.text ?? field.value;
+      return;
+    }
+
+    this.setDimension(name, next);
   }
 
   /** The rubber band: what the tool in hand would add if you clicked now. */

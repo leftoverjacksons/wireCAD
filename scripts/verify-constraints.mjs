@@ -377,6 +377,114 @@ for (const [name, ok, extra] of editChecks) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
 }
 
+// Dimensioning the way a person does it: point at the thing, settle it, type
+// the number over the drawing.
+console.log('');
+console.log('dimensioning one:');
+
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
+  graph.addNode('sketch.constrained', {
+    id: 'sk',
+    inputs: {
+      points: [0, 0, 40, 0, 25, 20, 60, 30],
+      entities: [['line', 0, 1], ['line', 1, 2], ['line', 2, 0], ['circle', 3, 6]],
+      constraints: [['lockU', 0, 'originU'], ['lockV', 0, 'originV'], ['horizontal', 0]],
+      dims: ['originU', 0, 'originV', 0],
+    },
+  });
+  graph.connect({ node: 'xy', port: 'plane' }, { node: 'sk', port: 'plane' });
+  await window.__settle();
+  window.wirecad.select('sk');
+});
+
+await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
+const drawing = page.locator('.sketch-panel');
+await drawing.waitFor({ state: 'visible', timeout: 10_000 });
+
+const view = await page.locator('canvas').first().boundingBox();
+const nothing = { x: view.x + view.width - 90, y: view.y + view.height - 60 };
+const sketchAt = (u, v) => page.evaluate(([u, v]) => window.wirecad.screenOfSketch(u, v), [u, v]);
+const midOf = async (a, b) => {
+  const points = await page.evaluate(() => window.wirecad.sketch.solvedPoints());
+  return sketchAt((points[a].u + points[b].u) / 2, (points[a].v + points[b].v) / 2);
+};
+
+const freedomOf = async () =>
+  Number(
+    /(\d+) degree/.exec((await drawing.locator('.sketch-status').innerText()) ?? '')?.[1] ?? '-1',
+  );
+const looseBefore = await freedomOf();
+
+await drawing.getByRole('button', { name: 'Dimension', exact: true }).click();
+const base = await midOf(0, 1);
+await page.mouse.click(base.x, base.y);
+const waiting = await page.locator('.sketch-label-field').count();
+
+// Empty space settles a length that a second line would have made an angle.
+await page.mouse.click(nothing.x, nothing.y);
+await page.waitForTimeout(500);
+const placed = await page.evaluate(() => ({
+  labels: [...document.querySelectorAll('.sketch-label-field')].map((f) => f.value),
+  focused: document.activeElement?.className ?? '',
+  status: document.querySelector('.sketch-status')?.textContent ?? '',
+}));
+
+const looseAfter = await freedomOf();
+
+// The number is typed over the drawing, and the sketch follows it.
+await page.keyboard.type('55');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(600);
+const typed = await page.evaluate(async () => {
+  await window.__settle();
+  const { graph } = window.wirecad;
+  const dims = graph.inputValue('sk', 'dims') ?? [];
+  return {
+    dims,
+    labels: [...document.querySelectorAll('.sketch-label-field')].map((f) => f.value),
+    ports: graph.schemaOf('sk').inputs.filter((p) => p.hidden !== true).map((p) => p.label),
+    error: window.wirecad.reports().find((r) => r.nodeId === 'sk')?.error ?? null,
+  };
+});
+
+// A circle needs no settling click: a radius is the only thing it can mean.
+const circle = await page.evaluate(() => {
+  const points = window.wirecad.sketch.solvedPoints();
+  return window.wirecad.screenOfSketch(points[3].u + 6, points[3].v);
+});
+await page.mouse.click(circle.x, circle.y);
+await page.waitForTimeout(500);
+const radius = await page.evaluate(() => ({
+  labels: [...document.querySelectorAll('.sketch-label-field')].map((f) => f.value),
+  focused: document.activeElement?.className ?? '',
+}));
+
+await drawing.getByRole('button', { name: 'Finish', exact: true }).click();
+
+const dimensionChecks = [
+  ['one line waits for more  ', waiting === 0, `${waiting} labels`],
+  ['empty space settles it   ', placed.labels.length === 1 && placed.labels[0] === '40',
+    placed.labels.join(',') || 'none'],
+  ['and it is ready to type  ', placed.focused.includes('sketch-label-field'), placed.focused || 'nothing focused'],
+  ['it takes one away        ', looseAfter === looseBefore - 1,
+    `${looseBefore} → ${looseAfter} degrees of freedom`],
+  ['typing over it holds     ', typed.dims.includes('length1') &&
+    typed.dims[typed.dims.indexOf('length1') + 1] === 55 && typed.error === null,
+    typed.error ?? typed.dims.join(',')],
+  ['the drawing says so too  ', typed.labels.includes('55'), typed.labels.join(',')],
+  ['and the node grew a port ', typed.ports.includes('length1'), typed.ports.join(',')],
+  ['a radius needs no settling', radius.labels.some((value) => value.startsWith('R')),
+    radius.labels.join(',') || 'none'],
+];
+for (const [name, ok, extra] of dimensionChecks) {
+  if (!ok) failures += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
+}
+
 // A sketch outlives the dimensions it no longer has. Removing a rule takes its
 // number with it, and what is left has to be a document that opens again.
 console.log('');

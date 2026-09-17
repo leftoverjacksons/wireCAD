@@ -28,6 +28,8 @@ interface NodeView {
   statusEl: HTMLElement;
   fields: Map<string, HTMLInputElement>;
   eye: HTMLElement | null;
+  /** The ports this view was drawn for, to notice when a node grows another. */
+  ports: string;
 }
 
 type Drag =
@@ -115,6 +117,12 @@ export class NodeEditor {
     this.applyTransform();
   }
 
+  /** Every port a node currently has, as one string to compare against. */
+  private portSignature(nodeId: NodeId): string {
+    const schema = this.graph.schemaOf(nodeId);
+    return [...schema.inputs, ...schema.outputs].map((port) => port.id).join(',');
+  }
+
   private onGraphChange(change: GraphChange): void {
     switch (change.kind) {
       case 'node-moved':
@@ -122,8 +130,18 @@ export class NodeEditor {
         this.redrawWiresFor(change.nodeId);
         break;
       case 'input-changed': {
+        // A node whose ports depend on its own inputs may have just grown one
+        // or lost one — a sketch dimension added or removed. Only then is the
+        // node rebuilt, because rebuilding on every value would take the field
+        // being typed in with it.
+        const view = this.views.get(change.nodeId);
+        if (view !== undefined && view.ports !== this.portSignature(change.nodeId)) {
+          this.rebuild();
+          break;
+        }
+
         // Mirror the new value, but never fight the field the user is typing in.
-        const field = this.views.get(change.nodeId)?.fields.get(change.portId);
+        const field = view?.fields.get(change.portId);
         if (field !== undefined && document.activeElement !== field) {
           field.value = String(this.graph.inputValue(change.nodeId, change.portId) ?? 0);
         }
@@ -351,7 +369,14 @@ export class NodeEditor {
     }
 
     this.canvas.append(element);
-    this.views.set(nodeId, { element, schema, statusEl, fields, eye });
+    this.views.set(nodeId, {
+      element,
+      schema,
+      statusEl,
+      fields,
+      eye,
+      ports: this.portSignature(nodeId),
+    });
     this.positionNode(nodeId);
   }
 

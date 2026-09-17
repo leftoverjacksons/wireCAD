@@ -78,17 +78,23 @@ is ready, typically around two seconds.
   tool, then the picks, then the session. Everything drawn is written to the
   node as it happens, so leaving is not what commits the work, and a sketch
   nobody drew in is removed rather than left behind reporting that it is empty.
-- **Constraining and dimensioning** — with Select, click points and edges in the
-  3D view, then apply a relation — Horizontal, Vertical, Parallel,
-  Perpendicular, Equal, Coincident, Concentric, On line, Midpoint — or press
-  *Dimension*, which reads what you picked: a line gives a length, a circle a
-  radius, two points a distance, two lines an angle. *Delete* removes what is
-  picked, along with every rule that referred to it. The panel says how many
-  degrees of freedom are left, lists every rule with its number editable in
-  place, and removes one with ×. A relation that would contradict what is
-  already there is refused and rolled back rather than leaving the sketch in a
-  state the solver cannot make sense of. Press *Edit Sketch* with a Sketch node
-  selected to reopen the same session later.
+- **Dimensioning** — *Dimension* is a tool like the drawing ones. Click what you
+  want measured and the dimension appears on the sketch, drawn with witness
+  lines and arrowheads, its number waiting to be typed over: type and press
+  Enter and the sketch follows it. A circle, two points or two lines can only
+  mean one thing, so they are taken as soon as they are picked; a single line
+  waits, because a second line would make it an angle instead of a length, and
+  a click on empty space settles it. Pressing *Dimension* with something already
+  selected dimensions that, which is the short way round.
+- **Constraining** — with Select, click points and edges in the 3D view, then
+  apply a relation: Horizontal, Vertical, Parallel, Perpendicular, Equal,
+  Coincident, Concentric, On line, Midpoint. *Delete* removes what is picked,
+  along with every rule that referred to it. The panel says how many degrees of
+  freedom are left, lists every rule with its number editable in place, and
+  removes one with ×. A relation that would contradict what is already there is
+  refused and rolled back rather than leaving the sketch in a state the solver
+  cannot make sense of. Press *Edit Sketch* with a Sketch node selected to
+  reopen the same session later.
 - **What a drawing asserts** — only what it shows: an edge drawn flat is
   horizontal, one drawn upright is vertical, and points clicked on top of each
   other are the same point. Never a length. Inventing lengths would put
@@ -310,6 +316,25 @@ what is left, from the top; a row with nothing on one side stays empty rather
 than closing up, because closing it up is exactly what would put a dimension
 next to the wrong label.
 
+## Dimensions on the drawing
+
+A dimension is drawn on the sketch the way it is on paper: witness lines out to
+a dimension line, arrowheads at both ends, the number in the middle. The lines
+go into the scene, in the interface's own cyan, because they are the interface
+talking about the sketch rather than part of it.
+
+The numbers do not. Each one is a text field laid over the canvas at the
+dimension's position, because a number you can click into and type over is the
+whole of what makes a dimension feel like a dimension rather than a row in a
+list. A new dimension puts the cursor in its own field with the value selected,
+so the measured number is already there to be typed past.
+
+Everything about the drawing is sized in pixels and converted through what a
+pixel is currently worth in millimetres, so dimensions keep their proportions as
+the view zooms rather than growing with the model. The offset goes to whichever
+side faces away from the middle of the drawing, so a dimension lands outside the
+shape rather than across it.
+
 ## Solving a sketch
 
 A `Sketch` node holds points, the lines and circles joining them, and the rules
@@ -478,8 +503,10 @@ discarded.
 
 - A node that makes neither geometry nor a reference to some — a parameter, a
   datum plane — has nothing to show when clicked.
-- Dimensions and constraints are listed in the panel, not drawn in the view:
-  there are no dimension lines or constraint glyphs on the sketch itself.
+- Relations are listed in the panel but not drawn on the sketch: a dimension
+  shows itself, a perpendicular does not.
+- A dimension is drawn where the geometry puts it. There is no dragging one to a
+  tidier place, and two dimensions on the same edge sit on top of each other.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a
