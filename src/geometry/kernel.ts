@@ -72,10 +72,17 @@ export async function loadKernel(): Promise<OpenCascadeInstance> {
   return cached;
 }
 
-export function geometry(shape: Shape, plane?: PlaneValue): GeometryRef {
-  return plane === undefined
-    ? { kind: 'geometry', handle: shape }
-    : { kind: 'geometry', handle: shape, plane };
+export function geometry(
+  shape: Shape,
+  plane?: PlaneValue,
+  newFaces?: readonly Shape[],
+): GeometryRef {
+  return {
+    kind: 'geometry',
+    handle: shape,
+    ...(plane === undefined ? {} : { plane }),
+    ...(newFaces === undefined || newFaces.length === 0 ? {} : { newFaces }),
+  };
 }
 
 export function isGeometry(value: Value): value is GeometryRef {
@@ -121,6 +128,10 @@ function disposeValue(value: Value): void {
     return;
   }
   if (!isGeometry(value)) return;
+
+  // Sub-shape handles are wrappers of their own: freeing the body does not free
+  // them, and nothing else will.
+  for (const face of value.newFaces ?? []) (face as { delete?: () => void })?.delete?.();
   const handle = value.handle as { delete?: () => void } | null;
   handle?.delete?.();
 }

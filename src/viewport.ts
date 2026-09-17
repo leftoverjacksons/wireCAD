@@ -36,8 +36,15 @@ export interface DragHandle {
   onDrag(distance: number): void;
 }
 
-/** How a body is drawn when it is not being drawn the ordinary way. */
-export type GhostMode = 'edges' | 'faint';
+/**
+ * How a body is drawn when it is not being drawn the ordinary way.
+ *
+ * 'edges' is a body being picked from underneath its own preview. 'faint' is a
+ * whole result standing in for what replaced it. 'faces' is the same idea
+ * narrowed to what a node actually added: a fillet is responsible for its
+ * rounding, not for the body it handed on.
+ */
+export type GhostMode = 'edges' | 'faint' | 'faces';
 
 export interface EdgeHit {
   nodeId: NodeId;
@@ -55,6 +62,8 @@ export class Viewport {
   private readonly faceIds = new Map<NodeId, Uint32Array>();
   private readonly edgeLines = new Map<NodeId, THREE.LineSegments>();
   private readonly edges = new Map<NodeId, EdgeInfo[]>();
+  /** Faces each node brought into being, by index into its face list. */
+  private readonly featureFaces = new Map<NodeId, number[]>();
 
   private readonly material = new THREE.MeshStandardMaterial({
     color: 0xff9900,
@@ -120,6 +129,8 @@ export class Viewport {
    * what a node made, shown through whatever has replaced it since.
    */
   private ghosts = new Map<NodeId, GhostMode>();
+  /** A node whose own faces are picked out on a body drawn the ordinary way. */
+  private litFaces: NodeId | null = null;
   /** While set, only this body's edges can be picked. */
   private edgeSource: NodeId | null = null;
   private framed = false;
@@ -185,6 +196,30 @@ export class Viewport {
     depthTest: false,
     depthWrite: false,
     side: THREE.FrontSide,
+  });
+
+  /**
+   * A few faces standing in for a whole result. Nearly solid, because there is
+   * little of it and it has to read against the body it is laid over.
+   */
+  private readonly ghostFaceMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa78bfa,
+    emissive: 0x2a1d55,
+    metalness: 0.0,
+    roughness: 0.5,
+    transparent: true,
+    opacity: 0.85,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+
+  /** The ghost's colour, solid, for faces picked out on the model itself. */
+  private readonly litFaceMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa78bfa,
+    emissive: 0x2a1d55,
+    metalness: 0.0,
+    roughness: 0.5,
   });
 
   private readonly ghostEdgeMaterial = new THREE.LineBasicMaterial({
@@ -444,7 +479,8 @@ export class Viewport {
       if (mesh !== undefined) {
         const mode = this.ghosts.get(nodeId);
         mesh.visible = mode !== 'edges';
-        mesh.renderOrder = mode === 'faint' ? 3 : this.kinds.get(nodeId) === 'sketch' ? 1 : 0;
+        mesh.renderOrder =
+          mode === 'faint' || mode === 'faces' ? 3 : this.kinds.get(nodeId) === 'sketch' ? 1 : 0;
       }
       this.applyMaterials(nodeId);
       this.applyEdgeMaterials(nodeId);
@@ -860,6 +896,21 @@ export class Viewport {
 
     const faces = this.faces.get(nodeId) ?? [];
     const base = this.baseMaterial(nodeId);
+    const mode = this.ghosts.get(nodeId);
+    const made = this.featureFaces.get(nodeId) ?? [];
+
+    // Only what this node added, and nothing of what it was added to.
+    if (mode === 'faces') {
+      mesh.geometry.clearGroups();
+      for (const index of made) {
+        const face = faces[index];
+        if (face !== undefined) {
+          mesh.geometry.addGroup(face.triangleStart * 3, face.triangleCount * 3, 0);
+        }
+      }
+      mesh.material = [this.ghostFaceMaterial];
+      return;
+    }
 
     if (faces.length === 0) {
       mesh.geometry.clearGroups();
@@ -871,17 +922,35 @@ export class Viewport {
       this.highlightedFace !== null && this.highlightedFace.nodeId === nodeId
         ? (this.highlightedFace.faceIndex ?? -1)
         : -1;
+    const lit = this.litFaces === nodeId ? new Set(made) : null;
 
     mesh.geometry.clearGroups();
     for (let index = 0; index < faces.length; index++) {
       const face = faces[index]!;
-      mesh.geometry.addGroup(
-        face.triangleStart * 3,
-        face.triangleCount * 3,
-        index === hot ? 1 : 0,
-      );
+      const slot = index === hot ? 1 : (lit?.has(index) ?? false) ? 2 : 0;
+      mesh.geometry.addGroup(face.triangleStart * 3, face.triangleCount * 3, slot);
     }
-    mesh.material = [base, this.faceMaterial];
+    mesh.material = [base, this.faceMaterial, this.litFaceMaterial];
+  }
+
+  /**
+   * Picks out the faces a node made, on a body that is drawn as usual.
+   *
+   * When the node's result is still the model — a fillet nothing has been built
+   * on since — there is nothing to ghost. What it is responsible for is still
+   * worth pointing at, so those faces take the ghost's colour in place.
+   */
+  setLitFaces(nodeId: NodeId | null): void {
+    if (this.litFaces === nodeId) return;
+    const previous = this.litFaces;
+    this.litFaces = nodeId;
+    if (previous !== null) this.applyMaterials(previous);
+    if (nodeId !== null) this.applyMaterials(nodeId);
+  }
+
+  /** Whether this node reported faces of its own making. */
+  hasFeatureFaces(nodeId: NodeId): boolean {
+    return (this.featureFaces.get(nodeId) ?? []).length > 0;
   }
 
   setHighlight(nodeId: NodeId | null): void {
@@ -914,6 +983,7 @@ export class Viewport {
   setMesh(payload: MeshPayload): void {
     this.kinds.set(payload.nodeId, payload.kind);
     this.faces.set(payload.nodeId, payload.faces);
+    this.featureFaces.set(payload.nodeId, payload.featureFaces);
     this.faceIds.set(payload.nodeId, payload.faceIds);
 
     const geometry = new THREE.BufferGeometry();
@@ -1007,6 +1077,7 @@ export class Viewport {
       this.meshes.delete(nodeId);
       this.kinds.delete(nodeId);
       this.faces.delete(nodeId);
+      this.featureFaces.delete(nodeId);
       this.faceIds.delete(nodeId);
       const lines = this.edgeLines.get(nodeId);
       if (lines !== undefined) {

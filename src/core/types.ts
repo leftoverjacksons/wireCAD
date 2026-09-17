@@ -21,6 +21,12 @@ export interface GeometryRef {
   readonly handle: unknown;
   /** Present on profiles, so features built on them can follow the sketch plane. */
   readonly plane?: PlaneValue;
+  /**
+   * Faces this operation brought into being, where it can say — the rounding a
+   * fillet added, the bevel a chamfer cut. What a feature is responsible for is
+   * those faces, not the whole body it handed on.
+   */
+  readonly newFaces?: readonly unknown[];
 }
 
 export type Value =

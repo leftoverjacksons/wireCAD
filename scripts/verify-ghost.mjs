@@ -135,6 +135,81 @@ const after = await page.evaluate(async () => {
 check('and lets go of them after', after.lit === 0 && after.ghosts.length === 0,
   `${after.lit} lit · ${after.ghosts.join(',') || 'no ghosts'}`);
 
+// A fillet is responsible for its rounding, not for the body it handed on.
+await page.evaluate(() => window.__pick('solid.fillet'));
+const filletSelected = await page.evaluate(async () => {
+  const shown = await window.__shown();
+  const { graph, viewport } = window.wirecad;
+  const fillet = graph.allNodes().find((n) => n.type === 'solid.fillet');
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === fillet?.id);
+  return {
+    ...shown,
+    lit: viewport.litFaces === fillet?.id,
+    made: mesh?.featureFaces?.length ?? 0,
+    faces: mesh?.faces.length ?? 0,
+  };
+});
+check('a fillet names its faces ', filletSelected.made === 3 && filletSelected.faces > 3,
+  `${filletSelected.made} of ${filletSelected.faces}`);
+check('lit on the model itself  ', filletSelected.lit && filletSelected.ghosts.length === 0,
+  `${filletSelected.lit ? 'lit' : 'not lit'} · ${filletSelected.ghosts.join(',') || 'no ghosts'}`);
+
+// Put something after it, and the same selection shows only those faces.
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  const fillet = graph.allNodes().find((n) => n.type === 'solid.fillet');
+  graph.addNode('solid.shell', {
+    id: 'shell',
+    label: 'Shell',
+    inputs: { thickness: 2, nx: 0, ny: 0, nz: 1, rank: 0 },
+  });
+  graph.connect({ node: fillet.id, port: 'result' }, { node: 'shell', port: 'solid' });
+  window.wirecad.select(fillet.id);
+  await window.__settle();
+});
+const superseded = await page.evaluate(async () => {
+  const shown = await window.__shown();
+  const { graph, viewport } = window.wirecad;
+  const fillet = graph.allNodes().find((n) => n.type === 'solid.fillet');
+  return { ...shown, mode: viewport.ghosts?.get(fillet?.id) ?? null, lit: viewport.litFaces };
+});
+check('and just those when hidden', superseded.mode === 'faces' && superseded.lit === null,
+  `${superseded.mode ?? 'nothing'} · ${superseded.shown.join(',')}`);
+
+// The same question of a chamfer, which the kernel answers through another class.
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  window.wirecad.starter(graph);
+  await window.__settle();
+});
+await page.getByRole('button', { name: 'Chamfer', exact: true }).click();
+await page.locator('.feature-dialog').waitFor({ state: 'visible' });
+const topEdges = await page.evaluate(() => {
+  const bore = window.wirecad.graph.allNodes().find((n) => n.label === 'Bore');
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === bore?.id);
+  return mesh.edges
+    .map((edge, index) => ({ index, edge }))
+    .filter(({ edge }) => Math.abs(edge.direction.z) > 0.9 && edge.length > 15)
+    .slice(0, 2)
+    .map(({ edge }) => window.wirecad.viewport.screenPositionOf(edge.midpoint));
+});
+for (const at of topEdges) {
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(400);
+}
+await page.locator('.feature-dialog').getByRole('button', { name: 'Create', exact: true }).click();
+await page.waitForTimeout(700);
+
+const chamfer = await page.evaluate(async () => {
+  await window.__settle();
+  const node = window.wirecad.graph.allNodes().find((n) => n.type === 'solid.chamfer');
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === node?.id);
+  return { made: mesh?.featureFaces?.length ?? 0, error: window.wirecad.reports().find((r) => r.nodeId === node?.id)?.error ?? null };
+});
+check('a chamfer names its too  ', chamfer.made === topEdges.length,
+  chamfer.error ?? `${chamfer.made} of ${topEdges.length}`);
+
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();
 if (failures > 0 || pageErrors.length > 0) process.exitCode = 1;

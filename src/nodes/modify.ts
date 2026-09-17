@@ -178,6 +178,37 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
    * Fillet and chamfer differ only in which maker runs; both take one amount per
    * edge through `Add_2`, and both are driven by the same edge selection.
    */
+  /**
+   * The faces the operation put where those edges were.
+   *
+   * The kernel knows exactly: each edge given to a fillet or a chamfer reports
+   * what it generated. Working it out afterwards by comparing the result with
+   * what went in would also catch the faces that were merely trimmed, which are
+   * not what the feature is responsible for.
+   */
+  function facesMadeFrom(maker: Shape, edges: readonly Shape[]): Shape[] {
+    const made: Shape[] = [];
+
+    for (const edge of edges) {
+      // The list cannot be iterated directly in this build, so it is emptied.
+      const remaining = new oc.TopTools_ListOfShape_1();
+      remaining.Assign(maker.Generated(edge));
+      while (remaining.Size() > 0) {
+        // First() hands back a reference into the list, which the removal on
+        // the next line frees. Reversed() is a copy by value and so outlives
+        // it, and IsSame weighs shape and place but not which way round a face
+        // is, so the copy still answers to the face it came from.
+        const face = remaining.First_1().Reversed() as Shape;
+        if (made.some((seen) => seen.IsSame(face))) face.delete?.();
+        else made.push(face);
+        remaining.RemoveFirst();
+      }
+      remaining.delete?.();
+    }
+
+    return made;
+  }
+
   function edgeFeature(
     schema: NodeSchema,
     amountPort: string,
@@ -211,7 +242,7 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
           if (!maker.IsDone()) {
             throw new Error(`${schema.label} of ${amount} mm does not fit on this shape`);
           }
-          return { result: geometry(maker.Shape()) };
+          return { result: geometry(maker.Shape(), undefined, facesMadeFrom(maker, edges)) };
         } finally {
           maker.delete?.();
         }

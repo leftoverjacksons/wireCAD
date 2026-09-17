@@ -792,9 +792,21 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
     if (nodeId !== null && forced.has(nodeId)) ghosts.set(nodeId, 'edges');
   }
   for (const nodeId of message.pinnedShown) {
-    if (!ghosts.has(nodeId)) ghosts.set(nodeId, 'faint');
+    // A node that says which faces it made shows those and nothing else: a
+    // fillet is responsible for its rounding, not for the body it handed on.
+    if (!ghosts.has(nodeId)) {
+      ghosts.set(nodeId, viewport.hasFeatureFaces(nodeId) ? 'faces' : 'faint');
+    }
   }
   viewport.setGhosts(ghosts);
+
+  // When such a node's result is still the model, there is nothing to ghost;
+  // the faces it made are picked out on the model itself instead.
+  viewport.setLitFaces(
+    ghostPin !== null && !forced.has(ghostPin) && viewport.hasFeatureFaces(ghostPin)
+      ? ghostPin
+      : null,
+  );
   refreshEdgeHighlight();
   viewport.frameOnce();
   editor.setStatuses(message.reports);

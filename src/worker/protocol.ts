@@ -58,6 +58,8 @@ export interface MeshPayload {
   indices: Uint32Array;
   faceIds: Uint32Array;
   faces: FaceInfo[];
+  /** Faces this node brought into being, by index into `faces`. */
+  featureFaces: number[];
   edgePositions: Float32Array;
   edgeIds: Uint32Array;
   edges: EdgeInfo[];

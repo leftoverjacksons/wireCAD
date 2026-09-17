@@ -31,7 +31,11 @@ is ready, typically around two seconds.
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
 - **Clicking a node** — selecting a node in the graph puts what it made back on
-  screen, in violet, at about a third opacity, until something else is selected.
+  screen, in violet, until something else is selected. A fillet or a chamfer
+  shows only the faces it added — the rounding itself, picked out on the model
+  when the model is still its result, and standing alone when something later
+  has replaced it. Everything else shows its whole result at about a third
+  opacity.
   A profile that was extruded, a body that was bored, a fillet that was shelled:
   each is still there in the model's history but none of them is on screen any
   more, so clicking the node is the way to ask what it is responsible for. A
@@ -388,6 +392,16 @@ makes depth testing a coin toss per triangle and looks it. So a ghost neither
 tests depth nor writes it: it is a reference laid over the view rather than a
 thing in the scene. Its outline takes the same violet, so which is which is
 never in doubt.
+
+A whole body is the wrong answer for some nodes. A fillet is responsible for its
+rounding, not for the body it handed on, and ghosting the lot says nothing about
+what it did. So a fillet and a chamfer record the faces they made: the kernel is
+asked what each edge generated, which is exact, where comparing the result
+against what went in afterwards would also catch the faces that were merely
+trimmed. Those faces travel with the result, the worker matches them against the
+faces it meshed, and the view shows those and nothing else — picked out on the
+model while the model is still that result, standing alone once something has
+replaced it.
 
 The same pinning serves a second purpose. While a dialog picks edges off a body,
 its own preview replaces that body — so the body is pinned too, and drawn as its

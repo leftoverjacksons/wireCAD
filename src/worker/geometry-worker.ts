@@ -114,12 +114,21 @@ function solve(request: SolveRequest): void {
     if (!ordinarily) pinnedShown.push(node.id);
     if (sentHashes.get(node.id) === nodeResult.hash) continue;
 
-    const { mesh: buffers } = tessellate(oc, value.handle as Shape);
+    const { mesh: buffers, faceHandles } = tessellate(oc, value.handle as Shape);
     triangles += buffers.indices.length / 3;
+
+    // Which of the meshed faces are the ones this node made, if it said.
+    const made = (value.newFaces ?? []) as Shape[];
+    const featureFaces: number[] = [];
+    for (const [index, handle] of faceHandles.entries()) {
+      if (made.some((face) => handle.IsSame(face))) featureFaces.push(index);
+    }
+
     meshes.push({
       nodeId: node.id,
       kind: displayable.type === 'sketch' ? 'sketch' : 'solid',
       ...buffers,
+      featureFaces,
     });
     transfer.push(
       buffers.positions.buffer,
