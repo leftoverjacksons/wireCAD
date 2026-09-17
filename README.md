@@ -249,11 +249,12 @@ evaluator fills it in. That keeps the geometry code about geometry, and means a
 node type gets this by being wrapped in `echoDimensions` rather than by
 remembering to return its own inputs.
 
-Echoed outputs follow the order of the inputs they come from, which lines them
-up with their own rows on a profile — Radius in on the left, Radius out on the
-right. On a node with more inputs than outputs the tail of them sits a row or
-two above its input, since a port's row is its position in the column. The
-labels still say which is which.
+An echoed output sits on its input's own row, so a dimension always reads across
+— Radius in on the left, Radius out on the right — however many other outputs
+the node has. Echoes claim their rows first and the node's real outputs take
+what is left, from the top; a row with nothing on one side stays empty rather
+than closing up, because closing it up is exactly what would put a dimension
+next to the wrong label.
 
 ## Ports a node grows for itself
 

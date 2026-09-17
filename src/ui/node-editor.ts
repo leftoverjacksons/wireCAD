@@ -12,9 +12,7 @@ import {
   nodeHeight,
   outputPortY,
   portCentreY,
-  portRows,
-  visibleInputs,
-  visibleOutputs,
+  portLayout,
 } from './metrics.js';
 
 export interface NodeEditorCallbacks {
@@ -261,14 +259,14 @@ export class NodeEditor {
     element.append(header);
 
     const fields = new Map<string, HTMLInputElement>();
-    const rows = portRows(schema);
-    for (let row = 0; row < rows; row++) {
+    const layout = portLayout(schema);
+    for (let row = 0; row < layout.rows; row++) {
       const rowEl = document.createElement('div');
       rowEl.className = 'node-row';
       rowEl.style.top = `${HEADER_HEIGHT + row * ROW_HEIGHT}px`;
       rowEl.style.height = `${ROW_HEIGHT}px`;
 
-      const input = visibleInputs(schema)[row];
+      const input = layout.inputAt[row];
       if (input !== undefined) {
         const dot = document.createElement('div');
         dot.className = `port port-in type-${input.type}`;
@@ -333,7 +331,7 @@ export class NodeEditor {
         }
       }
 
-      const output = visibleOutputs(schema)[row];
+      const output = layout.outputAt[row];
       if (output !== undefined) {
         const dot = document.createElement('div');
         dot.className = `port port-out type-${output.type}`;
