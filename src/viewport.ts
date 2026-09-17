@@ -85,6 +85,9 @@ export class Viewport {
   private edgePicking = false;
   private framed = false;
   private pickingEnabled = true;
+  /** Where the camera was before a sketch took it, so leaving can give it back. */
+  private savedView: { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 } | null =
+    null;
 
   private readonly overlay: Array<THREE.LineSegments | THREE.Points> = [];
   // The sketch being edited sits on the face it defines, so it is drawn without
@@ -344,6 +347,16 @@ export class Viewport {
 
   /** Look straight down a plane's normal, with the plane's V axis pointing up. */
   alignToPlane(plane: PlaneValue): void {
+    // Only the first alignment saves: a session that re-enters mid-edit must
+    // not overwrite the view the person actually came from.
+    if (this.savedView === null) {
+      this.savedView = {
+        position: this.camera.position.clone(),
+        target: this.controls.target.clone(),
+        up: this.camera.up.clone(),
+      };
+    }
+
     const origin = new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z);
     const normal = new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z);
     const up = planeYAxis(plane);
@@ -360,9 +373,26 @@ export class Viewport {
     this.controls.update();
   }
 
+  /**
+   * Hands the camera back to wherever it was before the sketch.
+   *
+   * Without this, leaving a sketch leaves you looking straight down its plane,
+   * where a body extruded from it is exactly the outline you drew and nothing
+   * appears to have happened.
+   */
   releasePlaneAlignment(): void {
-    this.camera.up.set(0, 0, 1);
+    const saved = this.savedView;
+    this.savedView = null;
     this.controls.enableRotate = true;
+
+    if (saved === null) {
+      this.camera.up.set(0, 0, 1);
+    } else {
+      this.camera.up.copy(saved.up);
+      this.camera.position.copy(saved.position);
+      this.controls.target.copy(saved.target);
+    }
+
     this.controls.update();
   }
 
@@ -683,6 +713,9 @@ export class Viewport {
   }
 
   frameOnce(): void {
+    // Not while a sketch holds the camera: the first mesh a new sketch produces
+    // would otherwise swing the view off the plane being drawn on.
+    if (this.savedView !== null) return;
     if (this.framed || this.meshes.size === 0) return;
 
     const box = new THREE.Box3();

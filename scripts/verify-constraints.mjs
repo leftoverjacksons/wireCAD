@@ -153,6 +153,14 @@ await page.evaluate(async () => {
   // A sketch session needs the plane's value, which only a solve produces.
   await window.__settle();
 });
+// Where the camera is before a sketch takes it, to check it is handed back.
+const cameraAt = () =>
+  page.evaluate(() => {
+    const { position } = window.wirecad.viewport.camera;
+    return [position.x, position.y, position.z].map((n) => Math.round(n * 100) / 100);
+  });
+const cameraBefore = await cameraAt();
+
 await page.getByRole('button', { name: 'Sketch', exact: true }).click();
 await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
@@ -205,6 +213,7 @@ const drawn = await page.evaluate(async () => {
 // Finish is the only thing that ends a session.
 await panel.getByRole('button', { name: 'Finish', exact: true }).click();
 await panel.waitFor({ state: 'hidden', timeout: 10_000 });
+const cameraAfter = await cameraAt();
 
 const extruded = await page.evaluate(async (sketchId) => {
   const { graph } = window.wirecad;
@@ -232,6 +241,8 @@ const drawChecks = [
   ['and no lengths assumed      ', (drawn.labels ?? []).join(',') === 'Plane,originU,originV',
     (drawn.labels ?? []).join(',')],
   ['it says how loose it is     ', /degrees of freedom/.test(drawn.status), drawn.status],
+  ['the view comes back         ', cameraAfter.join(',') === cameraBefore.join(','),
+    `${cameraBefore.join(', ')} → ${cameraAfter.join(', ')}`],
   ['the circle becomes a hole   ', extruded.volume !== null && drawn.radius > 0 &&
     Math.abs(extruded.volume - wantVolume) / wantVolume < 0.01,
     extruded.error ?? `${extruded.volume?.toFixed(0)} mm3, wanted ${wantVolume.toFixed(0)}`],
