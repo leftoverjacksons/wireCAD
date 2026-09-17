@@ -47,7 +47,11 @@ is ready, typically around two seconds.
   storage as you work, so a refresh resumes where you left off rather than
   reopening the starter model. *New* is an ordinary edit, so Ctrl+Z brings the
   previous model back.
-- **Fillet** rounds every edge of a solid at one radius. **Shell** hollows it to
+- **Fillet** rounds the edges you pick, at one radius. Press *Fillet*, then click
+  edges in the 3D view — they light up as you hover and turn blue once taken;
+  clicking a picked edge again drops it. Picking nothing and wiring a solid
+  straight into the node still rounds every edge, which is what the node did
+  before selections existed. **Shell** hollows it to
   a wall thickness, leaving open whichever face you click — the opening is
   stored as the same normal-and-rank reference a face plane uses, so it survives
   the model changing underneath it.
@@ -84,6 +88,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run build` | Production build |
 | `npm run verify:browser` | Drives a running dev server in Chromium and reports solve statistics |
 | `npm run verify:shell` | Builds fillet-and-shell bodies in Chromium and checks the hollowed volumes |
+| `npm run verify:edges` | Checks per-edge fillet selection, and that a selection survives a resize |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -176,6 +181,26 @@ case, measures the hollowed volume from the triangulation and checks it against
 the solid it came from, so a path that quietly returns the unhollowed body or an
 empty shape fails the run.
 
+## Referring to an edge
+
+Edges have the same naming problem faces do, and a worse version of it: there is
+no normal to sort them by. A stored selection holds, per edge, the midpoint by
+arc length, the chord direction, and the length — but the midpoint is kept as a
+*fraction of the body's bounding box* rather than in millimetres.
+
+That is what makes a selection survive editing. Widening a 60 mm box to 80 mm
+moves the midpoint of every vertical edge, so an absolute position would go
+looking in the wrong place; the fraction does not move at all. Matching then
+takes the nearest candidate in that fractional space, after discarding any whose
+chord points a different way, and refuses rather than guessing when the nearest
+is still too far. `npm run verify:edges` holds this to account: it fillets four
+vertical edges, then widens and heightens the body underneath the selection and
+checks the volume against what those four rounded corners should leave.
+
+The selection lives in its own `Edge Selection` node, so the set is visible in
+the graph and can be rewired into another operation later rather than being
+buried in the fillet.
+
 ## Known gaps
 
 - A sketch cannot be reopened and redrawn; its points are editable on the node,
@@ -184,7 +209,8 @@ empty shape fails the run.
   rather than an inner loop.
 
 - No sketch constraint solver; sketches are parametric rectangles and circles.
-- Fillet applies one radius to every edge; there is no per-edge selection yet.
+- One radius per Fillet node. Different radii on different edges means a second
+  Fillet node, rather than a list of radius groups in one dialog.
 - No chamfer, draft, sweep, loft, or patterns yet.
 - Feature dialogs do not preview: nothing changes until you press Create.
 - The kernel's own failure reasons do not survive this WebAssembly build, so a

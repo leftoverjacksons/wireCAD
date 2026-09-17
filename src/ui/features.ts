@@ -1,13 +1,20 @@
 import type { Graph } from '../core/graph.js';
 import type { DataType, NodeId, PortRef, Vec3 } from '../core/types.js';
+import { EDGE_STRIDE } from '../nodes/edges.js';
 import { COLUMN_GAP, NODE_WIDTH, ROW_GAP, nodeHeight } from './metrics.js';
 
 /**
  * 'face' is not a port type. It means: pick a face, wire this geometry port to
  * the body it belongs to, and write the selector into the node's nx/ny/nz/rank
  * inputs — the same normal-and-rank reference the face nodes use.
+ *
+ * 'edges' works the same way for a set of edges: it wires this geometry port to
+ * the body, and puts the references in an Edge Selection node wired to `edges`.
  */
-export type OperandKind = Extract<DataType, 'sketch' | 'geometry' | 'plane'> | 'face';
+export type OperandKind =
+  | Extract<DataType, 'sketch' | 'geometry' | 'plane'>
+  | 'face'
+  | 'edges';
 
 export const FACE_SELECTOR_PORTS = ['nx', 'ny', 'nz', 'rank'] as const;
 
@@ -137,7 +144,7 @@ export const tabs: readonly FeatureTab[] = [
             id: 'fillet',
             label: 'Fillet',
             nodeType: 'solid.fillet',
-            operands: [{ id: 'solid', label: 'Solid', type: 'geometry' }],
+            operands: [{ id: 'solid', label: 'Edges', type: 'edges' }],
             numbers: [{ id: 'radius', label: 'Radius', value: 2 }],
           },
           {
@@ -213,6 +220,24 @@ export function resolvePlaneSource(
   placeDownstream(graph, node.id);
 
   return { node: node.id, port: 'plane' };
+}
+
+/**
+ * Put a set of picked edges into a node of their own, so the selection is
+ * visible in the graph and can be re-pointed or shared later.
+ */
+export function resolveEdgeSource(
+  graph: Graph,
+  refs: readonly number[],
+  created: NodeId[],
+): PortRef {
+  const node = graph.addNode('edge.selection', {
+    inputs: { refs: [...refs] },
+    label: `${refs.length / EDGE_STRIDE} edges`,
+  });
+  created.push(node.id);
+  placeDownstream(graph, node.id);
+  return { node: node.id, port: 'edges' };
 }
 
 /** The output port on `nodeId` that can drive an operand of the given type. */

@@ -3,6 +3,7 @@ import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { geometry, kernelCall, shapeOf, tessellate } from '../geometry/kernel.js';
 import { length } from '../geometry/plane.js';
 import { asNumber, asPositive } from './coerce.js';
+import { readEdgeRefs, resolveEdgeRefs } from './edges.js';
 import { matchingFaces } from './face.js';
 
 export const filletSchema: NodeSchema = {
@@ -11,6 +12,7 @@ export const filletSchema: NodeSchema = {
   category: 'Modify',
   inputs: [
     { id: 'solid', label: 'Solid', type: 'geometry' },
+    { id: 'edges', label: 'Edges', type: 'edges', default: [] },
     { id: 'radius', label: 'Radius', type: 'number', default: 2 },
   ],
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
@@ -165,7 +167,11 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       const shape = shapeOf(inputs.solid ?? null, 'solid');
       const radius = asPositive(inputs.radius ?? null, 'radius');
 
-      const edges = uniqueEdges(shape);
+      // An empty selection rounds the whole body, which is what a fillet with
+      // nothing picked meant before selections existed.
+      const selection = readEdgeRefs(inputs.edges ?? [], 'edges');
+      const edges =
+        selection.length === 0 ? uniqueEdges(shape) : resolveEdgeRefs(oc, shape, selection);
       if (edges.length === 0) throw new Error('That shape has no edges to fillet');
 
       const maker = new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational);

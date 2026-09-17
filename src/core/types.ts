@@ -42,6 +42,7 @@ export type DataType =
   | 'geometry'
   | 'sketch'
   | 'list'
+  | 'edges'
   | 'any';
 
 export interface PortDef {

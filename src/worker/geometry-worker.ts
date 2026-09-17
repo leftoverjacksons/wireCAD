@@ -12,6 +12,7 @@ import { writeStep } from '../geometry/step.js';
 import { writeBinaryStl } from '../geometry/stl.js';
 import { createFaceNodes } from '../nodes/face.js';
 import { mathNodes } from '../nodes/math.js';
+import { createEdgeNodes } from '../nodes/edges.js';
 import { createModifyNodes } from '../nodes/modify.js';
 import { planeNodes } from '../nodes/plane.js';
 import { createGeometryNodes } from '../nodes/solid.js';
@@ -113,6 +114,8 @@ function solve(request: SolveRequest): void {
       buffers.normals.buffer,
       buffers.indices.buffer,
       buffers.faceIds.buffer,
+      buffers.edgePositions.buffer,
+      buffers.edgeIds.buffer,
     );
     sentHashes.set(node.id, nodeResult.hash);
   }
@@ -206,6 +209,7 @@ async function start(): Promise<void> {
   registry.registerAll(createGeometryNodes(oc));
   registry.registerAll(createFaceNodes(oc));
   registry.registerAll(createModifyNodes(oc));
+  registry.registerAll(createEdgeNodes(oc));
   evaluator = new Evaluator(registry, new LruCache(256, disposeCacheEntry));
 
   ready = true;

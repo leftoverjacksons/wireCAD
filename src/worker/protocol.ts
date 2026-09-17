@@ -1,7 +1,7 @@
 import type { EvalStats, NodeStatus } from '../core/evaluator.js';
 import type { SerializedGraph } from '../core/graph.js';
 import type { NodeId, PlaneValue } from '../core/types.js';
-import type { FaceInfo } from '../geometry/kernel.js';
+import type { EdgeInfo, FaceInfo } from '../geometry/kernel.js';
 
 export interface SolveRequest {
   type: 'solve';
@@ -50,6 +50,9 @@ export interface MeshPayload {
   indices: Uint32Array;
   faceIds: Uint32Array;
   faces: FaceInfo[];
+  edgePositions: Float32Array;
+  edgeIds: Uint32Array;
+  edges: EdgeInfo[];
 }
 
 export interface SolvedMessage {

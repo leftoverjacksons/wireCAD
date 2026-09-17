@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "verify:browser": "node scripts/verify-browser.mjs",
-    "verify:shell": "node scripts/verify-shell.mjs"
+    "verify:shell": "node scripts/verify-shell.mjs",
+    "verify:edges": "node scripts/verify-edges.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",

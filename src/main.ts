@@ -7,6 +7,7 @@ import type { GraphNode, NodeId, NodeSchema, PlaneValue } from './core/types.js'
 import { makePlane } from './geometry/plane.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
+import { edgeSchemas } from './nodes/edges.js';
 import { modifySchemas } from './nodes/modify.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
@@ -35,6 +36,7 @@ registry.registerAll(planeNodes);
 registry.registerAll(geometrySchemas);
 registry.registerAll(faceSchemas);
 registry.registerAll(modifySchemas);
+registry.registerAll(edgeSchemas);
 
 const graph = new Graph(registry);
 
@@ -102,7 +104,10 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     editor.reveal(nodeId);
     requestSolve();
   },
-  onArmedChanged: (armed) => document.body.classList.toggle('picking', armed),
+  onArmedChanged: (armed) => {
+    document.body.classList.toggle('picking', armed);
+    viewport.setEdgePicking(armed && dialog.isPickingEdges);
+  },
   onSketch: (choice) => {
     const plane = planeValueFor(choice);
     if (plane === null) {
@@ -259,6 +264,27 @@ function describePickedFace(hit: FaceHit): PickedFace | null {
   const rank = matchingFaces(faces, picked.normal).findIndex((match) => match.face === picked);
   return rank < 0 ? null : { normal: picked.normal, rank };
 }
+
+dialog.onEdgesChanged((choice) => {
+  viewport.clearChosenEdges();
+  if (choice !== null) viewport.setChosenEdges(choice.nodeId, [...choice.picks.keys()]);
+});
+
+viewport.onEdgePick((hit) => {
+  if (hit === null) return;
+  const edge = viewport.edgesOf(hit.nodeId)?.[hit.edgeIndex];
+  if (edge === undefined) return;
+  dialog.offerEdge(hit.nodeId, {
+    index: hit.edgeIndex,
+    ref: { fraction: edge.fraction, direction: edge.direction, length: edge.length },
+  });
+});
+
+// Hover feedback while picking edges, so it is obvious what a click will take.
+viewport.canvas.addEventListener('pointermove', (event) => {
+  if (!dialog.isPickingEdges) return;
+  viewport.setHoveredEdge(viewport.edgeAt(event.clientX, event.clientY));
+});
 
 viewport.onPick((hit) => {
   viewport.setFaceHighlight(hit);

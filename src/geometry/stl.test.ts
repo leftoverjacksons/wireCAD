@@ -9,6 +9,9 @@ function triangleMesh(): MeshBuffers {
     indices: new Uint32Array([0, 1, 2]),
     faceIds: new Uint32Array([0]),
     faces: [],
+    edgePositions: new Float32Array(0),
+    edgeIds: new Uint32Array(0),
+    edges: [],
   };
 }
 

@@ -1,7 +1,15 @@
 import type { Graph } from '../core/graph.js';
 import type { NodeId, PortRef, Vec3 } from '../core/types.js';
 import type { FeatureSpec, OperandSpec, PlaneChoice } from './features.js';
-import { buildFeature, candidatesFor, outputPortFor, resolvePlaneSource } from './features.js';
+import type { EdgeRef } from '../nodes/edges.js';
+import { packEdgeRefs } from '../nodes/edges.js';
+import {
+  buildFeature,
+  candidatesFor,
+  outputPortFor,
+  resolveEdgeSource,
+  resolvePlaneSource,
+} from './features.js';
 
 export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
@@ -16,6 +24,20 @@ export interface PickedFace {
   rank: number;
 }
 
+export interface PickedEdge {
+  index: number;
+  ref: EdgeRef;
+}
+
+/**
+ * Edges accumulate instead of replacing, and they all have to come off one body,
+ * because the references are resolved against whatever solid the feature is fed.
+ */
+interface EdgeChoice {
+  nodeId: NodeId;
+  picks: Map<number, EdgeRef>;
+}
+
 type OperandChoice = PlaneChoice;
 
 export class FeatureDialog {
@@ -25,6 +47,8 @@ export class FeatureDialog {
   private readonly numbers = new Map<string, number>();
   private armedOperand: string | null = null;
   private message: HTMLElement | null = null;
+  private edges: EdgeChoice | null = null;
+  private edgeListener: ((choice: EdgeChoice | null) => void) | null = null;
 
   constructor(
     container: HTMLElement,
@@ -49,11 +73,24 @@ export class FeatureDialog {
     return this.armedOperand !== null;
   }
 
+  /** True while the armed slot wants edges rather than a body or a face. */
+  get isPickingEdges(): boolean {
+    const spec = this.spec;
+    if (spec === null || this.armedOperand === null) return false;
+    return spec.operands.find((o) => o.id === this.armedOperand)?.type === 'edges';
+  }
+
+  onEdgesChanged(listener: (choice: EdgeChoice | null) => void): void {
+    this.edgeListener = listener;
+  }
+
   open(spec: FeatureSpec, preselected: NodeId | null): void {
     this.spec = spec;
     this.chosen.clear();
     this.numbers.clear();
     this.armedOperand = null;
+    this.edges = null;
+    this.edgeListener?.(null);
 
     for (const number of spec.numbers) this.numbers.set(number.id, number.value);
 
@@ -76,6 +113,8 @@ export class FeatureDialog {
   close(): void {
     this.spec = null;
     this.armedOperand = null;
+    this.edges = null;
+    this.edgeListener?.(null);
     this.element.hidden = true;
     this.element.replaceChildren();
     this.callbacks.onArmedChanged(false);
@@ -128,6 +167,37 @@ export class FeatureDialog {
     return true;
   }
 
+  /** Clicking an edge adds it; clicking it again takes it back out. */
+  offerEdge(nodeId: NodeId, edge: PickedEdge): boolean {
+    const spec = this.spec;
+    const armed = this.armedOperand;
+    if (spec === null || armed === null) return false;
+    if (spec.operands.find((candidate) => candidate.id === armed)?.type !== 'edges') return false;
+
+    if (outputPortFor(this.graph, nodeId, 'geometry') === null) {
+      this.setMessage('That edge is not on a solid');
+      return false;
+    }
+
+    if (this.edges !== null && this.edges.nodeId !== nodeId) {
+      this.setMessage('All the edges have to be on one body');
+      return false;
+    }
+
+    const choice = this.edges ?? { nodeId, picks: new Map<number, EdgeRef>() };
+    if (choice.picks.has(edge.index)) choice.picks.delete(edge.index);
+    else choice.picks.set(edge.index, edge.ref);
+
+    this.edges = choice.picks.size === 0 ? null : choice;
+    if (this.edges === null) this.chosen.delete(armed);
+    else this.chosen.set(armed, { kind: 'node', nodeId });
+
+    this.edgeListener?.(this.edges);
+    // Stay armed: picking edges is a set, not a single answer.
+    this.render();
+    return true;
+  }
+
   private advance(): void {
     this.armedOperand = null;
     this.render();
@@ -147,12 +217,15 @@ export class FeatureDialog {
     if (this.message !== null) this.message.textContent = text;
   }
 
+  private describeNode(nodeId: NodeId): string {
+    const node = this.graph.getNode(nodeId);
+    return node === undefined || node === null
+      ? nodeId
+      : (node.label ?? this.graph.registry.require(node.type).label);
+  }
+
   private describe(choice: OperandChoice): string {
-    const node = this.graph.getNode(choice.nodeId);
-    const label =
-      node === undefined
-        ? choice.nodeId
-        : (node.label ?? this.graph.registry.require(node.type).label);
+    const label = this.describeNode(choice.nodeId);
     return choice.kind === 'face' ? `Face of ${label} (rank ${choice.rank})` : label;
   }
 
@@ -167,6 +240,31 @@ export class FeatureDialog {
     row.append(label);
 
     const choice = this.chosen.get(operand.id);
+
+    if (operand.type === 'edges') {
+      const chip = document.createElement('span');
+      chip.className = 'feature-chip';
+      const count = this.edges?.picks.size ?? 0;
+      chip.textContent =
+        count === 0 ? 'none picked' : `${count} edge${count === 1 ? '' : 's'} of ${this.describeNode(this.edges!.nodeId)}`;
+      if (count === 0) chip.classList.add('feature-chip-empty');
+      row.append(chip);
+
+      if (count > 0) {
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'feature-pick';
+        clear.textContent = 'clear';
+        clear.addEventListener('click', () => {
+          this.edges = null;
+          this.chosen.delete(operand.id);
+          this.edgeListener?.(null);
+          this.render();
+        });
+        row.append(clear);
+      }
+      return row;
+    }
 
     if (choice?.kind === 'face' || operand.type === 'face') {
       const chip = document.createElement('span');
@@ -258,7 +356,9 @@ export class FeatureDialog {
     message.className = 'feature-message';
     if (this.armedOperand !== null) {
       const operand = spec.operands.find((candidate) => candidate.id === this.armedOperand);
-      if (operand?.type === 'face') {
+      if (operand?.type === 'edges') {
+        message.textContent = 'Click edges in the view. Click one again to drop it.';
+      } else if (operand?.type === 'face') {
         message.textContent = 'Click the face to leave open.';
       } else if (operand?.type === 'plane') {
         message.textContent = 'Click a flat face in the view, or a plane node below.';
@@ -338,6 +438,24 @@ export class FeatureDialog {
       for (const operand of spec.operands) {
         const choice = this.chosen.get(operand.id);
         if (choice === undefined) continue;
+
+        // Picked edges wire the body they sit on, plus a node holding the set.
+        if (operand.type === 'edges') {
+          const picked = this.edges;
+          if (picked === null || picked.picks.size === 0) {
+            throw new Error(`${operand.label}: pick at least one edge`);
+          }
+          const source = outputPortFor(this.graph, picked.nodeId, 'geometry');
+          if (source === null) throw new Error(`${operand.label} is not on a solid`);
+
+          operands[operand.id] = source;
+          operands.edges = resolveEdgeSource(
+            this.graph,
+            packEdgeRefs([...picked.picks.values()]),
+            created,
+          );
+          continue;
+        }
 
         // A picked face wires the body it belongs to and writes its own selector.
         if (operand.type === 'face') {

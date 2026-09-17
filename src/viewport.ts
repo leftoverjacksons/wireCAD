@@ -1,13 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { NodeId, PlaneValue, Vec3 } from './core/types.js';
-import type { FaceInfo } from './geometry/kernel.js';
+import type { EdgeInfo, FaceInfo } from './geometry/kernel.js';
 import { planeYAxis } from './geometry/plane.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
 
 export interface FaceHit {
   nodeId: NodeId;
   faceIndex: number | null;
+}
+
+export interface EdgeHit {
+  nodeId: NodeId;
+  edgeIndex: number;
 }
 
 export class Viewport {
@@ -19,6 +24,8 @@ export class Viewport {
   private readonly kinds = new Map<NodeId, MeshKind>();
   private readonly faces = new Map<NodeId, FaceInfo[]>();
   private readonly faceIds = new Map<NodeId, Uint32Array>();
+  private readonly edgeLines = new Map<NodeId, THREE.LineSegments>();
+  private readonly edges = new Map<NodeId, EdgeInfo[]>();
 
   private readonly material = new THREE.MeshStandardMaterial({
     color: 0xe8944a,
@@ -63,10 +70,19 @@ export class Viewport {
     emissive: 0x12355c,
   });
 
+  private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0x3a2a1c });
+  // WebGL ignores line width, so a picked edge has to read by colour alone.
+  private readonly edgeHoverMaterial = new THREE.LineBasicMaterial({ color: 0xcfe8ff });
+  private readonly edgeChosenMaterial = new THREE.LineBasicMaterial({ color: 0x4fa8ff });
+
   private readonly raycaster = new THREE.Raycaster();
   private pickListener: ((hit: FaceHit | null) => void) | null = null;
+  private edgePickListener: ((hit: EdgeHit | null) => void) | null = null;
   private highlighted: NodeId | null = null;
   private highlightedFace: FaceHit | null = null;
+  private hoveredEdge: EdgeHit | null = null;
+  private chosenEdges = new Map<NodeId, Set<number>>();
+  private edgePicking = false;
   private framed = false;
   private pickingEnabled = true;
 
@@ -148,6 +164,14 @@ export class Viewport {
       );
 
       this.raycaster.setFromCamera(ndc, this.camera);
+
+      // While picking edges, a nearby line beats the surface behind it.
+      if (this.edgePicking) {
+        const edgeHit = this.pickEdge();
+        this.edgePickListener?.(edgeHit);
+        return;
+      }
+
       const hits = this.raycaster.intersectObjects([...this.meshes.values()], false);
       const hit = hits[0];
       if (hit === undefined) {
@@ -175,6 +199,109 @@ export class Viewport {
 
   onPick(listener: (hit: FaceHit | null) => void): void {
     this.pickListener = listener;
+  }
+
+  onEdgePick(listener: (hit: EdgeHit | null) => void): void {
+    this.edgePickListener = listener;
+  }
+
+  /**
+   * Line picking needs a world-space tolerance, and "close enough to click" is a
+   * screen distance, so the threshold is scaled from how big the model is.
+   */
+  private edgeThreshold(): number {
+    const box = new THREE.Box3();
+    for (const mesh of this.meshes.values()) box.expandByObject(mesh);
+    if (box.isEmpty()) return 1;
+    return Math.max(box.getSize(new THREE.Vector3()).length() * 0.006, 1e-4);
+  }
+
+  private pickEdge(): EdgeHit | null {
+    const lines = [...this.edgeLines.values()];
+    if (lines.length === 0) return null;
+
+    const previous = this.raycaster.params.Line?.threshold;
+    this.raycaster.params.Line = { threshold: this.edgeThreshold() };
+    const hits = this.raycaster.intersectObjects(lines, false);
+    if (previous !== undefined) this.raycaster.params.Line = { threshold: previous };
+
+    const hit = hits[0];
+    if (hit === undefined) return null;
+
+    const nodeId = hit.object.userData.nodeId;
+    if (typeof nodeId !== 'string') return null;
+
+    // Three reports the segment index; map it back to the B-rep edge that owns it.
+    const segment = hit.index === undefined || hit.index === null ? null : Math.floor(hit.index / 2);
+    if (segment === null) return null;
+
+    const edges = this.edges.get(nodeId) ?? [];
+    for (const [index, edge] of edges.entries()) {
+      if (segment >= edge.segmentStart && segment < edge.segmentStart + edge.segmentCount) {
+        return { nodeId, edgeIndex: index };
+      }
+    }
+    return null;
+  }
+
+  /** Turns on line picking and makes the edges legible while it is on. */
+  setEdgePicking(enabled: boolean): void {
+    if (this.edgePicking === enabled) return;
+    this.edgePicking = enabled;
+    this.edgeMaterial.color.set(enabled ? 0x6b5540 : 0x3a2a1c);
+    if (!enabled) {
+      this.hoveredEdge = null;
+      for (const nodeId of this.edgeLines.keys()) this.applyEdgeMaterials(nodeId);
+    }
+  }
+
+  setHoveredEdge(hit: EdgeHit | null): void {
+    const same =
+      this.hoveredEdge?.nodeId === hit?.nodeId && this.hoveredEdge?.edgeIndex === hit?.edgeIndex;
+    if (same) return;
+
+    const previous = this.hoveredEdge;
+    this.hoveredEdge = hit;
+    if (previous !== null) this.applyEdgeMaterials(previous.nodeId);
+    if (hit !== null) this.applyEdgeMaterials(hit.nodeId);
+  }
+
+  /** The edges currently in a selection, drawn so the user can see the set grow. */
+  setChosenEdges(nodeId: NodeId, indices: readonly number[]): void {
+    if (indices.length === 0) this.chosenEdges.delete(nodeId);
+    else this.chosenEdges.set(nodeId, new Set(indices));
+    this.applyEdgeMaterials(nodeId);
+  }
+
+  clearChosenEdges(): void {
+    const touched = [...this.chosenEdges.keys()];
+    this.chosenEdges.clear();
+    for (const nodeId of touched) this.applyEdgeMaterials(nodeId);
+  }
+
+  edgesOf(nodeId: NodeId): readonly EdgeInfo[] | undefined {
+    return this.edges.get(nodeId);
+  }
+
+  /** Where a model point lands on screen, in client coordinates. */
+  screenPositionOf(point: Vec3): { x: number; y: number } {
+    const projected = new THREE.Vector3(point.x, point.y, point.z).project(this.camera);
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    return {
+      x: rect.left + ((projected.x + 1) / 2) * rect.width,
+      y: rect.top + ((1 - projected.y) / 2) * rect.height,
+    };
+  }
+
+  /** Hit-test for hover, without the click-versus-drag gate that picking uses. */
+  edgeAt(clientX: number, clientY: number): EdgeHit | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.pickEdge();
   }
 
   get canvas(): HTMLCanvasElement {
@@ -372,6 +499,61 @@ export class Viewport {
     }
 
     this.applyMaterials(payload.nodeId);
+    this.setEdgeGeometry(payload);
+  }
+
+  /** Edges are their own object: line picking and surface picking do not mix. */
+  private setEdgeGeometry(payload: MeshPayload): void {
+    this.edges.set(payload.nodeId, payload.edges);
+
+    const existing = this.edgeLines.get(payload.nodeId);
+    if (payload.edges.length === 0) {
+      if (existing !== undefined) {
+        this.scene.remove(existing);
+        existing.geometry.dispose();
+        this.edgeLines.delete(payload.nodeId);
+      }
+      return;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(payload.edgePositions, 3));
+    geometry.computeBoundingSphere();
+
+    if (existing !== undefined) {
+      existing.geometry.dispose();
+      existing.geometry = geometry;
+    } else {
+      const lines = new THREE.LineSegments(geometry, this.edgeMaterial);
+      lines.userData.nodeId = payload.nodeId;
+      lines.renderOrder = 2;
+      this.edgeLines.set(payload.nodeId, lines);
+      this.scene.add(lines);
+    }
+
+    this.applyEdgeMaterials(payload.nodeId);
+  }
+
+  /** One render group per B-rep edge, mirroring how faces carry their own material. */
+  private applyEdgeMaterials(nodeId: NodeId): void {
+    const lines = this.edgeLines.get(nodeId);
+    if (lines === undefined) return;
+
+    const edges = this.edges.get(nodeId) ?? [];
+    const chosen = this.chosenEdges.get(nodeId);
+    const hot = this.hoveredEdge?.nodeId === nodeId ? this.hoveredEdge.edgeIndex : -1;
+
+    lines.geometry.clearGroups();
+    if (edges.length === 0 || (hot < 0 && (chosen === undefined || chosen.size === 0))) {
+      lines.material = this.edgeMaterial;
+      return;
+    }
+
+    for (const [index, edge] of edges.entries()) {
+      const slot = index === hot ? 1 : (chosen?.has(index) ?? false) ? 2 : 0;
+      lines.geometry.addGroup(edge.segmentStart * 2, edge.segmentCount * 2, slot);
+    }
+    lines.material = [this.edgeMaterial, this.edgeHoverMaterial, this.edgeChosenMaterial];
   }
 
   retain(visible: readonly NodeId[]): void {
@@ -384,7 +566,16 @@ export class Viewport {
       this.kinds.delete(nodeId);
       this.faces.delete(nodeId);
       this.faceIds.delete(nodeId);
+      const lines = this.edgeLines.get(nodeId);
+      if (lines !== undefined) {
+        this.scene.remove(lines);
+        lines.geometry.dispose();
+        this.edgeLines.delete(nodeId);
+      }
+      this.edges.delete(nodeId);
+      this.chosenEdges.delete(nodeId);
       if (this.highlightedFace?.nodeId === nodeId) this.highlightedFace = null;
+      if (this.hoveredEdge?.nodeId === nodeId) this.hoveredEdge = null;
     }
   }
 
