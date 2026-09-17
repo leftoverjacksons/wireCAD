@@ -13,8 +13,12 @@ import {
 
 export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
+  /** The last capture is no longer wanted: a preview was taken back out again. */
+  onForget(): void;
   onCommit(nodeId: NodeId): void;
   onArmedChanged(armed: boolean): void;
+  /** The preview node, or null when there is nothing to show yet. */
+  onPreviewChanged(nodeId: NodeId | null): void;
   /** A sketch feature hands its plane off to interactive drawing. */
   onSketch(choice: PlaneChoice): void;
 }
@@ -50,6 +54,14 @@ export class FeatureDialog {
   private message: HTMLElement | null = null;
   private edges: EdgeChoice | null = null;
   private edgeListener: ((choice: EdgeChoice | null) => void) | null = null;
+  /** What the feature currently looks like, standing in the graph already. */
+  private preview: { nodeId: NodeId; created: NodeId[] } | null = null;
+  /** Whether the history snapshot taken before the first preview still stands. */
+  private captured = false;
+  private failure: string | null = null;
+  /** The operand set the preview was built from; numbers change without a rebuild. */
+  private previewSignature: string | null = null;
+  private readonly numberFields = new Map<string, HTMLInputElement>();
 
   constructor(
     container: HTMLElement,
@@ -86,6 +98,9 @@ export class FeatureDialog {
   }
 
   open(spec: FeatureSpec, preselected: NodeId | null): void {
+    // Whatever was open is abandoned, preview and all.
+    if (this.spec !== null) this.close();
+
     this.spec = spec;
     this.chosen.clear();
     this.numbers.clear();
@@ -111,16 +126,163 @@ export class FeatureDialog {
 
     this.render();
     this.armNextEmpty();
+    this.refreshPreview();
   }
 
+  /** Leaving without creating: the preview goes back out of the graph. */
   close(): void {
+    this.dropPreview();
+    if (this.captured) {
+      this.callbacks.onForget();
+      this.captured = false;
+    }
+    this.finish();
+  }
+
+  private finish(): void {
     this.spec = null;
     this.armedOperand = null;
     this.edges = null;
+    this.preview = null;
+    this.previewSignature = null;
+    this.captured = false;
+    this.failure = null;
+    this.numberFields.clear();
     this.edgeListener?.(null);
     this.element.hidden = true;
     this.element.replaceChildren();
     this.callbacks.onArmedChanged(false);
+    this.callbacks.onPreviewChanged(null);
+  }
+
+  // ------------------------------------------------------------- preview
+
+  /** The feature as it currently stands, already in the graph. */
+  get previewNodeId(): NodeId | null {
+    return this.preview?.nodeId ?? null;
+  }
+
+  get feature(): FeatureSpec | null {
+    return this.spec;
+  }
+
+  /** Which node is feeding an operand, for whoever needs to know where it is. */
+  operandNode(portId: string): NodeId | null {
+    return this.chosen.get(portId)?.nodeId ?? null;
+  }
+
+  numberOf(id: string): number | null {
+    return this.numbers.get(id) ?? null;
+  }
+
+  /** Set a number from outside, such as a handle dragged in the view. */
+  setNumber(id: string, value: number): void {
+    if (this.spec === null) return;
+    if (this.numbers.get(id) === value) return;
+
+    this.numbers.set(id, value);
+    const field = this.numberFields.get(id);
+    if (field !== undefined) field.value = String(value);
+    this.refreshPreview();
+  }
+
+  /** Nodes the preview put in the graph, which are not operands to choose from. */
+  private previewNodes(): Set<NodeId> {
+    return new Set(this.preview === null ? [] : [this.preview.nodeId, ...this.preview.created]);
+  }
+
+  private dropPreview(): void {
+    const preview = this.preview;
+    this.preview = null;
+    this.previewSignature = null;
+    if (preview === null) return;
+
+    for (const nodeId of [preview.nodeId, ...preview.created]) {
+      if ((this.graph.getNode(nodeId) ?? null) !== null) this.graph.removeNode(nodeId);
+    }
+    this.callbacks.onPreviewChanged(null);
+  }
+
+  /** What the operands add up to. A change here needs the nodes built again. */
+  private operandSignature(): string {
+    const spec = this.spec;
+    if (spec === null) return '';
+
+    const parts: string[] = [spec.id];
+    for (const operand of spec.operands) {
+      const choice = this.chosen.get(operand.id);
+      if (choice === undefined) parts.push(`${operand.id}=`);
+      else if (choice.kind === 'face') {
+        const { x, y, z } = choice.normal;
+        parts.push(`${operand.id}=face:${choice.nodeId}:${choice.rank}:${x},${y},${z}`);
+      } else parts.push(`${operand.id}=node:${choice.nodeId}`);
+    }
+    if (this.edges !== null) {
+      parts.push(`edges=${this.edges.nodeId}:${[...this.edges.picks.keys()].sort().join('.')}`);
+    }
+    return parts.join('|');
+  }
+
+  /**
+   * Builds, or updates, the feature as it currently stands.
+   *
+   * The preview is the real thing, standing in the graph already: the same
+   * nodes, evaluated by the same worker, drawn by the same viewport. Create
+   * keeps it and Cancel takes it back out. Nothing else could be relied on to
+   * show what pressing Create would actually do.
+   */
+  private refreshPreview(): void {
+    const spec = this.spec;
+    if (spec === null || spec.kind === 'sketch' || spec.kind === 'edit') return;
+
+    const ready = spec.operands.every(
+      (operand) => operand.optional === true || this.chosen.has(operand.id),
+    );
+    if (!ready) {
+      this.dropPreview();
+      return;
+    }
+
+    // Only the numbers moved: the nodes are right, so leave them where they are
+    // and set the values. Rebuilding on every keystroke would renumber and
+    // re-lay-out the graph under the cursor.
+    const signature = this.operandSignature();
+    if (this.preview !== null && signature === this.previewSignature) {
+      for (const [id, value] of this.inputValues()) {
+        this.graph.setInput(this.preview.nodeId, id, value);
+      }
+      this.callbacks.onPreviewChanged(this.preview.nodeId);
+      return;
+    }
+
+    this.dropPreview();
+    if (!this.captured) {
+      this.callbacks.onBeforeChange();
+      this.captured = true;
+    }
+
+    try {
+      this.preview = this.buildNodes();
+      this.previewSignature = signature;
+      this.failure = null;
+    } catch (thrown) {
+      this.failure = thrown instanceof Error ? thrown.message : String(thrown);
+      this.setMessage(this.failure);
+    }
+
+    this.callbacks.onPreviewChanged(this.preview?.nodeId ?? null);
+  }
+
+  private inputValues(): Array<[string, number | string]> {
+    const spec = this.spec;
+    if (spec === null) return [];
+
+    const values: Array<[string, number | string]> = [];
+    for (const number of spec.numbers) values.push([number.id, this.numbers.get(number.id) ?? number.value]);
+    for (const choice of spec.choices ?? []) {
+      values.push([choice.id, this.choices.get(choice.id) ?? choice.value]);
+    }
+    return values;
   }
 
   /**
@@ -132,6 +294,13 @@ export class FeatureDialog {
     const spec = this.spec;
     const armed = this.armedOperand;
     if (spec === null || armed === null) return false;
+
+    // The preview is this feature's own output; feeding it back in would be a
+    // cycle, and clicking it is what happens when it covers what you meant.
+    if (this.previewNodes().has(nodeId)) {
+      this.setMessage('That is this feature\u2019s own preview');
+      return false;
+    }
 
     const operand = spec.operands.find((candidate) => candidate.id === armed);
     if (operand === undefined) return false;
@@ -176,6 +345,10 @@ export class FeatureDialog {
     const armed = this.armedOperand;
     if (spec === null || armed === null) return false;
     if (spec.operands.find((candidate) => candidate.id === armed)?.type !== 'edges') return false;
+    if (this.previewNodes().has(nodeId)) {
+      this.setMessage('That is this feature\u2019s own preview');
+      return false;
+    }
 
     if (outputPortFor(this.graph, nodeId, 'geometry') === null) {
       this.setMessage('That edge is not on a solid');
@@ -198,6 +371,7 @@ export class FeatureDialog {
     this.edgeListener?.(this.edges);
     // Stay armed: picking edges is a set, not a single answer.
     this.render();
+    this.refreshPreview();
     return true;
   }
 
@@ -205,6 +379,7 @@ export class FeatureDialog {
     this.armedOperand = null;
     this.render();
     this.armNextEmpty();
+    this.refreshPreview();
   }
 
   private armNextEmpty(): void {
@@ -263,6 +438,7 @@ export class FeatureDialog {
           this.chosen.delete(operand.id);
           this.edgeListener?.(null);
           this.render();
+          this.refreshPreview();
         });
         row.append(clear);
       }
@@ -285,7 +461,7 @@ export class FeatureDialog {
       empty.textContent = '—';
       select.append(empty);
 
-      for (const candidate of candidatesFor(this.graph, operand.type)) {
+      for (const candidate of candidatesFor(this.graph, operand.type, this.previewNodes())) {
         const option = document.createElement('option');
         option.value = candidate.nodeId;
         option.textContent = candidate.label;
@@ -326,6 +502,7 @@ export class FeatureDialog {
 
     this.element.hidden = false;
     this.element.replaceChildren();
+    this.numberFields.clear();
 
     const title = document.createElement('div');
     title.className = 'feature-title';
@@ -351,7 +528,10 @@ export class FeatureDialog {
         select.append(item);
       }
       select.value = this.choices.get(choice.id) ?? choice.value;
-      select.addEventListener('change', () => this.choices.set(choice.id, select.value));
+      select.addEventListener('change', () => {
+        this.choices.set(choice.id, select.value);
+        this.refreshPreview();
+      });
 
       row.append(label, select);
       this.element.append(row);
@@ -371,8 +551,11 @@ export class FeatureDialog {
       field.value = String(this.numbers.get(number.id) ?? number.value);
       field.addEventListener('input', () => {
         const parsed = Number(field.value);
-        if (!Number.isNaN(parsed)) this.numbers.set(number.id, parsed);
+        if (Number.isNaN(parsed)) return;
+        this.numbers.set(number.id, parsed);
+        this.refreshPreview();
       });
+      this.numberFields.set(number.id, field);
 
       row.append(label, field);
       this.element.append(row);
@@ -429,39 +612,19 @@ export class FeatureDialog {
     return resolvePlaneSource(this.graph, choice, created);
   }
 
-  private commit(): void {
+  /**
+   * Puts the feature in the graph: the node itself, plus whatever it needs
+   * alongside it — a node holding a set of picked edges, or one holding a face
+   * reference. Anything created is rolled back if a later step fails.
+   */
+  private buildNodes(): { nodeId: NodeId; created: NodeId[] } {
     const spec = this.spec;
-    if (spec === null) return;
+    if (spec === null) throw new Error('Nothing to build');
 
-    for (const operand of spec.operands) {
-      if (this.chosen.has(operand.id) || operand.optional === true) continue;
-      this.setMessage(`${operand.label} is required`);
-      return;
-    }
-
-    // A sketch feature creates nothing yet: drawing decides what gets built.
-    if (spec.kind === 'sketch') {
-      const choice = this.chosen.get(spec.operands[0]?.id ?? '');
-      if (choice === undefined) {
-        this.setMessage('Pick a plane or a flat face');
-        return;
-      }
-      this.close();
-      this.callbacks.onSketch(choice);
-      return;
-    }
-
-    this.callbacks.onBeforeChange();
     const created: NodeId[] = [];
 
     try {
-      const numbers: Record<string, number | string> = {};
-      for (const number of spec.numbers) {
-        numbers[number.id] = this.numbers.get(number.id) ?? number.value;
-      }
-      for (const choice of spec.choices ?? []) {
-        numbers[choice.id] = this.choices.get(choice.id) ?? choice.value;
-      }
+      const numbers: Record<string, number | string> = Object.fromEntries(this.inputValues());
 
       const operands: Record<string, PortRef> = {};
       for (const operand of spec.operands) {
@@ -503,12 +666,49 @@ export class FeatureDialog {
         operands[operand.id] = this.resolveChoice(choice, operand, created);
       }
 
-      const nodeId = buildFeature(this.graph, spec, operands, numbers);
-      this.close();
-      this.callbacks.onCommit(nodeId);
+      return { nodeId: buildFeature(this.graph, spec, operands, numbers), created };
     } catch (thrown) {
       for (const nodeId of created.reverse()) this.graph.removeNode(nodeId);
-      this.setMessage(thrown instanceof Error ? thrown.message : String(thrown));
+      throw thrown;
     }
+  }
+
+  private commit(): void {
+    const spec = this.spec;
+    if (spec === null) return;
+
+    for (const operand of spec.operands) {
+      if (this.chosen.has(operand.id) || operand.optional === true) continue;
+      this.setMessage(`${operand.label} is required`);
+      return;
+    }
+
+    // A sketch feature creates nothing yet: drawing decides what gets built.
+    if (spec.kind === 'sketch') {
+      const choice = this.chosen.get(spec.operands[0]?.id ?? '');
+      if (choice === undefined) {
+        this.setMessage('Pick a plane or a flat face');
+        return;
+      }
+      this.close();
+      this.callbacks.onSketch(choice);
+      return;
+    }
+
+    // Create keeps what is already on screen. The preview was built the same
+    // way this used to build on Create, so there is nothing left to do but
+    // stop calling it a preview.
+    this.refreshPreview();
+    const preview = this.preview;
+    if (preview === null) {
+      this.setMessage(this.failure ?? 'There is nothing to create yet');
+      return;
+    }
+
+    const nodeId = preview.nodeId;
+    this.preview = null;
+    this.captured = false;
+    this.finish();
+    this.callbacks.onCommit(nodeId);
   }
 }

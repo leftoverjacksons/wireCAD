@@ -5,9 +5,33 @@ import type { EdgeInfo, FaceInfo } from './geometry/kernel.js';
 import { planeYAxis } from './geometry/plane.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
 
+/** How close a pointer has to be to the handle's head, in pixels. */
+const HANDLE_GRAB = 16;
+/** Dragged distances land on this, in millimetres. */
+const HANDLE_STEP = 0.1;
+
+/** Snapped, and free of the trailing noise that dividing by a tenth leaves. */
+function round(value: number, step: number): number {
+  return Number((Math.round(value / step) * step).toFixed(3));
+}
+
 export interface FaceHit {
   nodeId: NodeId;
   faceIndex: number | null;
+}
+
+/**
+ * A distance the person can drag, rather than only type.
+ *
+ * `origin` is where the measurement starts and `direction` which way it runs;
+ * the head sits at `distance` along it. Dragging reports a new distance, which
+ * is the owner's to apply — the handle never changes anything itself.
+ */
+export interface DragHandle {
+  origin: Vec3;
+  direction: Vec3;
+  distance: number;
+  onDrag(distance: number): void;
 }
 
 export interface EdgeHit {
@@ -85,6 +109,9 @@ export class Viewport {
   private edgePicking = false;
   private framed = false;
   private pickingEnabled = true;
+  private handle: DragHandle | null = null;
+  private handleObjects: Array<THREE.Line | THREE.Mesh> = [];
+  private draggingHandle = false;
   /** Where the camera was before a sketch took it, so leaving can give it back. */
   private savedView: { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 } | null =
     null;
@@ -110,6 +137,15 @@ export class Viewport {
     color: 0xff61c6,
     size: 11,
     sizeAttenuation: false,
+    depthTest: false,
+  });
+
+  private readonly handleLineMaterial = new THREE.LineBasicMaterial({
+    color: 0xff61c6,
+    depthTest: false,
+  });
+  private readonly handleMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff61c6,
     depthTest: false,
   });
 
@@ -174,7 +210,36 @@ export class Viewport {
       downX = event.clientX;
       downY = event.clientY;
       armed = this.pickingEnabled;
+
+      // The handle takes the gesture before the camera does, or dragging it
+      // would orbit the view instead.
+      if (event.button === 0 && this.handleTaken(event.clientX, event.clientY)) {
+        armed = false;
+        this.draggingHandle = true;
+        this.controls.enabled = false;
+        canvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      }
     });
+
+    canvas.addEventListener('pointermove', (event) => {
+      if (this.draggingHandle) {
+        const distance = this.distanceAlongHandle(event.clientX, event.clientY);
+        if (distance !== null) this.handle?.onDrag(round(distance, HANDLE_STEP));
+        return;
+      }
+
+      canvas.style.cursor = this.handleTaken(event.clientX, event.clientY) ? 'ns-resize' : '';
+    });
+
+    const release = (event: PointerEvent) => {
+      if (!this.draggingHandle) return;
+      this.draggingHandle = false;
+      this.controls.enabled = true;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    };
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
 
     canvas.addEventListener('pointerup', (event) => {
       // A click that began in another mode belongs to that mode, even if the
@@ -337,6 +402,115 @@ export class Viewport {
 
   get canvas(): HTMLCanvasElement {
     return this.renderer.domElement;
+  }
+
+  // ------------------------------------------------------------ drag handle
+
+  /**
+   * An arrow along an axis that can be dragged to set a distance.
+   *
+   * It is drawn without depth testing and hit-tested in screen space, because
+   * the thing it sets the size of is usually sitting on top of it.
+   */
+  setDragHandle(handle: DragHandle | null): void {
+    this.handle = handle;
+    this.redrawHandle();
+  }
+
+  private redrawHandle(): void {
+    for (const object of this.handleObjects) {
+      this.scene.remove(object);
+      object.geometry.dispose();
+    }
+    this.handleObjects = [];
+
+    const handle = this.handle;
+    if (handle === null) return;
+
+    const from = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
+    const along = new THREE.Vector3(handle.direction.x, handle.direction.y, handle.direction.z)
+      .normalize()
+      .multiplyScalar(handle.distance);
+    const to = from.clone().add(along);
+
+    const shaft = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const line = new THREE.Line(shaft, this.handleLineMaterial);
+    line.renderOrder = 8;
+    this.scene.add(line);
+    this.handleObjects.push(line);
+
+    // The head is sized against the model, so it stays grabbable at any zoom.
+    const size = Math.max(this.sceneRadius() * 0.1, 1);
+    const head = new THREE.Mesh(new THREE.ConeGeometry(size * 0.5, size * 1.6, 16), this.handleMaterial);
+    head.position.copy(to);
+    head.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      along.lengthSq() === 0 ? new THREE.Vector3(0, 0, 1) : along.clone().normalize(),
+    );
+    head.renderOrder = 9;
+    this.scene.add(head);
+    this.handleObjects.push(head);
+  }
+
+  /** True when a pointer at this position is on the handle's head. */
+  private handleTaken(clientX: number, clientY: number): boolean {
+    const at = this.handleScreenPosition();
+    return at !== null && Math.hypot(at.x - clientX, at.y - clientY) <= HANDLE_GRAB;
+  }
+
+  private sceneRadius(): number {
+    const box = new THREE.Box3();
+    for (const mesh of this.meshes.values()) box.expandByObject(mesh);
+    return box.isEmpty() ? 60 : box.getSize(new THREE.Vector3()).length() / 2;
+  }
+
+  /** Where the handle's head is on screen, for deciding whether a click took it. */
+  handleScreenPosition(): { x: number; y: number } | null {
+    const handle = this.handle;
+    if (handle === null) return null;
+
+    const at = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z).add(
+      new THREE.Vector3(handle.direction.x, handle.direction.y, handle.direction.z)
+        .normalize()
+        .multiplyScalar(handle.distance),
+    );
+    return this.screenPositionOf({ x: at.x, y: at.y, z: at.z });
+  }
+
+  /**
+   * How far along the handle's axis the cursor is.
+   *
+   * The cursor is a ray, not a point, so this is the point on the axis closest
+   * to that ray — the standard nearest points of two skew lines. A ray almost
+   * parallel to the axis has no useful answer, and says so.
+   */
+  private distanceAlongHandle(clientX: number, clientY: number): number | null {
+    const handle = this.handle;
+    if (handle === null) return null;
+
+    const rect = this.canvas.getBoundingClientRect();
+    this.raycaster.setFromCamera(
+      new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      ),
+      this.camera,
+    );
+
+    const axis = new THREE.Vector3(
+      handle.direction.x,
+      handle.direction.y,
+      handle.direction.z,
+    ).normalize();
+    const origin = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
+    const ray = this.raycaster.ray.direction.clone().normalize();
+    const between = this.raycaster.ray.origin.clone().sub(origin);
+
+    const alignment = ray.dot(axis);
+    const denominator = 1 - alignment * alignment;
+    if (denominator < 1e-4) return null;
+
+    return (axis.dot(between) - alignment * ray.dot(between)) / denominator;
   }
 
   // ------------------------------------------------------------ sketch mode

@@ -313,9 +313,14 @@ export function outputPortFor(graph: Graph, nodeId: NodeId, type: DataType): Por
   return port === undefined ? null : { node: nodeId, port: port.id };
 }
 
-export function candidatesFor(graph: Graph, type: DataType): Array<{ nodeId: NodeId; label: string }> {
+export function candidatesFor(
+  graph: Graph,
+  type: DataType,
+  exclude: ReadonlySet<NodeId> = new Set(),
+): Array<{ nodeId: NodeId; label: string }> {
   const results: Array<{ nodeId: NodeId; label: string }> = [];
   for (const node of graph.allNodes()) {
+    if (exclude.has(node.id)) continue;
     const schema = graph.schemaOf(node.id);
     if (!schema.outputs.some((port) => port.type === type)) continue;
     results.push({ nodeId: node.id, label: node.label ?? schema.label });

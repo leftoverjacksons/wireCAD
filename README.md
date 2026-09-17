@@ -30,6 +30,14 @@ is ready, typically around two seconds.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
+- **Live preview** — a feature dialog builds what it describes as soon as it has
+  what it needs, and keeps it up to date as you type, pick or choose. Create
+  keeps what is on screen; Cancel takes it back out and leaves nothing behind,
+  not even an undo step. A fillet appears as the edges are picked, an extrude as
+  the distance is typed.
+- **Dragging a distance** — an extrude's preview comes with an arrow along the
+  profile's normal. Pull it and the number follows, in tenths of a millimetre,
+  and the body follows the number.
 - **Extrude** — one node makes bodies and takes them away. *Operation* says what
   it does to the body wired into *Target*: **New body**, **Join**, **Cut** or
   **Intersect**. A bore is the same node as the block it goes through, pointed at
@@ -155,6 +163,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 | `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
+| `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -323,6 +332,31 @@ thing again, and is refused rather than approximated: if the residuals cannot be
 driven to zero the node reports how far off it got instead of handing back a
 shape that satisfies nothing.
 
+## Previewing a feature
+
+A dialog's preview is the feature itself, built in the graph as soon as its
+operands are satisfied: the same nodes, evaluated by the same worker, drawn by
+the same viewport. Create stops calling it a preview, and Cancel takes it back
+out. Nothing else could be relied on to show what pressing Create would do,
+because anything else would be a second implementation of every feature, free
+to disagree with the first.
+
+What this costs is bookkeeping, and the bookkeeping is where the care goes.
+
+A change to a number updates the node in place; a change to an operand rebuilds
+it, because the wiring is different. Rebuilding on every keystroke would
+renumber the graph and re-run the layout under the cursor, so the two cases are
+told apart by a signature of the operands alone.
+
+The preview is in the document, which means it can be picked, listed as a
+candidate for its own operands, and stepped over by undo. So it is excluded from
+the dropdowns and refused when clicked, and undo with a dialog open cancels the
+dialog rather than pulling the document out from under it.
+
+The history snapshot is taken once, before the first preview, and forgotten if
+the dialog is cancelled — along with restoring the redo that taking it
+discarded, because as far as the document is concerned nothing happened.
+
 ## From a sketch to a face
 
 A solved sketch is a set of points, not an outline, so the outline has to be
@@ -377,7 +411,8 @@ unopenable.
   dialog. Chamfers are symmetric; there is no two-distance or distance-and-angle
   form yet.
 - No draft, sweep, loft, or patterns yet.
-- Feature dialogs do not preview: nothing changes until you press Create.
+- Only an extrude has a drag handle. A radius, a thickness or a chamfer is set
+  by typing, because there is no axis in the model for it to run along.
 - The kernel's own failure reasons do not survive this WebAssembly build, so a
   refused operation reports the likely cause rather than what OpenCASCADE said.
   The same missing piece — `opencascade.js` compiles OpenCASCADE with C++

@@ -10,6 +10,8 @@ import type { Graph, SerializedGraph } from './graph.js';
 export class History {
   private readonly past: SerializedGraph[] = [];
   private readonly future: SerializedGraph[] = [];
+  /** What `capture` threw away, in case that capture is forgotten again. */
+  private discarded: SerializedGraph[] = [];
 
   constructor(
     private readonly graph: Graph,
@@ -19,7 +21,20 @@ export class History {
   capture(): void {
     this.past.push(this.graph.toJSON());
     if (this.past.length > this.limit) this.past.shift();
+    this.discarded = [...this.future];
     this.future.length = 0;
+  }
+
+  /**
+   * Drops the last capture, for a change that has since been undone by hand —
+   * a cancelled preview, which put nodes in the graph and then took them out
+   * again. The redo that capture discarded comes back with it, because as far
+   * as the document is concerned nothing happened.
+   */
+  forget(): void {
+    if (this.past.pop() === undefined) return;
+    this.future.push(...this.discarded);
+    this.discarded = [];
   }
 
   undo(): boolean {

@@ -3,7 +3,7 @@ import { documentToText, parseDocument } from './core/document.js';
 import { Graph } from './core/graph.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
-import type { GraphNode, NodeId, NodeSchema, PlaneValue } from './core/types.js';
+import type { GraphNode, NodeId, NodeSchema, PlaneValue, Vec3 } from './core/types.js';
 import { WORLD_XY, makePlane, pointOnPlane } from './geometry/plane.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
@@ -73,8 +73,19 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
 editor.frame();
 
 let lastPlanes: Record<NodeId, PlaneValue> = {};
+/**
+ * The middle of everything that has been meshed, kept even after a body stops
+ * being drawn. A profile is hidden the moment something extrudes it, and that
+ * is exactly when a handle needs to know where it was.
+ */
+const lastCentres = new Map<NodeId, Vec3>();
 let lastReports: NodeReport[] = [];
-let lastMeshes: MeshPayload[] = [];
+/**
+ * The mesh each visible node currently has. The worker only sends a mesh when
+ * it changes, so holding them here is what lets anything ask what is on screen
+ * rather than what happened to arrive in the last message.
+ */
+const lastMeshes = new Map<NodeId, MeshPayload>();
 let solveCount = 0;
 let lastVisible: NodeId[] = [];
 
@@ -92,6 +103,10 @@ function planeValueFor(choice: PlaneChoice): PlaneValue | null {
 
 const dialog = new FeatureDialog(viewportEl, graph, {
   onBeforeChange: () => history.capture(),
+  onForget: () => {
+    history.forget();
+    refreshHistoryButtons();
+  },
   onCommit: (nodeId) => {
     applySelection(nodeId, true);
     editor.reveal(nodeId);
@@ -100,6 +115,11 @@ const dialog = new FeatureDialog(viewportEl, graph, {
   onArmedChanged: (armed) => {
     document.body.classList.toggle('picking', armed);
     viewport.setEdgePicking(armed && dialog.isPickingEdges);
+  },
+  // The preview is in the graph already, so showing it is an ordinary solve.
+  onPreviewChanged: (nodeId) => {
+    refreshDragHandle(nodeId);
+    requestSolve();
   },
   onSketch: (choice) => {
     const plane = planeValueFor(choice);
@@ -152,6 +172,54 @@ function editSketch(): void {
 
   document.body.classList.add('sketching');
   sketchSession.enter(selected!, plane);
+}
+
+/** The middle of a mesh's bounding box, in model units. */
+function centreOfMesh(positions: Float32Array): Vec3 | null {
+  if (positions.length === 0) return null;
+
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < positions.length; i += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      const value = positions[i + axis]!;
+      low[axis] = Math.min(low[axis]!, value);
+      high[axis] = Math.max(high[axis]!, value);
+    }
+  }
+  return { x: (low[0]! + high[0]!) / 2, y: (low[1]! + high[1]!) / 2, z: (low[2]! + high[2]!) / 2 };
+}
+
+/** The plane a profile node was drawn on, as the graph currently has it. */
+function planeOfProfile(nodeId: NodeId): PlaneValue {
+  const source = graph.incomingEdge(nodeId, 'plane');
+  const plane = source === undefined ? null : (lastPlanes[source.from.node] ?? null);
+  return plane ?? WORLD_XY;
+}
+
+/**
+ * An arrow on the model for the distance an extrude is about to travel.
+ *
+ * Only an extrude gets one: it is the feature whose number is a length along a
+ * direction the model already has. A radius or a thickness has no such axis,
+ * and an arrow pointing nowhere in particular would be worse than none.
+ */
+function refreshDragHandle(previewNodeId: NodeId | null): void {
+  const spec = dialog.feature;
+  const profile = dialog.operandNode('profile');
+
+  if (previewNodeId === null || spec?.nodeType !== 'solid.extrude' || profile === null) {
+    viewport.setDragHandle(null);
+    return;
+  }
+
+  const plane = planeOfProfile(profile);
+  viewport.setDragHandle({
+    origin: lastCentres.get(profile) ?? plane.origin,
+    direction: plane.normal,
+    distance: dialog.numberOf('distance') ?? 0,
+    onDrag: (distance) => dialog.setNumber('distance', distance),
+  });
 }
 
 const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
@@ -248,6 +316,14 @@ function refreshHistoryButtons(): void {
 }
 
 function applyHistory(action: 'undo' | 'redo'): void {
+  // An open dialog's preview is in the document. Stepping the document out from
+  // under it would strand nodes the dialog still thinks it owns, so undo takes
+  // the dialog back first — which is the step the person just made.
+  if (dialog.isOpen) {
+    dialog.close();
+    return;
+  }
+
   const changed = action === 'undo' ? history.undo() : history.redo();
   if (!changed) return;
   refreshHistoryButtons();
@@ -498,7 +574,14 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
 
   lastPlanes = message.planes;
   lastReports = message.reports;
-  lastMeshes = message.meshes;
+  for (const mesh of message.meshes) {
+    lastMeshes.set(mesh.nodeId, mesh);
+    const centre = centreOfMesh(mesh.positions);
+    if (centre !== null) lastCentres.set(mesh.nodeId, centre);
+  }
+  for (const nodeId of [...lastMeshes.keys()]) {
+    if (!message.visible.includes(nodeId)) lastMeshes.delete(nodeId);
+  }
   solveCount += 1;
   lastVisible = message.visible;
   for (const mesh of message.meshes) viewport.setMesh(mesh);
@@ -555,13 +638,15 @@ if (import.meta.env.DEV) {
     editor,
     history,
     reports: () => lastReports,
-    meshes: () => lastMeshes,
+    meshes: () => [...lastMeshes.values()],
     solves: () => solveCount,
     solve: () => requestSolve(),
     visible: () => lastVisible,
     pending: () => inFlight,
     starter: buildStarterModel,
     select: (nodeId: NodeId) => applySelection(nodeId, true),
+    dialog,
+    handleAt: () => viewport.handleScreenPosition(),
     sketch: sketchSession,
     screenOfSketch: (u: number, v: number) => {
       const plane = lastPlanes[graph.incomingEdge(selected!, 'plane')?.from.node ?? ''] ?? WORLD_XY;

@@ -138,4 +138,38 @@ describe('History', () => {
     expect(restored.stats.cached).toBe(2);
     expect(restored.results.get(area.id)?.outputs.result).toBe(12);
   });
+
+  it('forgets a capture whose change was taken back by hand', () => {
+    const { graph, history } = setup();
+    const node = graph.addNode('math.number', { inputs: { value: 5 } });
+
+    // A preview: captured, put in the graph, then removed again on Cancel.
+    history.capture();
+    const preview = graph.addNode('math.number', { inputs: { value: 9 } });
+    graph.removeNode(preview.id);
+    history.forget();
+
+    expect(history.canUndo).toBe(false);
+    expect(graph.getNode(node.id)?.inputs.value).toBe(5);
+  });
+
+  it('gives back the redo that the forgotten capture discarded', () => {
+    const { graph, history } = setup();
+    const node = graph.addNode('math.number', { inputs: { value: 5 } });
+
+    history.capture();
+    graph.setInput(node.id, 'value', 12);
+    history.undo();
+    expect(history.canRedo).toBe(true);
+
+    // Opening a dialog and cancelling it must not cost the redo.
+    history.capture();
+    const preview = graph.addNode('math.number', { inputs: { value: 9 } });
+    graph.removeNode(preview.id);
+    history.forget();
+
+    expect(history.canRedo).toBe(true);
+    history.redo();
+    expect(graph.getNode(node.id)?.inputs.value).toBe(12);
+  });
 });

@@ -16,7 +16,8 @@
     "verify:profile": "node scripts/verify-profile.mjs",
     "verify:extrude": "node scripts/verify-extrude.mjs",
     "verify:links": "node scripts/verify-links.mjs",
-    "verify:constraints": "node scripts/verify-constraints.mjs"
+    "verify:constraints": "node scripts/verify-constraints.mjs",
+    "verify:preview": "node scripts/verify-preview.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",
