@@ -4,6 +4,7 @@ import type { PortLookup } from '../core/registry.js';
 import type { Edge, EdgeId, NodeId, NodeSchema, PortRef, Value } from '../core/types.js';
 import { isPlane } from '../core/types.js';
 import type { NodeReport } from '../worker/protocol.js';
+import { nodeKind } from './kind.js';
 import {
   HEADER_HEIGHT,
   NODE_WIDTH,
@@ -172,6 +173,16 @@ export class NodeEditor {
     title.className = 'node-title';
     title.textContent = node.label ?? schema.label;
 
+    // Colour and name the node by what it makes, so a Body reads as a Body.
+    const kind = nodeKind(schema);
+    let badge: HTMLElement | null = null;
+    if (kind !== null) {
+      element.dataset.kind = kind.type;
+      badge = document.createElement('span');
+      badge.className = 'node-kind';
+      badge.textContent = kind.label;
+    }
+
     const statusEl = document.createElement('span');
     statusEl.className = 'node-status';
 
@@ -198,7 +209,9 @@ export class NodeEditor {
       eye = button;
     }
 
-    header.append(title, statusEl);
+    header.append(title);
+    if (badge !== null) header.append(badge);
+    header.append(statusEl);
     if (eye !== null) header.append(eye);
     element.append(header);
 

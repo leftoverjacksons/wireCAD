@@ -28,12 +28,12 @@ export class Viewport {
   private readonly edges = new Map<NodeId, EdgeInfo[]>();
 
   private readonly material = new THREE.MeshStandardMaterial({
-    color: 0xe8944a,
+    color: 0xff9900,
     metalness: 0.0,
     roughness: 0.45,
   });
   private readonly sketchMaterial = new THREE.MeshStandardMaterial({
-    color: 0x6ad3a8,
+    color: 0xf4ff61,
     metalness: 0.0,
     roughness: 0.6,
     transparent: true,
@@ -45,16 +45,16 @@ export class Viewport {
     polygonOffsetUnits: -2,
   });
   private readonly highlightMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffc98a,
+    color: 0xffc061,
     metalness: 0.0,
     roughness: 0.35,
-    emissive: 0x4a2c0c,
+    emissive: 0x5c2a00,
   });
   private readonly sketchHighlightMaterial = new THREE.MeshStandardMaterial({
-    color: 0x9cf5cd,
+    color: 0xfaffb0,
     metalness: 0.0,
     roughness: 0.5,
-    emissive: 0x1d5540,
+    emissive: 0x4a4a00,
     transparent: true,
     opacity: 0.65,
     side: THREE.DoubleSide,
@@ -64,16 +64,16 @@ export class Viewport {
     polygonOffsetUnits: -2,
   });
   private readonly faceMaterial = new THREE.MeshStandardMaterial({
-    color: 0x5fb0ff,
+    color: 0x5cecff,
     metalness: 0.0,
     roughness: 0.4,
-    emissive: 0x12355c,
+    emissive: 0x0a3d52,
   });
 
-  private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0x3a2a1c });
+  private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0x2a2f63 });
   // WebGL ignores line width, so a picked edge has to read by colour alone.
-  private readonly edgeHoverMaterial = new THREE.LineBasicMaterial({ color: 0xcfe8ff });
-  private readonly edgeChosenMaterial = new THREE.LineBasicMaterial({ color: 0x4fa8ff });
+  private readonly edgeHoverMaterial = new THREE.LineBasicMaterial({ color: 0xaff6ff });
+  private readonly edgeChosenMaterial = new THREE.LineBasicMaterial({ color: 0xff61c6 });
 
   private readonly raycaster = new THREE.Raycaster();
   private pickListener: ((hit: FaceHit | null) => void) | null = null;
@@ -88,15 +88,15 @@ export class Viewport {
 
   private sketchLine: THREE.LineLoop | THREE.Line | null = null;
   private sketchPoints: THREE.Points | null = null;
-  private readonly sketchLineMaterial = new THREE.LineBasicMaterial({ color: 0x6ad3a8 });
+  private readonly sketchLineMaterial = new THREE.LineBasicMaterial({ color: 0xf4ff61 });
   private readonly sketchPointMaterial = new THREE.PointsMaterial({
-    color: 0xf0a04b,
+    color: 0xff61c6,
     size: 7,
     sizeAttenuation: false,
   });
 
   constructor(private readonly container: HTMLElement) {
-    this.scene.background = new THREE.Color(0x14171c);
+    this.scene.background = new THREE.Color(0x07081c);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 20000);
     this.camera.up.set(0, 0, 1);
@@ -111,17 +111,17 @@ export class Viewport {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
 
-    this.scene.add(new THREE.HemisphereLight(0xdfe7f5, 0x1a1e25, 1.2));
+    this.scene.add(new THREE.HemisphereLight(0xe8ecff, 0x171b45, 1.2));
 
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
     key.position.set(80, -120, 160);
     this.scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0x9fc0ff, 0.6);
+    const fill = new THREE.DirectionalLight(0x5cecff, 0.7);
     fill.position.set(-120, 90, 40);
     this.scene.add(fill);
 
-    const grid = new THREE.GridHelper(400, 40, 0x3c4553, 0x262c36);
+    const grid = new THREE.GridHelper(400, 40, 0xff61c6, 0x2a2f63);
     grid.rotation.x = Math.PI / 2;
     this.scene.add(grid);
 
@@ -252,7 +252,7 @@ export class Viewport {
   setEdgePicking(enabled: boolean): void {
     if (this.edgePicking === enabled) return;
     this.edgePicking = enabled;
-    this.edgeMaterial.color.set(enabled ? 0x6b5540 : 0x3a2a1c);
+    this.edgeMaterial.color.set(enabled ? 0x5a63b0 : 0x2a2f63);
     if (!enabled) {
       this.hoveredEdge = null;
       for (const nodeId of this.edgeLines.keys()) this.applyEdgeMaterials(nodeId);

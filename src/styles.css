@@ -1,23 +1,30 @@
 :root {
   color-scheme: dark;
-  --bg: #14171c;
-  --panel: #1c2027;
-  --panel-raised: #222833;
-  --line: #2b313b;
-  --line-bright: #3a4250;
-  --text: #dfe4ec;
-  --muted: #8b95a5;
-  --accent: #f0a04b;
-  --evaluated: #f0a04b;
-  --cached: #4b9ef0;
-  --error: #f05b5b;
-  --skipped: #6b7280;
-  --type-number: #7fb2f0;
-  --type-geometry: #f0a04b;
-  --type-sketch: #6ad3a8;
+  /* Sunset over a grid: deep indigo ground, magenta and cyan doing the work. */
+  --bg: #07081c;
+  --panel: #0f1235;
+  --panel-raised: #171b45;
+  --line: #2a2f63;
+  --line-bright: #3d4488;
+  --text: #e8ecff;
+  --muted: #8a93c8;
+  --accent: #ff61c6;
+  --evaluated: #ff61c6;
+  --cached: #5cecff;
+  --error: #ff6b8a;
+  --skipped: #375971;
+
+  /* One colour per kind of thing, used by ports, badges and the viewport. */
+  --type-number: #5cecff;
+  --type-geometry: #ff9900;
+  --type-sketch: #f4ff61;
   --type-list: #c58af0;
-  --type-vector: #f0c674;
-  --type-plane: #b0b8c6;
+  --type-vector: #f4ff61;
+  --type-plane: #a78bfa;
+  --type-edges: #ff61c6;
+  --type-boolean: #5cecff;
+  --type-string: #8a93c8;
+  --type-any: #8a93c8;
 }
 
 * {
@@ -495,6 +502,7 @@ input[type='range'] {
 }
 
 .node-status {
+  margin-left: 6px;
   color: var(--error);
   font-size: 10px;
 }
@@ -624,3 +632,58 @@ input[type='range'] {
 .port.type-plane {
   background: var(--type-plane);
 }
+
+.port.type-edges {
+  background: var(--type-edges);
+}
+
+.port.type-boolean {
+  background: var(--type-boolean);
+}
+
+.port.type-string {
+  background: var(--type-string);
+}
+
+.port.type-any {
+  background: var(--type-any);
+}
+
+/* What the node makes, named and coloured from the same palette as its ports. */
+.node-kind {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  opacity: 0.85;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.node[data-kind] {
+  border-left: 3px solid var(--kind-color, var(--line-bright));
+}
+
+.node[data-kind] .node-kind {
+  color: var(--kind-color, var(--muted));
+}
+
+.node[data-kind] .node-header {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--kind-color, transparent) 22%, transparent),
+    transparent 65%
+  );
+}
+
+.node[data-kind='geometry'] { --kind-color: var(--type-geometry); }
+.node[data-kind='sketch'] { --kind-color: var(--type-sketch); }
+.node[data-kind='plane'] { --kind-color: var(--type-plane); }
+.node[data-kind='edges'] { --kind-color: var(--type-edges); }
+.node[data-kind='number'] { --kind-color: var(--type-number); }
+.node[data-kind='vector'] { --kind-color: var(--type-vector); }
+.node[data-kind='list'] { --kind-color: var(--type-list); }
+.node[data-kind='boolean'] { --kind-color: var(--type-boolean); }
+.node[data-kind='string'] { --kind-color: var(--type-string); }
