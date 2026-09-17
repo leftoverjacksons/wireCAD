@@ -517,5 +517,6 @@ if (import.meta.env.DEV) {
     solve: () => requestSolve(),
     visible: () => lastVisible,
     pending: () => inFlight,
+    starter: buildStarterModel,
   });
 }

@@ -52,6 +52,8 @@ export interface PortDef {
   readonly default?: Value;
   /** Stored and evaluated as usual, but not drawn as a row on the node. */
   readonly hidden?: boolean;
+  /** A fixed set of answers, drawn as a dropdown rather than a text field. */
+  readonly options?: readonly string[];
 }
 
 /** Ports and presentation. The main thread knows this much without a kernel. */

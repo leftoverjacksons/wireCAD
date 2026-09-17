@@ -8,9 +8,11 @@
   --line-bright: #3d4488;
   --text: #e8ecff;
   --muted: #8a93c8;
-  --accent: #ff61c6;
-  --evaluated: #ff61c6;
-  --cached: #5cecff;
+  /* Cyan carries the interface; magenta is saved for things that want the eye. */
+  --accent: #5cecff;
+  --highlight: #ff61c6;
+  --evaluated: #5cecff;
+  --cached: #4a7fa8;
   --error: #ff6b8a;
   --skipped: #375971;
 
@@ -422,7 +424,7 @@ input[type='range'] {
 }
 
 .wire-ghost {
-  stroke: var(--accent);
+  stroke: var(--highlight);
   stroke-dasharray: 5 4;
 }
 
@@ -464,8 +466,8 @@ input[type='range'] {
 }
 
 .node-selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 4px 18px #000a;
+  border-color: var(--highlight);
+  box-shadow: 0 0 0 1px var(--highlight), 0 4px 18px #000a;
 }
 
 .node[data-status='evaluated'] .node-header {
@@ -545,6 +547,20 @@ input[type='range'] {
 .port-label {
   color: var(--muted);
   white-space: nowrap;
+}
+
+.port-choice {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 116px;
+  margin-left: auto;
+  padding: 2px 4px;
+  border: 1px solid var(--line-bright);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
 }
 
 .port-hint {

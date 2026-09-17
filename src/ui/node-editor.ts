@@ -238,7 +238,24 @@ export class NodeEditor {
         rowEl.append(label);
 
         const wired = this.graph.incomingEdge(nodeId, input.id) !== undefined;
-        if (!wired && input.type === 'number') {
+        if (!wired && input.options !== undefined) {
+          const choice = document.createElement('select');
+          choice.className = 'port-choice';
+          for (const option of input.options) {
+            const item = document.createElement('option');
+            item.value = option;
+            item.textContent = option;
+            choice.append(item);
+          }
+          choice.value = String(this.graph.inputValue(nodeId, input.id) ?? input.options[0]);
+          choice.addEventListener('pointerdown', (event) => event.stopPropagation());
+          choice.addEventListener('change', () => {
+            this.callbacks.onBeforeChange();
+            this.graph.setInput(nodeId, input.id, choice.value);
+            this.callbacks.onDocumentChanged();
+          });
+          rowEl.append(choice);
+        } else if (!wired && input.type === 'number') {
           const field = document.createElement('input');
           field.type = 'number';
           field.className = 'port-value';

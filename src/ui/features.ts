@@ -1,6 +1,7 @@
 import type { Graph } from '../core/graph.js';
 import type { DataType, NodeId, PortRef, Vec3 } from '../core/types.js';
 import { EDGE_STRIDE } from '../nodes/edges.js';
+import { EXTRUDE_OPERATIONS } from '../nodes/solid.js';
 import { COLUMN_GAP, NODE_WIDTH, ROW_GAP, nodeHeight } from './metrics.js';
 
 /**
@@ -32,12 +33,21 @@ export interface NumberSpec {
   value: number;
 }
 
+/** A fixed set of answers, such as what an extrude does to the body it meets. */
+export interface ChoiceSpec {
+  id: string;
+  label: string;
+  options: readonly string[];
+  value: string;
+}
+
 export interface FeatureSpec {
   id: string;
   label: string;
   nodeType: string;
   operands: readonly OperandSpec[];
   numbers: readonly NumberSpec[];
+  choices?: readonly ChoiceSpec[];
   /** 'sketch' hands off to interactive drawing instead of building a node. */
   kind?: 'node' | 'sketch';
 }
@@ -132,8 +142,19 @@ export const tabs: readonly FeatureTab[] = [
             id: 'extrude',
             label: 'Extrude',
             nodeType: 'solid.extrude',
-            operands: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
+            operands: [
+              { id: 'profile', label: 'Profile', type: 'sketch' },
+              { id: 'target', label: 'Target body', type: 'geometry', optional: true },
+            ],
             numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
+            choices: [
+              {
+                id: 'operation',
+                label: 'Operation',
+                options: EXTRUDE_OPERATIONS,
+                value: 'New body',
+              },
+            ],
           },
         ],
       },
@@ -312,7 +333,7 @@ export function buildFeature(
   graph: Graph,
   spec: FeatureSpec,
   operands: Record<string, PortRef>,
-  numbers: Record<string, number>,
+  numbers: Record<string, number | string>,
 ): NodeId {
   const node = graph.addNode(spec.nodeType, { inputs: numbers });
 

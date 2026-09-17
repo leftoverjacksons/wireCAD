@@ -121,7 +121,7 @@ export class Viewport {
     fill.position.set(-120, 90, 40);
     this.scene.add(fill);
 
-    const grid = new THREE.GridHelper(400, 40, 0xff61c6, 0x2a2f63);
+    const grid = new THREE.GridHelper(400, 40, 0x3f6f9c, 0x232a52);
     grid.rotation.x = Math.PI / 2;
     this.scene.add(grid);
 

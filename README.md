@@ -29,6 +29,12 @@ is ready, typically around two seconds.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
+- **Extrude** — one node makes bodies and takes them away. *Operation* says what
+  it does to the body wired into *Target*: **New body**, **Join**, **Cut** or
+  **Intersect**. A bore is the same node as the block it goes through, pointed at
+  it, so the starter model is four feature nodes rather than a block, a plug and
+  a boolean. The *Combine* buttons are still there for putting two bodies that
+  already exist together.
 - **Planes** — sketches sit on a plane rather than at a world Z offset, and an
   extrude follows its profile's normal. A rectangle drawn on the XZ plane
   extrudes along −Y. Sketch dimensions are in the plane's own U/V axes.
@@ -109,6 +115,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:shell` | Builds fillet-and-shell bodies in Chromium and checks the hollowed volumes |
 | `npm run verify:edges` | Checks per-edge fillet selection, and that a selection survives a resize |
 | `npm run verify:profile` | Checks a profile's named dimensions drive its geometry, typed or wired |
+| `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and sizes the starter model |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.

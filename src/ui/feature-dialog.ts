@@ -45,6 +45,7 @@ export class FeatureDialog {
   private spec: FeatureSpec | null = null;
   private readonly chosen = new Map<string, OperandChoice>();
   private readonly numbers = new Map<string, number>();
+  private readonly choices = new Map<string, string>();
   private armedOperand: string | null = null;
   private message: HTMLElement | null = null;
   private edges: EdgeChoice | null = null;
@@ -88,11 +89,13 @@ export class FeatureDialog {
     this.spec = spec;
     this.chosen.clear();
     this.numbers.clear();
+    this.choices.clear();
     this.armedOperand = null;
     this.edges = null;
     this.edgeListener?.(null);
 
     for (const number of spec.numbers) this.numbers.set(number.id, number.value);
+    for (const choice of spec.choices ?? []) this.choices.set(choice.id, choice.value);
 
     if (preselected !== null) {
       // A prior selection is a node, which cannot stand in for a picked face.
@@ -331,6 +334,29 @@ export class FeatureDialog {
 
     for (const operand of spec.operands) this.element.append(this.renderOperand(operand));
 
+    for (const choice of spec.choices ?? []) {
+      const row = document.createElement('div');
+      row.className = 'feature-row';
+
+      const label = document.createElement('span');
+      label.className = 'feature-label';
+      label.textContent = choice.label;
+
+      const select = document.createElement('select');
+      select.className = 'feature-select';
+      for (const option of choice.options) {
+        const item = document.createElement('option');
+        item.value = option;
+        item.textContent = option;
+        select.append(item);
+      }
+      select.value = this.choices.get(choice.id) ?? choice.value;
+      select.addEventListener('change', () => this.choices.set(choice.id, select.value));
+
+      row.append(label, select);
+      this.element.append(row);
+    }
+
     for (const number of spec.numbers) {
       const row = document.createElement('div');
       row.className = 'feature-row';
@@ -429,9 +455,12 @@ export class FeatureDialog {
     const created: NodeId[] = [];
 
     try {
-      const numbers: Record<string, number> = {};
+      const numbers: Record<string, number | string> = {};
       for (const number of spec.numbers) {
         numbers[number.id] = this.numbers.get(number.id) ?? number.value;
+      }
+      for (const choice of spec.choices ?? []) {
+        numbers[choice.id] = this.choices.get(choice.id) ?? choice.value;
       }
 
       const operands: Record<string, PortRef> = {};

@@ -5,6 +5,16 @@ import { geometry, geometryOf, kernelCall, shapeOf } from '../geometry/kernel.js
 import { WORLD_XY } from '../geometry/plane.js';
 import { asList, asNumber, asPlane, asPositive } from './coerce.js';
 
+type ExtrudeOperation = (typeof EXTRUDE_OPERATIONS)[number];
+
+function asOperation(value: unknown): ExtrudeOperation {
+  if (value === null || value === undefined || value === '') return 'New body';
+  if (typeof value !== 'string' || !EXTRUDE_OPERATIONS.includes(value as ExtrudeOperation)) {
+    throw new Error(`Operation must be one of ${EXTRUDE_OPERATIONS.join(', ')}`);
+  }
+  return value as ExtrudeOperation;
+}
+
 export const rectangleSchema: NodeSchema = {
   type: 'sketch.rectangle',
   label: 'Rectangle',
@@ -71,6 +81,9 @@ export function cornerPort(corner: number, axis: 'u' | 'v'): string {
   return `p${corner + 1}${axis}`;
 }
 
+/** What an extrude does when it meets the body it is pointed at. */
+export const EXTRUDE_OPERATIONS = ['New body', 'Join', 'Cut', 'Intersect'] as const;
+
 export const extrudeSchema: NodeSchema = {
   type: 'solid.extrude',
   label: 'Extrude',
@@ -78,6 +91,14 @@ export const extrudeSchema: NodeSchema = {
   inputs: [
     { id: 'profile', label: 'Profile', type: 'sketch' },
     { id: 'distance', label: 'Distance', type: 'number', default: 10 },
+    {
+      id: 'operation',
+      label: 'Operation',
+      type: 'string',
+      default: 'New body',
+      options: EXTRUDE_OPERATIONS,
+    },
+    { id: 'target', label: 'Target', type: 'geometry' },
   ],
   outputs: [{ id: 'solid', label: 'Solid', type: 'geometry' }],
 };
@@ -197,7 +218,32 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       const solid = maker.Shape();
       maker.delete();
       direction.delete();
-      return { solid: geometry(solid) };
+
+      const operation = asOperation(inputs.operation ?? null);
+      if (operation === 'New body') return { solid: geometry(solid) };
+
+      // Cutting a bore is the same feature as raising a boss, pointed the other
+      // way, so the combine lives here rather than in a node of its own.
+      const target = inputs.target ?? null;
+      if (target === null) {
+        throw new Error(`${operation} needs a target body — wire one into Target`);
+      }
+
+      const constructors = {
+        Join: 'BRepAlgoAPI_Fuse_3',
+        Cut: 'BRepAlgoAPI_Cut_3',
+        Intersect: 'BRepAlgoAPI_Common_3',
+      } as const;
+
+      const combine = new oc[constructors[operation]](shapeOf(target, 'target'), solid);
+      kernelCall(operation, 'this shape cannot be combined with the target', () => combine.Build());
+      if (!combine.IsDone()) {
+        combine.delete?.();
+        throw new Error(`${operation} failed to build`);
+      }
+      const result = combine.Shape();
+      combine.delete?.();
+      return { solid: geometry(result) };
     },
   };
 
