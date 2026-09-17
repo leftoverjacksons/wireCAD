@@ -21,7 +21,13 @@ import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
 import type { FaceHit } from './viewport.js';
 import { Viewport } from './viewport.js';
-import type { ExportFormat, MainToWorker, WorkerToMain } from './worker/protocol.js';
+import type {
+  ExportFormat,
+  MainToWorker,
+  MeshPayload,
+  NodeReport,
+  WorkerToMain,
+} from './worker/protocol.js';
 
 const registry = new NodeRegistry<NodeSchema>();
 registry.registerAll(mathNodes);
@@ -63,6 +69,9 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
 editor.frame();
 
 let lastPlanes: Record<NodeId, PlaneValue> = {};
+let lastReports: NodeReport[] = [];
+let lastMeshes: MeshPayload[] = [];
+let solveCount = 0;
 
 /** Resolve a plane choice to the plane the graph will actually produce for it. */
 function planeValueFor(choice: PlaneChoice): PlaneValue | null {
@@ -418,6 +427,9 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   }
 
   lastPlanes = message.planes;
+  lastReports = message.reports;
+  lastMeshes = message.meshes;
+  solveCount += 1;
   for (const mesh of message.meshes) viewport.setMesh(mesh);
   viewport.retain(message.visible);
   viewport.frameOnce();
@@ -465,5 +477,14 @@ refreshHistoryButtons();
 statusEl.textContent = 'loading OpenCASCADE kernel…';
 
 if (import.meta.env.DEV) {
-  Reflect.set(window, 'wirecad', { graph, viewport, editor, history });
+  Reflect.set(window, 'wirecad', {
+    graph,
+    viewport,
+    editor,
+    history,
+    reports: () => lastReports,
+    meshes: () => lastMeshes,
+    solves: () => solveCount,
+    solve: () => requestSolve(),
+  });
 }

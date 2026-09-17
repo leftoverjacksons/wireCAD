@@ -34,6 +34,9 @@ export const shellSchema: NodeSchema = {
 export const modifySchemas: readonly NodeSchema[] = [filletSchema, shellSchema];
 
 export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
+  const SKIN = () => oc.BRepOffset_Mode.BRepOffset_Skin;
+  const ARC = () => oc.GeomAbs_JoinType.GeomAbs_Arc;
+
   /** The explorer visits each edge once per adjoining face, so dedupe by identity. */
   function uniqueEdges(shape: Shape): Shape[] {
     const edges: Shape[] = [];
@@ -51,6 +54,109 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
 
     explorer.delete();
     return edges;
+  }
+
+  function countSubShapes(shape: Shape, kind: unknown): number {
+    let total = 0;
+    const explorer = new oc.TopExp_Explorer_2(shape, kind, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    while (explorer.More()) {
+      total += 1;
+      explorer.Next();
+    }
+    explorer.delete();
+    return total;
+  }
+
+  function volumeOf(shape: Shape): number {
+    const props = new oc.GProp_GProps_1();
+    oc.BRepGProp.VolumeProperties_1(shape, props, false, false, false);
+    const mass = props.Mass();
+    props.delete?.();
+    return mass;
+  }
+
+  function cut(base: Shape, tool: Shape, what: string): Shape {
+    const operation = new oc.BRepAlgoAPI_Cut_3(base, tool);
+    kernelCall('Shell', what, () => operation.Build());
+    if (!operation.IsDone()) {
+      operation.delete?.();
+      throw new Error(`Shell failed — could not ${what}`);
+    }
+    const result = operation.Shape();
+    operation.delete?.();
+    return result;
+  }
+
+  /**
+   * The face the shell opens through, named by direction and rank rather than
+   * index, so "the bottom" means the same thing here as it does everywhere else.
+   */
+  function openingFace(shape: Shape, normal: Vec3, rank: number): Shape {
+    const { mesh, faceHandles } = tessellate(oc, shape, 1.0, 0.6);
+    const matches = matchingFaces(mesh.faces, normal);
+    const chosen = matches[rank];
+    if (chosen === undefined) {
+      throw new Error(
+        matches.length === 0
+          ? 'No planar face opens that way'
+          : `Rank ${rank} is out of range: only ${matches.length} face(s) open that way`,
+      );
+    }
+
+    const handle = faceHandles[mesh.faces.indexOf(chosen.face)];
+    if (handle === undefined) throw new Error('Could not resolve the opening face');
+    return handle;
+  }
+
+  /** A negative offset hollows inwards, leaving the outside dimensions alone. */
+  function offsetInward(shape: Shape, thickness: number): Shape {
+    const maker = new oc.BRepOffsetAPI_MakeOffsetShape_1();
+    const cause = `a ${thickness} mm wall does not fit inside this shape`;
+    kernelCall('Shell', cause, () => {
+      maker.PerformByJoin(shape, -thickness, 1.0e-3, SKIN(), false, false, ARC(), false);
+      maker.Build();
+    });
+    if (!maker.IsDone()) throw new Error(`A wall of ${thickness} mm does not fit in this shape`);
+    return maker.Shape();
+  }
+
+  /**
+   * Measured against this build: on a filleted body the offset returns a bare
+   * TopoDS_Shell rather than a solid, and booleans quietly refuse a shell. Worse,
+   * when the wall is at least as thick as the smallest fillet radius — so the
+   * inner radius would be zero or negative — it still reports success while
+   * returning several disconnected open shells enclosing no volume. Both cases
+   * have to be caught here; neither raises on its own.
+   */
+  function closeOffset(offset: Shape, thickness: number): Shape {
+    const shells = countSubShapes(offset, oc.TopAbs_ShapeEnum.TopAbs_SHELL);
+    if (shells !== 1) {
+      throw new Error(
+        `A wall of ${thickness} mm is too thick to hollow this shape — ` +
+          'every fillet radius must be larger than the wall thickness',
+      );
+    }
+
+    let solid = offset;
+    if (countSubShapes(offset, oc.TopAbs_ShapeEnum.TopAbs_SOLID) === 0) {
+      const explorer = new oc.TopExp_Explorer_2(
+        offset,
+        oc.TopAbs_ShapeEnum.TopAbs_SHELL,
+        oc.TopAbs_ShapeEnum.TopAbs_SHAPE,
+      );
+      const maker = new oc.BRepBuilderAPI_MakeSolid_3(oc.TopoDS.Shell_1(explorer.Current()));
+      explorer.delete();
+      kernelCall('Shell', 'close the hollowed interior', () => maker.Build());
+      if (!maker.IsDone()) throw new Error('Shell failed — the hollowed interior would not close');
+      solid = maker.Solid();
+      // Built from a loose shell, the solid can come out inside-out.
+      oc.BRepLib.OrientClosedSolid(solid);
+    }
+
+    if (!(volumeOf(solid) > 0)) {
+      throw new Error(`A wall of ${thickness} mm leaves no interior to hollow`);
+    }
+    return solid;
   }
 
   const fillet: NodeDefinition = {
@@ -98,57 +204,62 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
         throw new Error(`Rank must be a non-negative integer, got ${rank}`);
       }
 
-      // Same selector the face reference uses, so "the bottom" means the same
-      // thing here as it does everywhere else.
-      const { mesh, faceHandles } = tessellate(oc, shape, 1.0, 0.6);
       const normal: Vec3 = {
         x: requested.x / magnitude,
         y: requested.y / magnitude,
         z: requested.z / magnitude,
       };
 
-      const matches = matchingFaces(mesh.faces, normal);
-      const chosen = matches[rank];
-      if (chosen === undefined) {
-        throw new Error(
-          matches.length === 0
-            ? 'No planar face opens that way'
-            : `Rank ${rank} is out of range: only ${matches.length} face(s) open that way`,
-        );
-      }
-
-      const opening = faceHandles[mesh.faces.indexOf(chosen.face)];
-      if (opening === undefined) throw new Error('Could not resolve the opening face');
-
+      // The kernel's own one-shot hollow. Cleaner topology when it works, but on
+      // a filleted body it reaches code this WASM build cannot run, so failure
+      // here is expected rather than exceptional — fall through and model it.
+      const opening = openingFace(shape, normal, rank);
       const removed = new oc.TopTools_ListOfShape_1();
       removed.Append_1(opening);
-
       const maker = new oc.BRepOffsetAPI_MakeThickSolid_1();
       try {
-        const cause = `a ${thickness} mm wall does not fit, or this shape is too complex to hollow`;
+        const cause = `a ${thickness} mm wall does not fit in this shape`;
         kernelCall('Shell', cause, () => {
-          // A negative offset hollows inwards, leaving outside dimensions alone.
           maker.MakeThickSolidByJoin(
             shape,
             removed,
             -thickness,
             1.0e-3,
-            oc.BRepOffset_Mode.BRepOffset_Skin,
+            SKIN(),
             false,
             false,
-            oc.GeomAbs_JoinType.GeomAbs_Arc,
+            ARC(),
             false,
           );
           maker.Build();
         });
-        if (!maker.IsDone()) {
-          throw new Error(`A wall of ${thickness} mm does not fit in this shape`);
-        }
-        return { result: geometry(maker.Shape()) };
+        if (maker.IsDone()) return { result: geometry(maker.Shape()) };
+      } catch {
+        // Handled below by the modelled path.
       } finally {
         maker.delete?.();
         removed.delete?.();
       }
+
+      // Hollow by construction instead: offset the body inward for the cavity,
+      // subtract it, then remove the wall over the opening by sweeping the
+      // cavity's own opening face back out. Uniform wall thickness by definition,
+      // and every step of it works on filleted input.
+      const inner = closeOffset(offsetInward(shape, thickness), thickness);
+      const cavity = cut(shape, inner, 'hollow this shape');
+      const push = new oc.gp_Vec_4(
+        normal.x * thickness,
+        normal.y * thickness,
+        normal.z * thickness,
+      );
+      const plug = new oc.BRepPrimAPI_MakePrism_1(
+        openingFace(inner, normal, rank),
+        push,
+        false,
+        true,
+      ).Shape();
+      push.delete?.();
+      return { result: geometry(cut(cavity, plug, 'open the shell')) };
     },
   };
 

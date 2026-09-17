@@ -23,9 +23,9 @@ is ready, typically around two seconds.
 ## Using it
 
 - **Toolbar** — a **Sketch** tab (Rectangle, Circle) and a **Solid** tab, whose
-  groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect) and
-  *Modify* (Fillet, Shell), *Combine* (Cut, Union, Intersect) and *Construct*
-  (XY/XZ/YZ datum planes, Offset Plane). Each button opens a dialog.
+  groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
+  (Fillet, Shell) and *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each
+  button opens a dialog.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
@@ -51,14 +51,17 @@ is ready, typically around two seconds.
   a wall thickness, leaving open whichever face you click — the opening is
   stored as the same normal-and-rank reference a face plane uses, so it survives
   the model changing underneath it.
+- **Filleting before shelling** is the usual order for a moulded part, and it
+  works: the wall stays uniform through the corners and each inner radius comes
+  out as the outer radius minus the wall. The one rule is that every fillet
+  radius has to be larger than the wall thickness, since an inner radius of zero
+  or less has nowhere to go. Shell says so rather than guessing when it cannot.
 - **Export** — *STL* writes a binary mesh for printing, *STEP* writes the actual
   B-rep for other CAD tools, both in millimetres. Exports cover the selected
   body, or every visible body when nothing is selected; sketches are excluded.
 
-Order matters for the modelling operations, as it does in any CAD system:
-shelling first and filleting the result works where filleting first and then
-trying to shell does not. When the kernel refuses an operation the node says so
-and the rest of the model stays cached, so it is cheap to try the other order.
+When the kernel refuses an operation the node says so and the rest of the model
+stays cached, so it is cheap to adjust a radius and try again.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a
   body to select it.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
@@ -80,9 +83,10 @@ recomputed, blue for served from cache, red for failed.
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run build` | Production build |
 | `npm run verify:browser` | Drives a running dev server in Chromium and reports solve statistics |
+| `npm run verify:shell` | Builds fillet-and-shell bodies in Chromium and checks the hollowed volumes |
 
-`verify:browser` needs `npm run dev` already running. Set `CHROMIUM_PATH` if
-Playwright's bundled browser is not available.
+Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
+if Playwright's bundled browser is not available.
 
 ## How it is put together
 
@@ -128,6 +132,50 @@ The stronger approach is to name faces by provenance, using the kernel's own
 `Modified`/`Generated` history to track which operation produced which face.
 That can replace the matching rule without changing the graph.
 
+## Hollowing a filleted body
+
+Shell has two implementations, and which one runs depends on the input.
+
+The first is the kernel's own `BRepOffsetAPI_MakeThickSolid`, one call that
+hollows a solid and drops the chosen face. It gives the cleanest topology, and
+on an unfilleted body it is what runs.
+
+It cannot run on a filleted body in this build. OpenCASCADE's offset algorithm
+uses C++ exceptions for internal control flow, and `opencascade.js` compiles the
+kernel with exception catching disabled — `make.py` has the
+`DISABLE_EXCEPTION_CATCHING=0` flag commented out — so the throw lands in a
+runtime that cannot dispatch it and the call dies with `___cxa_can_catch is not
+defined` or `wasmTable.get(...) is not a function`. Every fillet-then-shell
+combination fails this way: both join types, radii from 1 to 5 mm, walls from 1
+to 2 mm, tolerances from 1e-6 to 1e-2. The 2.0 beta behaves identically. This is
+a property of the published WebAssembly build rather than of OpenCASCADE, which
+is why other applications on the same kernel hollow filleted parts routinely.
+
+So when the first path fails, Shell models the hollow instead:
+
+1. offset the body inward by the wall thickness, giving the cavity;
+2. subtract the cavity from the body;
+3. sweep the cavity's own opening face back out by the wall thickness and
+   subtract that, which removes the wall over the opening and nothing else.
+
+Every step is a boolean or a plain offset, and those survive the missing
+exception runtime. The wall is uniform by construction, since the cavity *is*
+the body offset inward.
+
+Two measured details make this safe. `MakeOffsetShape` returns a bare
+`TopoDS_Shell` rather than a solid on filleted input, and a boolean against a
+shell reports not-done instead of raising, so the shell is wrapped and
+re-oriented before use. And when the wall is at least as thick as the smallest
+fillet radius — where the inner radius would be zero or negative — the offset
+still reports success while returning several disconnected open shells enclosing
+no volume. Nothing raises; the result is silently empty. Shell checks for a
+single closed shell of positive volume and refuses with a reason instead.
+
+`npm run verify:shell` pins this down against the real kernel: it builds each
+case, measures the hollowed volume from the triangulation and checks it against
+the solid it came from, so a path that quietly returns the unhollowed body or an
+empty shape fails the run.
+
 ## Known gaps
 
 - A sketch cannot be reopened and redrawn; its points are editable on the node,
@@ -141,6 +189,9 @@ That can replace the matching rule without changing the graph.
 - Feature dialogs do not preview: nothing changes until you press Create.
 - The kernel's own failure reasons do not survive this WebAssembly build, so a
   refused operation reports the likely cause rather than what OpenCASCADE said.
+  The same missing piece — `opencascade.js` compiles OpenCASCADE with C++
+  exception catching turned off — is why Shell carries a second implementation:
+  see *Hollowing a filleted body* below.
 - The bundled kernel is the full OpenCASCADE build (14 MB gzipped). A trimmed
   custom build would cut first-load cost substantially.
 - Geometry is verified in the browser rather than in the unit suite, because the
