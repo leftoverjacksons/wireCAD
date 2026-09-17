@@ -71,6 +71,8 @@ function solve(request: SolveRequest): void {
   let triangles = 0;
   const meshStart = performance.now();
 
+  const pinned = new Set(request.pinned ?? []);
+
   for (const node of graph.allNodes()) {
     const definition = registry.require(node.type);
 
@@ -93,7 +95,7 @@ function solve(request: SolveRequest): void {
     const displayable = definition.outputs.find(
       (port) =>
         (port.type === 'sketch' || port.type === 'geometry') &&
-        (node.visible === true || !supersededBy(port.id)),
+        (node.visible === true || pinned.has(node.id) || !supersededBy(port.id)),
     );
     if (displayable === undefined) continue;
     if (node.visible === false) continue;

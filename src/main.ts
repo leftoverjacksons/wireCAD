@@ -14,7 +14,7 @@ import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
-import type { PlaneChoice } from './ui/features.js';
+import type { FeatureSpec, PlaneChoice } from './ui/features.js';
 import { createSketchNode, tabs } from './ui/features.js';
 import {
   download,
@@ -212,27 +212,113 @@ function planeOfProfile(nodeId: NodeId): PlaneValue {
 }
 
 /**
- * An arrow on the model for the distance an extrude is about to travel.
- *
- * Only an extrude gets one: it is the feature whose number is a length along a
- * direction the model already has. A radius or a thickness has no such axis,
- * and an arrow pointing nowhere in particular would be worse than none.
+ * The smallest a dragged radius or thickness may get. Zero is not a small
+ * fillet, it is a failed one, and dragging past it should stop rather than
+ * report an error the person did not ask for.
  */
+const HANDLE_FLOOR = 0.1;
+
+function unit(vector: Vec3): Vec3 {
+  const length = Math.hypot(vector.x, vector.y, vector.z);
+  return length < 1e-9 ? { x: 0, y: 0, z: 1 } : {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  };
+}
+
+/**
+ * Where a feature's number runs, and from where.
+ *
+ * Every number a dialog can drag is a length along some direction the model
+ * already has: an extrude travels along its profile's normal, a fillet or
+ * chamfer grows outward from the edge it rounds, a shell thickens inward from
+ * the face it opens. A number with no such direction — there are none left, but
+ * there could be — gets no arrow rather than an arbitrary one.
+ */
+function handleAxis(
+  spec: FeatureSpec,
+): { origin: Vec3; direction: Vec3; port: string; minimum?: number } | null {
+  if (spec.nodeType === 'solid.extrude') {
+    const profile = dialog.operandNode('profile');
+    if (profile === null) return null;
+    const plane = planeOfProfile(profile);
+    return {
+      origin: lastCentres.get(profile) ?? plane.origin,
+      direction: plane.normal,
+      port: 'distance',
+    };
+  }
+
+  if (spec.nodeType === 'solid.fillet' || spec.nodeType === 'solid.chamfer') {
+    const picked = pickedEdges;
+    const index = picked?.indices[picked.indices.length - 1];
+    if (picked === undefined || picked === null || index === undefined) return null;
+
+    const edge = viewport.edgesOf(picked.nodeId)?.[index];
+    const centre = lastCentres.get(picked.nodeId);
+    if (edge === undefined || centre === undefined) return null;
+
+    // Outward from the body, and square to the edge: the way the rounding
+    // actually grows, rather than whichever way the edge happens to lie.
+    const away = {
+      x: edge.midpoint.x - centre.x,
+      y: edge.midpoint.y - centre.y,
+      z: edge.midpoint.z - centre.z,
+    };
+    const along = edge.direction;
+    const projection = away.x * along.x + away.y * along.y + away.z * along.z;
+    const outward = unit({
+      x: away.x - along.x * projection,
+      y: away.y - along.y * projection,
+      z: away.z - along.z * projection,
+    });
+
+    return {
+      origin: edge.midpoint,
+      direction: outward,
+      port: spec.nodeType === 'solid.fillet' ? 'radius' : 'distance',
+      minimum: HANDLE_FLOOR,
+    };
+  }
+
+  if (spec.nodeType === 'solid.shell') {
+    const body = dialog.operandNode('solid');
+    const picked = dialog.operandFace('solid');
+    if (body === null || picked === null) return null;
+
+    const faces = viewport.facesOf(body);
+    const match = faces === undefined ? undefined : matchingFaces(faces, picked.normal)[picked.rank];
+    if (match === undefined) return null;
+
+    // A wall thickens into the body, away from the face being opened.
+    return {
+      origin: match.face.origin,
+      direction: { x: -match.face.normal.x, y: -match.face.normal.y, z: -match.face.normal.z },
+      port: 'thickness',
+      minimum: HANDLE_FLOOR,
+    };
+  }
+
+  return null;
+}
+
+/** An arrow on the model for the number the open dialog is about to commit. */
 function refreshDragHandle(previewNodeId: NodeId | null): void {
   const spec = dialog.feature;
-  const profile = dialog.operandNode('profile');
+  const axis = spec === null ? null : handleAxis(spec);
 
-  if (previewNodeId === null || spec?.nodeType !== 'solid.extrude' || profile === null) {
+  if (previewNodeId === null || axis === null) {
     viewport.setDragHandle(null);
     return;
   }
 
-  const plane = planeOfProfile(profile);
   viewport.setDragHandle({
-    origin: lastCentres.get(profile) ?? plane.origin,
-    direction: plane.normal,
-    distance: dialog.numberOf('distance') ?? 0,
-    onDrag: (distance) => dialog.setNumber('distance', distance),
+    origin: axis.origin,
+    direction: axis.direction,
+    distance: dialog.numberOf(axis.port) ?? 0,
+    ...(axis.minimum === undefined ? {} : { minimum: axis.minimum }),
+    onDrag: (distance) => dialog.setNumber(axis.port, distance),
   });
 }
 
@@ -400,8 +486,17 @@ function describePickedFace(hit: FaceHit): PickedFace | null {
 }
 
 dialog.onEdgesChanged((choice) => {
+  pickedEdges = choice === null ? null : { nodeId: choice.nodeId, indices: [...choice.picks.keys()] };
   viewport.clearChosenEdges();
   if (choice !== null) viewport.setChosenEdges(choice.nodeId, [...choice.picks.keys()]);
+
+  // Picking edges off a body while a preview replaces that body would take it
+  // out of the view after the first one. It stays, as edges alone, and is the
+  // only thing edge picking will hit until the dialog is done with it.
+  pinnedNodes = choice === null ? [] : [choice.nodeId];
+  viewport.setEdgeSource(choice?.nodeId ?? null);
+  viewport.setGhosts(pinnedNodes);
+  requestSolve();
 });
 
 viewport.onEdgePick((hit) => {
@@ -552,6 +647,10 @@ const worker = new Worker(new URL('./worker/geometry-worker.ts', import.meta.url
 let requestId = 0;
 let inFlight = false;
 let dirty = false;
+/** Bodies the open dialog still needs on screen, whatever has replaced them. */
+let pinnedNodes: NodeId[] = [];
+/** The edges the open dialog has been given, for the handle to sit on. */
+let pickedEdges: { nodeId: NodeId; indices: number[] } | null = null;
 
 function requestSolve(): void {
   if (inFlight) {
@@ -559,7 +658,12 @@ function requestSolve(): void {
     return;
   }
   inFlight = true;
-  const message: MainToWorker = { type: 'solve', requestId: ++requestId, document: graph.toJSON() };
+  const message: MainToWorker = {
+    type: 'solve',
+    requestId: ++requestId,
+    document: graph.toJSON(),
+    pinned: [...pinnedNodes],
+  };
   worker.postMessage(message);
 }
 
@@ -603,6 +707,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   lastVisible = message.visible;
   for (const mesh of message.meshes) viewport.setMesh(mesh);
   viewport.retain(message.visible);
+  viewport.setGhosts(pinnedNodes);
   viewport.frameOnce();
   editor.setStatuses(message.reports);
   editor.setShown(message.visible);

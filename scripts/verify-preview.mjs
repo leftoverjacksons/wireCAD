@@ -182,24 +182,61 @@ const plain = await page.evaluate(async () => {
 await page.getByRole('button', { name: 'Fillet', exact: true }).click();
 await page.locator('.feature-dialog').waitFor({ state: 'visible' });
 
-// Click a vertical edge of the block, chosen from the mesh the worker sent.
-const edgeAt = await page.evaluate(() => {
-  const body = window.wirecad.graph.allNodes().find((n) => n.label === 'Bore');
-  const mesh = window.wirecad.meshes().find((m) => m.nodeId === body?.id);
-  if (mesh === undefined) return null;
-  const edge = mesh.edges
-    .map((e, index) => ({ ...e, index }))
-    .filter((e) => Math.abs(e.direction.z) > 0.9)
-    .sort((a, b) => b.length - a.length)[0];
-  return edge === undefined ? null : window.wirecad.viewport.screenPositionOf(edge.midpoint);
+// Click vertical edges of the block, chosen from the mesh the worker sent. The
+// preview replaces the body they are on, so picking more than one is only
+// possible if that body stays in the view.
+const verticals = await page.evaluate(() => {
+  const bore = window.wirecad.graph.allNodes().find((n) => n.label === 'Bore');
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === bore?.id);
+  if (mesh === undefined) return [];
+  return mesh.edges
+    .map((edge, index) => ({ index, edge }))
+    .filter(({ edge }) => Math.abs(edge.direction.z) > 0.9 && edge.length > 15)
+    .slice(0, 3)
+    .map(({ edge }) => window.wirecad.viewport.screenPositionOf(edge.midpoint));
 });
-if (edgeAt !== null) await page.mouse.click(edgeAt.x, edgeAt.y);
+
+const picked = [];
+for (const at of verticals) {
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(500);
+  picked.push(await page.evaluate(() => document.querySelector('.feature-chip')?.textContent ?? ''));
+}
 
 const filleted = await page.evaluate(() => window.__body('solid.fillet'));
 check('a fillet as edges are picked',
   filleted.present && filleted.error === null && filleted.volume !== null &&
   filleted.volume < plain.volume,
   filleted.error ?? `${filleted.volume?.toFixed(0)} mm3 against ${plain.volume?.toFixed(0)}`);
+check('every edge picked, not one',
+  picked[picked.length - 1] === `${verticals.length} edges of Bore`,
+  picked.join(' → '));
+
+// The radius has an arrow too, on the edge it rounds.
+const radiusHandle = await page.evaluate(() => window.wirecad.handleAt());
+check('a radius arrow to drag  ', radiusHandle !== null,
+  radiusHandle === null ? 'no handle' : `at ${Math.round(radiusHandle.x)}, ${Math.round(radiusHandle.y)}`);
+
+let pulled = { present: false };
+let pulledRadius = null;
+if (radiusHandle !== null) {
+  await page.mouse.move(radiusHandle.x, radiusHandle.y);
+  await page.mouse.down();
+  await page.mouse.move(radiusHandle.x - 25, radiusHandle.y - 25, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  pulledRadius = await page.evaluate(() =>
+    Number(document.querySelector('.feature-dialog input[type=number]').value),
+  );
+  pulled = await page.evaluate(() => window.__body('solid.fillet'));
+}
+// A drag never moves the number faster than a square-on one would, so a pull of
+// this size stays in the range a fillet can actually be built at.
+check('dragging sets the radius', pulledRadius !== null && pulledRadius > 2 && pulledRadius < 20,
+  `${pulledRadius} mm`);
+check('and the body follows it ', pulled.present && pulled.error === null &&
+  pulled.volume !== null && filleted.volume !== null && pulled.volume < filleted.volume,
+  pulled.error ?? `${pulled.volume?.toFixed(0)} mm3 against ${filleted.volume?.toFixed(0)}`);
 
 await page.locator('.feature-dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
 const afterFillet = await page.evaluate(async () => {

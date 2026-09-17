@@ -171,6 +171,14 @@ export class FeatureDialog {
     return this.chosen.get(portId)?.nodeId ?? null;
   }
 
+  /** The face picked for an operand, when one was picked rather than a node. */
+  operandFace(portId: string): PickedFace | null {
+    const choice = this.chosen.get(portId);
+    return choice === undefined || choice.kind !== 'face'
+      ? null
+      : { normal: choice.normal, rank: choice.rank };
+  }
+
   numberOf(id: string): number | null {
     return this.numbers.get(id) ?? null;
   }

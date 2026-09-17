@@ -7,6 +7,14 @@ export interface SolveRequest {
   type: 'solve';
   requestId: number;
   document: SerializedGraph;
+  /**
+   * Nodes to keep on screen even though something downstream has replaced them.
+   *
+   * A feature being set up replaces the body its operands are being picked
+   * from, which would take that body — and the edges still being picked off it
+   * — out of the view mid-gesture.
+   */
+  pinned?: NodeId[];
 }
 
 export type ExportFormat = 'stl' | 'step';

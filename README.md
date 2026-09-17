@@ -35,9 +35,15 @@ is ready, typically around two seconds.
   keeps what is on screen; Cancel takes it back out and leaves nothing behind,
   not even an undo step. A fillet appears as the edges are picked, an extrude as
   the distance is typed.
-- **Dragging a distance** — an extrude's preview comes with an arrow along the
-  profile's normal. Pull it and the number follows, in tenths of a millimetre,
-  and the body follows the number.
+- **Dragging a distance** — a preview comes with an arrow along whatever
+  direction its number runs: an extrude travels along its profile's normal, a
+  fillet or chamfer grows outward from the edge it rounds, a shell thickens
+  inward from the face it opens. Pull it and the number follows, in tenths of a
+  millimetre, and the body follows the number.
+- **Picking several edges** — a fillet's preview replaces the body the edges are
+  being picked from, so that body stays in the view as its edges alone: still
+  there to pick, not there to look at. Edge picking stays on it until the dialog
+  is done, so a second edge lands where you meant it rather than on the preview.
 - **Extrude** — one node makes bodies and takes them away. *Operation* says what
   it does to the body wired into *Target*: **New body**, **Join**, **Cut** or
   **Intersect**. A bore is the same node as the block it goes through, pointed at
@@ -357,6 +363,23 @@ The history snapshot is taken once, before the first preview, and forgotten if
 the dialog is cancelled — along with restoring the redo that taking it
 discarded, because as far as the document is concerned nothing happened.
 
+## Dragging a number
+
+Every number a dialog can drag is a length along a direction the model already
+has, and the feature decides which: the profile's normal for an extrude,
+outward and square to the edge for a fillet or chamfer, into the body for a
+shell. A number with no such direction gets no arrow rather than an arbitrary
+one.
+
+The drag itself is measured on screen, not in the world. Measuring where the
+cursor's ray passes closest to the axis is exact and useless: an axis pointing
+near the camera turns a few pixels into tens of millimetres, and that is the
+common case, because the edge you are rounding is usually the one facing you.
+Projected on screen, such an axis is simply short, so it barely moves — the
+right answer, and a stable one. The rate is then floored at what the axis would
+give square to the camera, so a drag can never run away faster than a
+face-on one.
+
 ## From a sketch to a face
 
 A solved sketch is a set of points, not an outline, so the outline has to be
@@ -419,8 +442,10 @@ discarded.
   dialog. Chamfers are symmetric; there is no two-distance or distance-and-angle
   form yet.
 - No draft, sweep, loft, or patterns yet.
-- Only an extrude has a drag handle. A radius, a thickness or a chamfer is set
-  by typing, because there is no axis in the model for it to run along.
+- A drag never moves a number faster than it would if its arrow were square to
+  the camera. Foreshortening has already taken the one-to-one mapping away by
+  then; without the floor, an arrow pointing near the camera turns a few pixels
+  into tens of millimetres.
 - The kernel's own failure reasons do not survive this WebAssembly build, so a
   refused operation reports the likely cause rather than what OpenCASCADE said.
   The same missing piece — `opencascade.js` compiles OpenCASCADE with C++

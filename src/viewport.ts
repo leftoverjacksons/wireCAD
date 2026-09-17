@@ -31,6 +31,8 @@ export interface DragHandle {
   origin: Vec3;
   direction: Vec3;
   distance: number;
+  /** Smallest distance the drag may report, for a number that cannot be zero. */
+  minimum?: number;
   onDrag(distance: number): void;
 }
 
@@ -107,11 +109,25 @@ export class Viewport {
   private hoveredEdge: EdgeHit | null = null;
   private chosenEdges = new Map<NodeId, Set<number>>();
   private edgePicking = false;
+  /** Bodies drawn as edges alone: still there to pick, not there to look at. */
+  private ghosts = new Set<NodeId>();
+  /** While set, only this body's edges can be picked. */
+  private edgeSource: NodeId | null = null;
   private framed = false;
   private pickingEnabled = true;
   private handle: DragHandle | null = null;
   private handleObjects: Array<THREE.Line | THREE.Mesh> = [];
-  private draggingHandle = false;
+  /** What a drag in progress started from, in screen terms. */
+  private drag: {
+    x: number;
+    y: number;
+    distance: number;
+    /** Unit vector along the axis as it appears on screen. */
+    dirX: number;
+    dirY: number;
+    /** Pixels per millimetre along it, at the moment the drag began. */
+    scale: number;
+  } | null = null;
   /** Where the camera was before a sketch took it, so leaving can give it back. */
   private savedView: { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 } | null =
     null;
@@ -214,18 +230,24 @@ export class Viewport {
       // The handle takes the gesture before the camera does, or dragging it
       // would orbit the view instead.
       if (event.button === 0 && this.handleTaken(event.clientX, event.clientY)) {
-        armed = false;
-        this.draggingHandle = true;
-        this.controls.enabled = false;
-        canvas.setPointerCapture(event.pointerId);
-        event.preventDefault();
+        const started = this.beginHandleDrag(event.clientX, event.clientY);
+        if (started) {
+          armed = false;
+          this.controls.enabled = false;
+          canvas.setPointerCapture(event.pointerId);
+          event.preventDefault();
+        }
       }
     });
 
     canvas.addEventListener('pointermove', (event) => {
-      if (this.draggingHandle) {
-        const distance = this.distanceAlongHandle(event.clientX, event.clientY);
-        if (distance !== null) this.handle?.onDrag(round(distance, HANDLE_STEP));
+      const drag = this.drag;
+      if (drag !== null) {
+        const along =
+          ((event.clientX - drag.x) * drag.dirX + (event.clientY - drag.y) * drag.dirY) / drag.scale;
+        const minimum = this.handle?.minimum;
+        const distance = Math.max(drag.distance + along, minimum ?? -Infinity);
+        this.handle?.onDrag(round(distance, HANDLE_STEP));
         return;
       }
 
@@ -233,8 +255,8 @@ export class Viewport {
     });
 
     const release = (event: PointerEvent) => {
-      if (!this.draggingHandle) return;
-      this.draggingHandle = false;
+      if (this.drag === null) return;
+      this.drag = null;
       this.controls.enabled = true;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     };
@@ -313,6 +335,7 @@ export class Viewport {
     // same place would otherwise swallow the click.
     const lines = [...this.edgeLines]
       .filter(([nodeId]) => this.kinds.get(nodeId) === 'solid')
+      .filter(([nodeId]) => this.edgeSource === null || nodeId === this.edgeSource)
       .map(([, lines]) => lines);
     if (lines.length === 0) return null;
 
@@ -363,6 +386,31 @@ export class Viewport {
   }
 
   /** The edges currently in a selection, drawn so the user can see the set grow. */
+  /**
+   * Bodies to draw as their edges only.
+   *
+   * A feature's preview sits exactly on top of the body it was made from, so
+   * showing both means two surfaces fighting over the same pixels. The body
+   * underneath is only needed for its edges — what is being picked — so that is
+   * all it draws.
+   */
+  setGhosts(nodeIds: readonly NodeId[]): void {
+    const next = new Set(nodeIds);
+    if (next.size === this.ghosts.size && [...next].every((id) => this.ghosts.has(id))) return;
+
+    const touched = new Set([...this.ghosts, ...next]);
+    this.ghosts = next;
+    for (const nodeId of touched) {
+      const mesh = this.meshes.get(nodeId);
+      if (mesh !== undefined) mesh.visible = !this.ghosts.has(nodeId);
+    }
+  }
+
+  /** Restrict edge picking to one body, so a preview cannot swallow the clicks. */
+  setEdgeSource(nodeId: NodeId | null): void {
+    this.edgeSource = nodeId;
+  }
+
   setChosenEdges(nodeId: NodeId, indices: readonly number[]): void {
     if (indices.length === 0) this.chosenEdges.delete(nodeId);
     else this.chosenEdges.set(nodeId, new Set(indices));
@@ -478,39 +526,71 @@ export class Viewport {
   }
 
   /**
-   * How far along the handle's axis the cursor is.
+   * Takes hold of the handle, in the terms the drag will be measured in.
    *
-   * The cursor is a ray, not a point, so this is the point on the axis closest
-   * to that ray — the standard nearest points of two skew lines. A ray almost
-   * parallel to the axis has no useful answer, and says so.
+   * The axis is followed on screen rather than in the world. Measuring where a
+   * cursor ray passes closest to the axis is exact but useless in practice: an
+   * axis pointing near the camera turns a few pixels into tens of millimetres,
+   * and that is the common case — the edge you rounded is the one facing you.
+   * On screen, an axis pointing at the camera is simply short, so it barely
+   * moves, which is the right answer and a stable one.
    */
-  private distanceAlongHandle(clientX: number, clientY: number): number | null {
+  private beginHandleDrag(clientX: number, clientY: number): boolean {
     const handle = this.handle;
-    if (handle === null) return null;
-
-    const rect = this.canvas.getBoundingClientRect();
-    this.raycaster.setFromCamera(
-      new THREE.Vector2(
-        ((clientX - rect.left) / rect.width) * 2 - 1,
-        -((clientY - rect.top) / rect.height) * 2 + 1,
-      ),
-      this.camera,
-    );
+    if (handle === null) return false;
 
     const axis = new THREE.Vector3(
       handle.direction.x,
       handle.direction.y,
       handle.direction.z,
     ).normalize();
-    const origin = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
-    const ray = this.raycaster.ray.direction.clone().normalize();
-    const between = this.raycaster.ray.origin.clone().sub(origin);
 
-    const alignment = ray.dot(axis);
-    const denominator = 1 - alignment * alignment;
-    if (denominator < 1e-4) return null;
+    // Measured over a span of the model, not one millimetre, so the direction
+    // does not come from the difference of two nearly equal projections.
+    const probe = Math.max(this.sceneRadius() * 0.5, 1);
+    const from = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
+    const to = from.clone().add(axis.clone().multiplyScalar(probe));
 
-    return (axis.dot(between) - alignment * ray.dot(between)) / denominator;
+    const a = this.screenPositionOf({ x: from.x, y: from.y, z: from.z });
+    const b = this.screenPositionOf({ x: to.x, y: to.y, z: to.z });
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const pixels = Math.hypot(dx, dy);
+
+    // Nothing to drag along: the axis has no length on screen at all.
+    if (pixels < 1) return false;
+
+    // How long that span looks when laid square to the camera. An axis pointing
+    // near the camera is far shorter than that, and dividing by what is left
+    // turns a few pixels into tens of millimetres. So the rate is floored at
+    // the square-on rate: a drag never moves the number faster than it would if
+    // the axis were facing you. Foreshortening had already taken the one-to-one
+    // mapping away; this keeps what is left aimable.
+    const reference = this.screenSpan(from, axis, probe);
+    const scale = Math.max(pixels, reference) / probe;
+
+    this.drag = {
+      x: clientX,
+      y: clientY,
+      distance: handle.distance,
+      dirX: dx / pixels,
+      dirY: dy / pixels,
+      scale,
+    };
+    return true;
+  }
+
+  /** Pixels a span covers when laid square to the camera, across the axis. */
+  private screenSpan(from: THREE.Vector3, axis: THREE.Vector3, probe: number): number {
+    const view = this.camera.getWorldDirection(new THREE.Vector3());
+    let across = new THREE.Vector3().crossVectors(view, axis);
+    if (across.lengthSq() < 1e-8) across = new THREE.Vector3().crossVectors(view, this.camera.up);
+    across.normalize();
+
+    const a = this.screenPositionOf({ x: from.x, y: from.y, z: from.z });
+    const to = from.clone().add(across.multiplyScalar(probe));
+    const b = this.screenPositionOf({ x: to.x, y: to.y, z: to.z });
+    return Math.hypot(b.x - a.x, b.y - a.y);
   }
 
   // ------------------------------------------------------------ sketch mode
@@ -800,6 +880,7 @@ export class Viewport {
     } else {
       const mesh = new THREE.Mesh(geometry, this.material);
       mesh.userData.nodeId = payload.nodeId;
+      mesh.visible = !this.ghosts.has(payload.nodeId);
       mesh.renderOrder = payload.kind === 'sketch' ? 1 : 0;
       this.meshes.set(payload.nodeId, mesh);
       this.scene.add(mesh);
