@@ -33,6 +33,13 @@ export interface SolveResult {
 export interface SolveOptions {
   tolerance?: number;
   maxIterations?: number;
+  /**
+   * Prefer the solution nearest where the sketch already sits. Constraints leave
+   * directions free — "these two edges are equal" holds anywhere along a
+   * bisector — and without this the solver is entitled to travel a long way down
+   * one of them. Adding a relation should nudge a sketch, not throw it.
+   */
+  settle?: boolean;
 }
 
 const EPSILON = 1e-9;
@@ -217,23 +224,22 @@ function evaluate(
 }
 
 /** Central differences: two evaluations per unknown, and no derivatives by hand. */
-function jacobian(
-  sketch: Sketch,
-  layout: Layout,
+function jacobianOf(
+  residuals: (at: readonly number[]) => number[],
   x: number[],
-  dimensions: ReadonlyMap<string, number>,
+  columns: number,
   rows: number,
 ): number[][] {
-  const J: number[][] = Array.from({ length: rows }, () => new Array<number>(layout.size).fill(0));
+  const J: number[][] = Array.from({ length: rows }, () => new Array<number>(columns).fill(0));
 
-  for (let column = 0; column < layout.size; column++) {
+  for (let column = 0; column < columns; column++) {
     const step = 1e-7 * Math.max(1, Math.abs(x[column]!));
     const original = x[column]!;
 
     x[column] = original + step;
-    const forward = evaluate(sketch, layout, x, dimensions);
+    const forward = residuals(x);
     x[column] = original - step;
-    const backward = evaluate(sketch, layout, x, dimensions);
+    const backward = residuals(x);
     x[column] = original;
 
     for (let row = 0; row < rows; row++) {
@@ -314,7 +320,10 @@ export function solveSketch(
   const x = pack(sketch, layout);
 
   const unpack = (rows: number, iterations: number, worst: number, solved: boolean): SolveResult => {
-    const J = rows === 0 ? [] : jacobian(sketch, layout, x, dimensions, rows);
+    const J =
+      rows === 0
+        ? []
+        : jacobianOf((at) => evaluate(sketch, layout, at, dimensions), x, layout.size, rows);
     const rank = rows === 0 ? 0 : rankOf(J, layout.size);
     return {
       points: sketch.points.map((_, index) => ({
@@ -337,23 +346,66 @@ export function solveSketch(
   if (rows === 0) return unpack(0, 0, 0, true);
 
   const worstOf = (r: readonly number[]): number => r.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+
+  // Two passes when settling. The first carries a weak pull towards the starting
+  // configuration, which picks the nearest solution out of the ones available;
+  // the second drops it and drives the constraints the rest of the way home, from
+  // a starting point already close enough that it has nowhere far to go.
+  const start = [...x];
+  const passes = (options.settle ?? true) ? [SETTLE_WEIGHT, 0] : [0];
+  let iterations = 0;
+
+  for (const weight of passes) {
+    iterations += run(sketch, layout, x, dimensions, rows, start, weight, tolerance, maxIterations);
+  }
+
+  residual = evaluate(sketch, layout, x, dimensions);
+  const worst = worstOf(residual);
+  return unpack(rows, iterations, worst, worst <= Math.max(tolerance, 1e-7));
+}
+
+/** How hard the first pass pulls back towards where the sketch already was. */
+const SETTLE_WEIGHT = 0.1;
+
+function run(
+  sketch: Sketch,
+  layout: Layout,
+  x: number[],
+  dimensions: ReadonlyMap<string, number>,
+  rows: number,
+  start: readonly number[],
+  weight: number,
+  tolerance: number,
+  maxIterations: number,
+): number {
+  const worstOf = (r: readonly number[]): number => r.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
   const costOf = (r: readonly number[]): number => r.reduce((sum, v) => sum + v * v, 0);
 
+  /** Constraint residuals, then the pull towards the starting point. */
+  const full = (at: readonly number[]): number[] => {
+    const r = evaluate(sketch, layout, at, dimensions);
+    if (weight === 0) return r;
+    for (let i = 0; i < layout.size; i++) r.push(weight * (at[i]! - start[i]!));
+    return r;
+  };
+
+  const height = weight === 0 ? rows : rows + layout.size;
+  let residual = full(x);
   let cost = costOf(residual);
   let lambda = 1e-3;
   let iterations = 0;
 
-  while (iterations < maxIterations && worstOf(residual) > tolerance) {
+  while (iterations < maxIterations && worstOf(evaluate(sketch, layout, x, dimensions)) > tolerance) {
     iterations += 1;
 
-    const J = jacobian(sketch, layout, x, dimensions, rows);
+    const J = jacobianOf(full, x, layout.size, height);
 
     // Normal equations: (JtJ + lambda * diag(JtJ)) step = -Jt r.
     const JtJ: number[][] = Array.from({ length: layout.size }, () =>
       new Array<number>(layout.size).fill(0),
     );
     const Jtr = new Array<number>(layout.size).fill(0);
-    for (let row = 0; row < rows; row++) {
+    for (let row = 0; row < height; row++) {
       for (let i = 0; i < layout.size; i++) {
         const value = J[row]![i]!;
         if (value === 0) continue;
@@ -367,13 +419,19 @@ export function solveSketch(
       for (let k = 0; k < i; k++) JtJ[i]![k] = JtJ[k]![i]!;
     }
 
+    // Damping has to be uniform, not scaled by each diagonal. An unknown no
+    // constraint touches has a zero diagonal, so scaling by it would leave that
+    // direction undamped and singular — which is precisely how a sketch ends up
+    // sliding a long way down a direction nothing was holding. Damped evenly, a
+    // free direction has nothing pushing it and simply stays put.
+    let scale = 1e-9;
+    for (let i = 0; i < layout.size; i++) scale = Math.max(scale, JtJ[i]![i]!);
+
     let accepted = false;
     for (let attempt = 0; attempt < 12 && !accepted; attempt++) {
       const A = JtJ.map((row, i) => {
         const copy = [...row];
-        // Damping scaled by the diagonal keeps well- and badly-scaled unknowns
-        // moving at comparable rates.
-        copy[i] = copy[i]! + lambda * Math.max(JtJ[i]![i]!, 1e-12);
+        copy[i] = copy[i]! + lambda * scale;
         return copy;
       });
 
@@ -384,7 +442,7 @@ export function solveSketch(
       }
 
       const trial = x.map((value, index) => value + step[index]!);
-      const trialResidual = evaluate(sketch, layout, trial, dimensions);
+      const trialResidual = full(trial);
       const trialCost = costOf(trialResidual);
 
       if (trialCost < cost) {
@@ -401,6 +459,5 @@ export function solveSketch(
     if (!accepted) break;
   }
 
-  const worst = worstOf(residual);
-  return unpack(rows, iterations, worst, worst <= Math.max(tolerance, 1e-7));
+  return iterations;
 }

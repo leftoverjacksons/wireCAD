@@ -52,6 +52,15 @@ is ready, typically around two seconds.
   anything gets its relations and no lengths, because inventing lengths would
   put contradictions in a sketch nobody asked to over-constrain; it arrives
   under-constrained, which is what a freshly drawn sketch honestly is.
+- **Editing a sketch** — select a Sketch node and press *Edit Sketch*. Click its
+  points and edges in the 3D view to pick them, then apply a relation —
+  Horizontal, Vertical, Parallel, Perpendicular, Equal, Coincident, Concentric,
+  On line, Midpoint — or press *Dimension*, which reads what you picked: a line
+  gives a length, a circle a radius, two points a distance, two lines an angle.
+  The panel says how many degrees of freedom are left, lists every rule with its
+  number editable in place, and removes one with ×. A relation that would
+  contradict what is already there is refused and rolled back rather than
+  leaving the sketch in a state the solver cannot make sense of.
 - **Profiles are one node** — however complicated the shape, it is a single node
   carrying its own dimensions, named and listed: `P1 U`, `P1 V` and so on, one
   pair per corner, growing with the drawing. Each is an ordinary port, so it can
@@ -282,6 +291,16 @@ Sketches are small, tens of unknowns, so the Jacobian is dense and built by
 central differences — one extra pair of evaluations per unknown, in exchange for
 not hand-differentiating every constraint, which is where a solver of this kind
 usually goes quietly wrong.
+
+Constraints leave directions free — "these two edges are equal" holds anywhere
+along a bisector — and a solver is entitled to travel a long way down one of
+them, which in practice means adding a relation throws the sketch across the
+screen. Two things prevent it. Damping is uniform rather than scaled by each
+diagonal, because an unknown no constraint touches has a zero diagonal and would
+otherwise be left undamped and singular; damped evenly it simply stays put. And
+solving runs twice: first with a weak pull towards where the sketch already was,
+which picks the nearest solution out of those available, then without it, from a
+starting point that has nowhere far left to go.
 
 Row-reducing that same Jacobian answers two questions worth asking. Its rank
 against the number of unknowns gives the degrees of freedom still loose, so a

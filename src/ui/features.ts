@@ -48,8 +48,11 @@ export interface FeatureSpec {
   operands: readonly OperandSpec[];
   numbers: readonly NumberSpec[];
   choices?: readonly ChoiceSpec[];
-  /** 'sketch' hands off to interactive drawing instead of building a node. */
-  kind?: 'node' | 'sketch';
+  /**
+   * 'sketch' hands off to interactive drawing instead of building a node, and
+   * 'edit' reopens the sketch already selected rather than making anything.
+   */
+  kind?: 'node' | 'sketch' | 'edit';
 }
 
 export interface FeatureGroup {
@@ -102,6 +105,14 @@ export const tabs: readonly FeatureTab[] = [
             nodeType: 'sketch.polygon',
             kind: 'sketch',
             operands: [{ id: 'plane', label: 'Plane', type: 'plane' }],
+            numbers: [],
+          },
+          {
+            id: 'edit-sketch',
+            label: 'Edit Sketch',
+            nodeType: 'sketch.constrained',
+            kind: 'edit',
+            operands: [],
             numbers: [],
           },
           {

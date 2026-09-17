@@ -4,7 +4,7 @@ import { Graph } from './core/graph.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
 import type { GraphNode, NodeId, NodeSchema, PlaneValue } from './core/types.js';
-import { makePlane } from './geometry/plane.js';
+import { WORLD_XY, makePlane, pointOnPlane } from './geometry/plane.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
 import { constrainedSchemas } from './nodes/constrained.js';
@@ -18,6 +18,7 @@ import type { PlaneChoice } from './ui/features.js';
 import { tabs } from './ui/features.js';
 import { download, pickFile, readAutosave, timestampedName, writeAutosave } from './ui/file-io.js';
 import { NodeEditor } from './ui/node-editor.js';
+import { SketchEditor } from './ui/sketch-editor.js';
 import { SketchMode } from './ui/sketch-mode.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
@@ -122,7 +123,37 @@ const dialog = new FeatureDialog(viewportEl, graph, {
   },
 });
 
-const toolbar = new Toolbar(viewportEl, tabs, (spec) => dialog.open(spec, selected));
+const sketchEditor = new SketchEditor(viewportEl, graph, viewport, {
+  onBeforeChange: () => history.capture(),
+  onChanged: () => requestSolve(),
+  onExit: () => document.body.classList.remove('sketching'),
+});
+
+/** Reopen the selected sketch, on whatever plane it is actually sitting on. */
+function editSketch(): void {
+  if (!SketchEditor.editable(graph, selected)) {
+    statusEl.textContent = 'Select a Sketch node first.';
+    return;
+  }
+
+  const source = graph.incomingEdge(selected!, 'plane');
+  const plane = source === undefined ? WORLD_XY : (lastPlanes[source.from.node] ?? null);
+  if (plane === null) {
+    statusEl.textContent = 'That sketch plane has not been solved yet — try again in a moment.';
+    return;
+  }
+
+  document.body.classList.add('sketching');
+  sketchEditor.enter(selected!, plane);
+}
+
+const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
+  if (spec.kind === 'edit') {
+    editSketch();
+    return;
+  }
+  dialog.open(spec, selected);
+});
 
 // --------------------------------------------------------------- file actions
 
@@ -520,5 +551,11 @@ if (import.meta.env.DEV) {
     visible: () => lastVisible,
     pending: () => inFlight,
     starter: buildStarterModel,
+    select: (nodeId: NodeId) => applySelection(nodeId, true),
+    sketchEditor,
+    screenOfSketch: (u: number, v: number) => {
+      const plane = lastPlanes[graph.incomingEdge(selected!, 'plane')?.from.node ?? ''] ?? WORLD_XY;
+      return viewport.screenPositionOf(pointOnPlane(plane, u, v));
+    },
   });
 }

@@ -86,6 +86,30 @@ export class Viewport {
   private framed = false;
   private pickingEnabled = true;
 
+  private readonly overlay: Array<THREE.LineSegments | THREE.Points> = [];
+  // The sketch being edited sits on the face it defines, so it is drawn without
+  // depth testing: what you are editing is never hidden by what it produces.
+  private readonly overlayMaterial = new THREE.LineBasicMaterial({
+    color: 0x5cecff,
+    depthTest: false,
+  });
+  private readonly overlayPickedMaterial = new THREE.LineBasicMaterial({
+    color: 0xff61c6,
+    depthTest: false,
+  });
+  private readonly overlayPointMaterial = new THREE.PointsMaterial({
+    color: 0xf4ff61,
+    size: 8,
+    sizeAttenuation: false,
+    depthTest: false,
+  });
+  private readonly overlayPickedPointMaterial = new THREE.PointsMaterial({
+    color: 0xff61c6,
+    size: 11,
+    sizeAttenuation: false,
+    depthTest: false,
+  });
+
   private sketchLine: THREE.LineLoop | THREE.Line | null = null;
   private sketchPoints: THREE.Points | null = null;
   private readonly sketchLineMaterial = new THREE.LineBasicMaterial({ color: 0xf4ff61 });
@@ -391,6 +415,81 @@ export class Viewport {
     this.sketchPoints = new THREE.Points(geometry, this.sketchPointMaterial);
     this.sketchPoints.renderOrder = 5;
     this.scene.add(this.sketchPoints);
+  }
+
+  /**
+   * The sketch being edited: its entities, and which of them are picked. Drawn
+   * as its own overlay so it can be hit-tested and highlighted independently of
+   * the solved profile the worker sends back.
+   */
+  setSketchOverlay(
+    segments: ReadonlyArray<{ points: readonly Vec3[]; selected: boolean }>,
+    vertices: ReadonlyArray<{ at: Vec3; selected: boolean }>,
+  ): void {
+    this.clearSketchOverlay();
+
+    for (const group of [false, true]) {
+      const flat: number[] = [];
+      for (const segment of segments) {
+        if (segment.selected !== group) continue;
+        for (let i = 0; i + 1 < segment.points.length; i++) {
+          const a = segment.points[i]!;
+          const b = segment.points[i + 1]!;
+          flat.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        }
+      }
+      if (flat.length === 0) continue;
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat), 3));
+      const lines = new THREE.LineSegments(
+        geometry,
+        group ? this.overlayPickedMaterial : this.overlayMaterial,
+      );
+      lines.renderOrder = 6;
+      this.overlay.push(lines);
+      this.scene.add(lines);
+    }
+
+    for (const group of [false, true]) {
+      const flat: number[] = [];
+      for (const vertex of vertices) {
+        if (vertex.selected !== group) continue;
+        flat.push(vertex.at.x, vertex.at.y, vertex.at.z);
+      }
+      if (flat.length === 0) continue;
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat), 3));
+      const points = new THREE.Points(
+        geometry,
+        group ? this.overlayPickedPointMaterial : this.overlayPointMaterial,
+      );
+      points.renderOrder = 7;
+      this.overlay.push(points);
+      this.scene.add(points);
+    }
+  }
+
+  clearSketchOverlay(): void {
+    for (const object of this.overlay) {
+      this.scene.remove(object);
+      object.geometry.dispose();
+    }
+    this.overlay.length = 0;
+  }
+
+  /** How far a click may miss, in model units, for a given screen slack. */
+  pickTolerance(plane: PlaneValue, pixels: number): number {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const centre = this.planePoint(rect.left + rect.width / 2, rect.top + rect.height / 2, plane);
+    const offset = this.planePoint(
+      rect.left + rect.width / 2 + pixels,
+      rect.top + rect.height / 2,
+      plane,
+    );
+    if (centre === null || offset === null) return 1;
+    return Math.max(Math.hypot(offset.u - centre.u, offset.v - centre.v), 1e-6);
   }
 
   clearSketchPreview(): void {

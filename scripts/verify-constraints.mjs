@@ -156,14 +156,14 @@ await page.getByRole('button', { name: 'Sketch', exact: true }).click();
 await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
 await page.getByRole('button', { name: 'Create', exact: true }).click();
-const panel = page.locator('.sketch-panel');
+const panel = page.locator('.sketch-panel:not(.sketch-editor)');
 await panel.getByRole('button', { name: 'Rectangle', exact: true }).click();
 
 const canvas = await page.locator('canvas').first().boundingBox();
 await page.mouse.click(canvas.x + canvas.width * 0.42, canvas.y + canvas.height * 0.42);
 await page.mouse.click(canvas.x + canvas.width * 0.58, canvas.y + canvas.height * 0.56);
 // A rectangle completes on its second corner, so sketch mode has already left.
-await page.locator('.sketch-panel').waitFor({ state: 'hidden', timeout: 10_000 });
+await page.locator('.sketch-panel:not(.sketch-editor)').waitFor({ state: 'hidden', timeout: 10_000 });
 
 const drawn = await page.evaluate(async () => {
   await window.__settle();
@@ -189,6 +189,105 @@ const drawChecks = [
     (drawn.relations ?? []).join(',')],
 ];
 for (const [name, ok, extra] of drawChecks) {
+  if (!ok) failures += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
+}
+
+// The interactive editor: select geometry in the view, apply relations, and
+// place a dimension.
+console.log('');
+console.log('editing one:');
+
+const edit = await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
+
+  // A wedge: a flat base and two loose corners, so there is freedom to remove.
+  graph.addNode('sketch.constrained', {
+    id: 'sk',
+    inputs: {
+      points: [0, 0, 40, 0, 25, 20],
+      entities: [
+        ['line', 0, 1],
+        ['line', 1, 2],
+        ['line', 2, 0],
+      ],
+      constraints: [
+        ['lockU', 0, 'originU'],
+        ['lockV', 0, 'originV'],
+        ['horizontal', 0],
+      ],
+      dims: ['originU', 0, 'originV', 0],
+    },
+  });
+  graph.connect({ node: 'xy', port: 'plane' }, { node: 'sk', port: 'plane' });
+  await window.__settle();
+  return true;
+});
+
+await page.evaluate(() => window.wirecad.select('sk'));
+await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
+
+const editor = page.locator('.sketch-editor');
+await editor.waitFor({ state: 'visible', timeout: 10_000 });
+const startStatus = await editor.locator('.sketch-status').innerText();
+
+// Click the two sloping edges, then make them equal.
+// Click the midpoint of an edge, read from wherever the solver has it now.
+const pickEdge = async (a, b) => {
+  const info = await page.evaluate(
+    ([a, b]) => {
+      const points = window.wirecad.sketchEditor.solvedPoints();
+      const from = points[a];
+      const to = points[b];
+      const uv = { u: (from.u + to.u) / 2, v: (from.v + to.v) / 2 };
+      return { at: window.wirecad.screenOfSketch(uv.u, uv.v) };
+    },
+    [a, b],
+  );
+  await page.mouse.click(info.at.x, info.at.y);
+};
+
+await pickEdge(1, 2);
+await pickEdge(2, 0);
+await editor.getByRole('button', { name: 'Equal', exact: true }).click();
+const afterEqual = await editor.locator('.sketch-status').innerText();
+
+await pickEdge(0, 1);
+await editor.getByRole('button', { name: 'Dimension', exact: true }).click();
+const afterDimension = await editor.locator('.sketch-status').innerText();
+
+// One slope length is all that is left between this and a determined sketch.
+await pickEdge(1, 2);
+await editor.getByRole('button', { name: 'Dimension', exact: true }).click();
+const afterSecond = await editor.locator('.sketch-status').innerText();
+
+const state = await page.evaluate(() => {
+  const { graph } = window.wirecad;
+  const kinds = (graph.inputValue('sk', 'constraints') ?? []).map((row) => row[0]);
+  const labels = graph
+    .schemaOf('sk')
+    .inputs.filter((p) => p.hidden !== true)
+    .map((p) => p.label);
+  return { kinds, labels, rows: document.querySelectorAll('.sketch-row').length };
+});
+
+await editor.getByRole('button', { name: 'Done', exact: true }).click();
+
+// Six unknowns, less a locked point and a horizontal base, is three.
+const editChecks = [
+  ['opens under-constrained    ', /3 degrees of freedom/.test(startStatus), startStatus],
+  ['Equal takes one away       ', /2 degrees of freedom/.test(afterEqual), afterEqual],
+  ['a dimension takes another  ', /1 degree of freedom/.test(afterDimension), afterDimension],
+  ['the last one determines it ', /Fully constrained/.test(afterSecond), afterSecond],
+  ['the relation is stored     ', state.kinds.includes('equal'), state.kinds.join(',')],
+  ['dimensions become ports    ', state.labels.filter((l) => /^length/.test(l)).length === 2,
+    state.labels.join(',')],
+  ['every rule is listed       ', state.rows === state.kinds.length, `${state.rows} rows, ${state.kinds.length} rules`],
+];
+for (const [name, ok, extra] of editChecks) {
   if (!ok) failures += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
 }
