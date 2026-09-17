@@ -74,6 +74,7 @@ let lastPlanes: Record<NodeId, PlaneValue> = {};
 let lastReports: NodeReport[] = [];
 let lastMeshes: MeshPayload[] = [];
 let solveCount = 0;
+let lastVisible: NodeId[] = [];
 
 /** Resolve a plane choice to the plane the graph will actually produce for it. */
 function planeValueFor(choice: PlaneChoice): PlaneValue | null {
@@ -456,10 +457,12 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   lastReports = message.reports;
   lastMeshes = message.meshes;
   solveCount += 1;
+  lastVisible = message.visible;
   for (const mesh of message.meshes) viewport.setMesh(mesh);
   viewport.retain(message.visible);
   viewport.frameOnce();
   editor.setStatuses(message.reports);
+  editor.setShown(message.visible);
 
   const errors = message.reports.filter((report) => report.error !== undefined);
   statsEl.textContent =
@@ -512,5 +515,6 @@ if (import.meta.env.DEV) {
     meshes: () => lastMeshes,
     solves: () => solveCount,
     solve: () => requestSolve(),
+    visible: () => lastVisible,
   });
 }

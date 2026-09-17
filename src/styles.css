@@ -499,6 +499,29 @@ input[type='range'] {
   font-size: 10px;
 }
 
+.node-eye {
+  z-index: 3;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 2px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--text-dim, #9aa0a6);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.node-eye:hover {
+  color: var(--text, #e8e8e8);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.node-eye-off {
+  opacity: 0.55;
+}
+
 .node-row {
   position: absolute;
   left: 0;

@@ -27,6 +27,7 @@ interface NodeView {
   schema: NodeSchema;
   statusEl: HTMLElement;
   fields: Map<string, HTMLInputElement>;
+  eye: HTMLElement | null;
 }
 
 type Drag =
@@ -73,6 +74,8 @@ export class NodeEditor {
 
   private pan = { x: 60, y: 40 };
   private zoom = 1;
+
+  private shownNodes = new Set<NodeId>();
 
   constructor(
     private readonly container: HTMLElement,
@@ -172,7 +175,31 @@ export class NodeEditor {
     const statusEl = document.createElement('span');
     statusEl.className = 'node-status';
 
+    // Only a node that can put something on screen gets the control.
+    const drawable = schema.outputs.some(
+      (port) => port.type === 'geometry' || port.type === 'sketch',
+    );
+    let eye: HTMLElement | null = null;
+    if (drawable) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'node-eye';
+      button.title = 'Show or hide this result';
+      button.textContent = '◉';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.callbacks.onBeforeChange();
+        // The button reports what is on screen, so a click always means "do the
+        // other thing" — which keeps it reversible without a third state.
+        this.graph.setVisibility(nodeId, !this.shownNodes.has(nodeId));
+        this.callbacks.onDocumentChanged();
+      });
+      eye = button;
+    }
+
     header.append(title, statusEl);
+    if (eye !== null) header.append(eye);
     element.append(header);
 
     const fields = new Map<string, HTMLInputElement>();
@@ -251,7 +278,7 @@ export class NodeEditor {
     }
 
     this.canvas.append(element);
-    this.views.set(nodeId, { element, schema, statusEl, fields });
+    this.views.set(nodeId, { element, schema, statusEl, fields, eye });
     this.positionNode(nodeId);
   }
 
@@ -562,6 +589,17 @@ export class NodeEditor {
   private applySelection(): void {
     for (const [nodeId, view] of this.views) {
       view.element.classList.toggle('node-selected', nodeId === this.selected);
+    }
+  }
+
+  /** Which nodes the last solve actually drew, so the eye can show the truth. */
+  setShown(visible: readonly NodeId[]): void {
+    this.shownNodes = new Set(visible);
+    for (const [nodeId, view] of this.views) {
+      if (view.eye === null) continue;
+      const shown = this.shownNodes.has(nodeId);
+      view.eye.textContent = shown ? '◉' : '○';
+      view.eye.classList.toggle('node-eye-off', !shown);
     }
   }
 

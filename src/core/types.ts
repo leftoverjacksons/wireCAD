@@ -72,6 +72,12 @@ export interface GraphNode {
   label?: string;
   position: { x: number; y: number };
   inputs: Record<PortId, Value>;
+  /**
+   * Whether this node's geometry is drawn. Left unset it follows the automatic
+   * rule — a result that something downstream consumes steps out of the way —
+   * and setting it pins the answer either way.
+   */
+  visible?: boolean;
 }
 
 export interface PortRef {

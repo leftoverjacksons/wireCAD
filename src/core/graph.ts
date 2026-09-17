@@ -7,6 +7,7 @@ export type GraphChange =
   | { kind: 'node-removed'; nodeId: NodeId }
   | { kind: 'node-moved'; nodeId: NodeId }
   | { kind: 'node-renamed'; nodeId: NodeId }
+  | { kind: 'node-visibility'; nodeId: NodeId }
   | { kind: 'input-changed'; nodeId: NodeId; portId: PortId }
   | { kind: 'edge-added'; edgeId: EdgeId }
   | { kind: 'edge-removed'; edgeId: EdgeId }
@@ -25,6 +26,7 @@ export interface AddNodeOptions {
   label?: string;
   position?: { x: number; y: number };
   inputs?: Record<PortId, Value>;
+  visible?: boolean;
 }
 
 /** Position and label are presentation-only and never affect evaluation. */
@@ -77,6 +79,7 @@ export class Graph {
       inputs,
     };
     if (options.label !== undefined) node.label = options.label;
+    if (options.visible !== undefined) node.visible = options.visible;
 
     this.nodes.set(id, node);
     this.outgoing.set(id, new Set());
@@ -146,6 +149,14 @@ export class Graph {
   setLabel(nodeId: NodeId, label: string): void {
     this.requireNode(nodeId).label = label;
     this.emit({ kind: 'node-renamed', nodeId });
+  }
+
+  /** `undefined` hands the node back to the automatic rule. */
+  setVisibility(nodeId: NodeId, visible: boolean | undefined): void {
+    const node = this.requireNode(nodeId);
+    if (visible === undefined) delete node.visible;
+    else node.visible = visible;
+    this.emit({ kind: 'node-visibility', nodeId });
   }
 
   /** The reason this connection would be refused, or null if it is allowed. */
@@ -295,6 +306,7 @@ export class Graph {
           position: { ...node.position },
           inputs: node.inputs,
           ...(node.label !== undefined ? { label: node.label } : {}),
+          ...(node.visible !== undefined ? { visible: node.visible } : {}),
         });
       }
       for (const edge of data.edges) this.connect(edge.from, edge.to, edge.id);

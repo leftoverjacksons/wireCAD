@@ -217,7 +217,11 @@ export class Viewport {
   }
 
   private pickEdge(): EdgeHit | null {
-    const lines = [...this.edgeLines.values()];
+    // Only bodies have edges worth filleting; a profile's outline sitting in the
+    // same place would otherwise swallow the click.
+    const lines = [...this.edgeLines]
+      .filter(([nodeId]) => this.kinds.get(nodeId) === 'solid')
+      .map(([, lines]) => lines);
     if (lines.length === 0) return null;
 
     const previous = this.raycaster.params.Line?.threshold;

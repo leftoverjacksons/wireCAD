@@ -86,11 +86,16 @@ function solve(request: SolveRequest): void {
             .outputs.some((port) => port.type === 'geometry'),
         );
 
-    // Sketches always show, so a profile stays pickable once a feature uses it.
+    // A profile that has already been extruded is scaffolding, not a body, so
+    // the same superseding rule covers sketches. An explicit flag on the node
+    // overrides the guess in either direction.
     const displayable = definition.outputs.find(
-      (port) => port.type === 'sketch' || (port.type === 'geometry' && !supersededBy(port.id)),
+      (port) =>
+        (port.type === 'sketch' || port.type === 'geometry') &&
+        (node.visible === true || !supersededBy(port.id)),
     );
     if (displayable === undefined) continue;
+    if (node.visible === false) continue;
 
     const nodeResult = result.results.get(node.id);
     if (nodeResult === undefined) continue;

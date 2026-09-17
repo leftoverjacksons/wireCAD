@@ -67,7 +67,13 @@ is ready, typically around two seconds.
 When the kernel refuses an operation the node says so and the rest of the model
 stays cached, so it is cheap to adjust a radius and try again.
 - **Viewport** — orbit with the left mouse button, zoom with the wheel, click a
-  body to select it.
+  body to select it. Edge picking only ever hits solids, so a profile lying in
+  the same place cannot swallow a click meant for the body underneath it.
+- **Showing and hiding** — a result that something downstream consumes steps out
+  of the way, so extruding a profile takes the profile off screen and leaves the
+  body. The ◉ on a node's header overrides that either way, and the glyph shows
+  what is actually being drawn rather than what was asked for. The setting is
+  part of the document, so it saves and undoes with everything else.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
   header. Drag between ports to wire them; drag away from a connected input to
   detach it; click a wire to cut it. Unwired numeric inputs are editable in

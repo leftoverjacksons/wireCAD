@@ -43,14 +43,20 @@ await page.evaluate(() => {
     }
     return Math.abs(total) / 6;
   };
+  // A solve already in flight finishes first and reports the previous document,
+  // so waiting for one tick can read stale results. Wait for the solver to go
+  // quiet instead.
   window.__settle = async () => {
     const before = window.wirecad.solves();
     window.wirecad.solve();
     for (let i = 0; i < 600; i++) {
-      if (window.wirecad.solves() > before) return;
       await new Promise((r) => setTimeout(r, 100));
+      if (window.wirecad.solves() <= before) continue;
+      const settled = window.wirecad.solves();
+      await new Promise((r) => setTimeout(r, 300));
+      if (window.wirecad.solves() === settled) return;
     }
-    throw new Error('solve did not complete');
+    throw new Error('solve did not settle');
   };
 });
 
@@ -185,6 +191,62 @@ if (target === null) {
   console.log(`${madeNodes ? 'PASS' : 'FAIL'}  Create builds the nodes → ${built.error ?? built.types.join(', ')}`);
   if (!madeNodes) process.exitCode = 1;
 }
+
+// The profile that drove an extrude used to stay on screen, so its outline sat
+// on top of the body's lower edges and swallowed clicks meant for them.
+console.log('');
+console.log('profile visibility:');
+
+const vis = await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('sketch.rectangle', { id: 'rect', inputs: { width: 60, height: 40 } });
+  graph.addNode('solid.extrude', { id: 'body', inputs: { distance: 20 } });
+  graph.connect({ node: 'rect', port: 'profile' }, { node: 'body', port: 'profile' });
+  await window.__settle();
+  const hiddenByDefault = !window.wirecad.visible().includes('rect');
+
+  graph.setVisibility('rect', true);
+  await window.__settle();
+  const shownWhenPinned = window.wirecad.visible().includes('rect');
+
+  graph.setVisibility('rect', false);
+  await window.__settle();
+  const hiddenWhenPinned = !window.wirecad.visible().includes('rect');
+
+  graph.setVisibility('rect', undefined);
+  await window.__settle();
+  return { hiddenByDefault, shownWhenPinned, hiddenWhenPinned };
+});
+
+for (const [name, ok] of [
+  ['an extruded profile hides itself     ', vis.hiddenByDefault],
+  ['the eye can force it back on         ', vis.shownWhenPinned],
+  ['and can force a body off             ', vis.hiddenWhenPinned],
+]) {
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
+  if (!ok) process.exitCode = 1;
+}
+
+await page.getByRole('button', { name: 'Fillet', exact: true }).click();
+const lower = await page.evaluate(() => {
+  const edges = window.wirecad.viewport.edgesOf('body') ?? [];
+  // A bottom edge: horizontal, and sitting at the base of the bounding box.
+  const found = edges.find((e) => Math.abs(e.direction.z) < 0.1 && e.fraction.z < 0.01);
+  return found === undefined ? null : window.wirecad.viewport.screenPositionOf(found.midpoint);
+});
+
+if (lower === null) {
+  console.log('FAIL  no lower edge found to click');
+  process.exitCode = 1;
+} else {
+  await page.mouse.click(lower.x, lower.y);
+  const text = await page.locator('.feature-dialog').innerText();
+  const ok = /1 edge of/.test(text) && !/not on a solid/.test(text);
+  console.log(`${ok ? 'PASS' : 'FAIL'}  a lower edge selects → ${text.split('\n').slice(1, 3).join(' | ')}`);
+  if (!ok) process.exitCode = 1;
+}
+await page.getByRole('button', { name: 'Cancel' }).click();
 
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();
