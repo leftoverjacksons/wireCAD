@@ -31,7 +31,7 @@ export function autoLayout(graph: Graph): void {
     let y = 0;
     for (const nodeId of nodeIds) {
       graph.setPosition(nodeId, { x: column * (NODE_WIDTH + COLUMN_GAP), y });
-      y += nodeHeight(graph.registry.require(graph.requireNode(nodeId).type)) + ROW_GAP;
+      y += nodeHeight(graph.schemaOf(nodeId)) + ROW_GAP;
     }
   }
 }

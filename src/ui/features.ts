@@ -251,7 +251,7 @@ export function resolveEdgeSource(
 export function outputPortFor(graph: Graph, nodeId: NodeId, type: DataType): PortRef | null {
   const node = graph.getNode(nodeId);
   if (node === null || node === undefined) return null;
-  const schema = graph.registry.require(node.type);
+  const schema = graph.schemaOf(nodeId);
   const port = schema.outputs.find((candidate) => candidate.type === type);
   return port === undefined ? null : { node: nodeId, port: port.id };
 }
@@ -259,7 +259,7 @@ export function outputPortFor(graph: Graph, nodeId: NodeId, type: DataType): Por
 export function candidatesFor(graph: Graph, type: DataType): Array<{ nodeId: NodeId; label: string }> {
   const results: Array<{ nodeId: NodeId; label: string }> = [];
   for (const node of graph.allNodes()) {
-    const schema = graph.registry.require(node.type);
+    const schema = graph.schemaOf(node.id);
     if (!schema.outputs.some((port) => port.type === type)) continue;
     results.push({ nodeId: node.id, label: node.label ?? schema.label });
   }
@@ -275,7 +275,7 @@ function overlaps(
 
 /** Place a new node one column right of its producers, nudged clear of neighbours. */
 export function placeDownstream(graph: Graph, nodeId: NodeId): void {
-  const height = nodeHeight(graph.registry.require(graph.requireNode(nodeId).type));
+  const height = nodeHeight(graph.schemaOf(nodeId));
   const sources = graph.incomingEdges(nodeId).map((edge) => graph.requireNode(edge.from.node));
 
   let x = 0;
@@ -298,7 +298,7 @@ export function placeDownstream(graph: Graph, nodeId: NodeId): void {
     .map((node) => ({
       x: node.position.x,
       y: node.position.y,
-      h: nodeHeight(graph.registry.require(node.type)),
+      h: nodeHeight(graph.schemaOf(node.id)),
     }));
 
   while (others.some((other) => overlaps({ x, y, h: height }, other))) {

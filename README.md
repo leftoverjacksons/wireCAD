@@ -39,7 +39,18 @@ is ready, typically around two seconds.
   camera to it, dims everything else and gives you Line, Rectangle and Circle.
   Points snap to a 1 mm grid. A polyline closes by clicking its first point or
   pressing Enter; Escape cancels and creates nothing. Finishing emits a profile
-  node already wired to its plane.
+  node already wired to its plane. Drawing four corners that happen to make a
+  box gives you a Rectangle with Width and Height rather than four anonymous
+  points.
+- **Profiles are one node** — however complicated the shape, it is a single node
+  carrying its own dimensions, named and listed: `P1 U`, `P1 V` and so on, one
+  pair per corner, growing with the drawing. Each is an ordinary port, so it can
+  be typed in, driven from a parameter node, or read by something else, and each
+  defaults to the value it was drawn at, so a profile nobody has touched is
+  exactly what was drawn.
+- **Reading the graph** — every node says what it makes: Body, Profile, Plane,
+  Edges or Value, on a badge in its header, with an accent bar and port colours
+  from the same palette.
 - **Undo** — Ctrl+Z and Ctrl+Shift+Z, or the toolbar buttons. A slider drag is
   one undo step.
 - **Files** — *New*, *Open* (Ctrl+O) and *Save* (Ctrl+S) work on a `.json`
@@ -97,6 +108,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:browser` | Drives a running dev server in Chromium and reports solve statistics |
 | `npm run verify:shell` | Builds fillet-and-shell bodies in Chromium and checks the hollowed volumes |
 | `npm run verify:edges` | Checks per-edge fillet selection, and that a selection survives a resize |
+| `npm run verify:profile` | Checks a profile's named dimensions drive its geometry, typed or wired |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -208,6 +220,23 @@ checks the volume against what those four rounded corners should leave.
 The selection lives in its own `Edge Selection` node, so the set is visible in
 the graph and can be rewired into another operation later rather than being
 buried in the fillet.
+
+## Ports a node grows for itself
+
+Most node types have a fixed set of ports. A profile cannot: a drawn shape needs
+one dimension per corner, and only the node knows how many corners it has. So a
+type may declare `expand`, a pure function from the node's own stored inputs to
+the extra ports it needs, and `graph.schemaOf(nodeId)` — not the registry — is
+what everything reads ports from. The registry still only knows the type's fixed
+ports; the node knows the rest.
+
+Two consequences worth stating. A grown port's default is the value the shape
+was drawn at, so overriding one corner is a genuine override rather than a
+restatement of the whole shape, and the stored point list stays the single
+record of what was drawn. And because the inputs decide which ports exist,
+loading a document has to expand before it validates: a saved file carries
+literals for grown ports, and rejecting them would have made any edited profile
+unopenable.
 
 ## Known gaps
 

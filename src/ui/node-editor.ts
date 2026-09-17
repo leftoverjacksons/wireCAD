@@ -1,6 +1,5 @@
 import type { NodeStatus } from '../core/evaluator.js';
 import type { Graph, GraphChange } from '../core/graph.js';
-import type { PortLookup } from '../core/registry.js';
 import type { Edge, EdgeId, NodeId, NodeSchema, PortRef, Value } from '../core/types.js';
 import { isPlane } from '../core/types.js';
 import type { NodeReport } from '../worker/protocol.js';
@@ -14,6 +13,8 @@ import {
   outputPortY,
   portCentreY,
   portRows,
+  visibleInputs,
+  visibleOutputs,
 } from './metrics.js';
 
 export interface NodeEditorCallbacks {
@@ -64,7 +65,6 @@ export class NodeEditor {
   private readonly canvas: HTMLElement;
   private readonly wireLayer: SVGSVGElement;
   private readonly hud: HTMLElement;
-  private readonly registry: PortLookup;
 
   private readonly views = new Map<NodeId, NodeView>();
   private readonly wires = new Map<EdgeId, { visible: SVGPathElement; hit: SVGPathElement }>();
@@ -83,7 +83,6 @@ export class NodeEditor {
     private readonly graph: Graph,
     private readonly callbacks: NodeEditorCallbacks,
   ) {
-    this.registry = graph.registry;
     this.container.classList.add('editor');
     this.container.tabIndex = 0;
 
@@ -156,7 +155,7 @@ export class NodeEditor {
 
   private createNodeView(nodeId: NodeId): void {
     const node = this.graph.requireNode(nodeId);
-    const schema = this.registry.require(node.type);
+    const schema = this.graph.schemaOf(nodeId);
 
     const element = document.createElement('div');
     element.className = 'node';
@@ -223,7 +222,7 @@ export class NodeEditor {
       rowEl.style.top = `${HEADER_HEIGHT + row * ROW_HEIGHT}px`;
       rowEl.style.height = `${ROW_HEIGHT}px`;
 
-      const input = schema.inputs[row];
+      const input = visibleInputs(schema)[row];
       if (input !== undefined) {
         const dot = document.createElement('div');
         dot.className = `port port-in type-${input.type}`;
@@ -271,7 +270,7 @@ export class NodeEditor {
         }
       }
 
-      const output = schema.outputs[row];
+      const output = visibleOutputs(schema)[row];
       if (output !== undefined) {
         const dot = document.createElement('div');
         dot.className = `port port-out type-${output.type}`;
@@ -322,8 +321,8 @@ export class NodeEditor {
 
     const source = this.graph.requireNode(edge.from.node);
     const target = this.graph.requireNode(edge.to.node);
-    const sourceSchema = this.registry.require(source.type);
-    const targetSchema = this.registry.require(target.type);
+    const sourceSchema = this.graph.schemaOf(edge.from.node);
+    const targetSchema = this.graph.schemaOf(edge.to.node);
 
     const path = wirePath(
       source.position.x + NODE_WIDTH,
@@ -448,7 +447,7 @@ export class NodeEditor {
     if (this.drag?.kind !== 'wire' || this.ghost === null) return;
 
     const node = this.graph.requireNode(this.drag.origin.node);
-    const schema = this.registry.require(node.type);
+    const schema = this.graph.schemaOf(this.drag.origin.node);
     const cursor = this.toGraphPoint(event);
 
     if (this.drag.fromOutput) {
@@ -638,7 +637,7 @@ export class NodeEditor {
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
 
-    const schema = this.registry.require(node.type);
+    const schema = this.graph.schemaOf(nodeId);
     const left = this.pan.x + node.position.x * this.zoom;
     const top = this.pan.y + node.position.y * this.zoom;
     const right = left + NODE_WIDTH * this.zoom;
@@ -664,7 +663,7 @@ export class NodeEditor {
     let maxY = -Infinity;
 
     for (const node of nodes) {
-      const schema = this.registry.require(node.type);
+      const schema = this.graph.schemaOf(node.id);
       minX = Math.min(minX, node.position.x);
       minY = Math.min(minY, node.position.y);
       maxX = Math.max(maxX, node.position.x + NODE_WIDTH);

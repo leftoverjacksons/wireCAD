@@ -41,12 +41,13 @@ export class Evaluator {
     for (const nodeId of order) {
       const node = graph.requireNode(nodeId);
       const definition = this.registry.require(node.type);
+      const schema = graph.schemaOf(nodeId);
 
       const inputs: Record<PortId, Value> = {};
       const hashParts: string[] = [node.type];
       let blocked = false;
 
-      for (const port of definition.inputs) {
+      for (const port of schema.inputs) {
         const edge = graph.incomingEdge(nodeId, port.id);
         if (edge === undefined) {
           const literal = graph.inputValue(nodeId, port.id);

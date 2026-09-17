@@ -516,5 +516,6 @@ if (import.meta.env.DEV) {
     solves: () => solveCount,
     solve: () => requestSolve(),
     visible: () => lastVisible,
+    pending: () => inFlight,
   });
 }

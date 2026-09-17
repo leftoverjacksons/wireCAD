@@ -1,4 +1,4 @@
-import type { NodeDefinition, NodeSchema } from '../core/types.js';
+import type { NodeDefinition, NodeSchema, PortDef } from '../core/types.js';
 import { circleFace, polygonFace, rectangleFace } from '../geometry/build.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { geometry, geometryOf, kernelCall, shapeOf } from '../geometry/kernel.js';
@@ -32,17 +32,44 @@ export const circleSchema: NodeSchema = {
   outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
 };
 
-/** A drawn sketch: a closed polygon as a flat list of U/V pairs on its plane. */
+/**
+ * A drawn sketch. `points` holds the shape as drawn and is what decides how many
+ * corners there are; each corner then gets its own named, wireable pair of
+ * dimensions that default to the drawn value. Editing one, or driving it from a
+ * parameter, overrides that corner without disturbing the rest.
+ */
 export const polygonSchema: NodeSchema = {
   type: 'sketch.polygon',
-  label: 'Polygon',
+  label: 'Profile',
   category: 'Sketch',
   inputs: [
     { id: 'plane', label: 'Plane', type: 'plane', default: WORLD_XY },
-    { id: 'points', label: 'Points', type: 'list', default: [] },
+    { id: 'points', label: 'Points', type: 'list', default: [], hidden: true },
   ],
   outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
+  expand(inputs) {
+    const drawn = Array.isArray(inputs.points) ? inputs.points : [];
+    const corners = Math.floor(drawn.length / 2);
+
+    const dimensions: PortDef[] = [];
+    for (let corner = 0; corner < corners; corner++) {
+      const u = drawn[corner * 2];
+      const v = drawn[corner * 2 + 1];
+      dimensions.push(
+        { id: cornerPort(corner, 'u'), label: `P${corner + 1} U`, type: 'number', default: u ?? 0 },
+        { id: cornerPort(corner, 'v'), label: `P${corner + 1} V`, type: 'number', default: v ?? 0 },
+      );
+    }
+
+    // Echoed as outputs too, so one corner can drive something else without a
+    // separate parameter node standing in the middle.
+    return { inputs: dimensions, outputs: dimensions };
+  },
 };
+
+export function cornerPort(corner: number, axis: 'u' | 'v'): string {
+  return `p${corner + 1}${axis}`;
+}
 
 export const extrudeSchema: NodeSchema = {
   type: 'solid.extrude',
@@ -131,14 +158,24 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       if (raw.length < 6) throw new Error('A profile needs at least three points');
       if (raw.length % 2 !== 0) throw new Error('Points must be pairs of U and V');
 
-      const uv = raw.map((value, index) => {
-        if (typeof value !== 'number' || Number.isNaN(value)) {
-          throw new Error(`Point value ${index} is not a number`);
+      // Each corner comes from its own port, which the schema defaulted to the
+      // drawn value, so an untouched profile is exactly what was drawn.
+      const corners = raw.length / 2;
+      const uv: number[] = [];
+      const outputs: Record<string, number> = {};
+      for (let corner = 0; corner < corners; corner++) {
+        for (const axis of ['u', 'v'] as const) {
+          const portId = cornerPort(corner, axis);
+          const value = inputs[portId];
+          if (typeof value !== 'number' || Number.isNaN(value)) {
+            throw new Error(`P${corner + 1} ${axis.toUpperCase()} is not a number`);
+          }
+          uv.push(value);
+          outputs[portId] = value;
         }
-        return value;
-      });
+      }
 
-      return { profile: geometry(polygonFace(oc, plane, uv), plane) };
+      return { ...outputs, profile: geometry(polygonFace(oc, plane, uv), plane) };
     },
   };
 

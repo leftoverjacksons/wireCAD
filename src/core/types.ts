@@ -50,6 +50,8 @@ export interface PortDef {
   readonly label: string;
   readonly type: DataType;
   readonly default?: Value;
+  /** Stored and evaluated as usual, but not drawn as a row on the node. */
+  readonly hidden?: boolean;
 }
 
 /** Ports and presentation. The main thread knows this much without a kernel. */
@@ -59,6 +61,15 @@ export interface NodeSchema {
   readonly category: string;
   readonly inputs: readonly PortDef[];
   readonly outputs: readonly PortDef[];
+  /**
+   * Ports a node grows for itself, from what it is holding. A profile drawn with
+   * six points needs six named dimensions, and only the node knows that, so the
+   * type declares how to work them out rather than listing them.
+   */
+  readonly expand?: (inputs: Record<PortId, Value>) => {
+    inputs?: readonly PortDef[];
+    outputs?: readonly PortDef[];
+  };
 }
 
 export interface NodeDefinition extends NodeSchema {

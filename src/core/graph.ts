@@ -1,5 +1,15 @@
 import type { PortLookup } from './registry.js';
-import type { Edge, EdgeId, GraphNode, NodeId, PortId, PortRef, Value } from './types.js';
+import type {
+  Edge,
+  EdgeId,
+  GraphNode,
+  NodeId,
+  NodeSchema,
+  PortDef,
+  PortId,
+  PortRef,
+  Value,
+} from './types.js';
 import { typesCompatible } from './types.js';
 
 export type GraphChange =
@@ -64,9 +74,16 @@ export class Graph {
     const id = options.id ?? this.freshId('n');
     if (this.nodes.has(id)) throw new Error(`Duplicate node id: ${id}`);
 
+    // Ports a node grows depend on what it is holding, so the values being set
+    // are also what decides which ports exist. A saved document carries literals
+    // for grown ports, and reloading it has to accept them.
+    const provided = options.inputs ?? {};
+    const grown = definition.expand?.(provided).inputs ?? [];
+    const known = new Set([...definition.inputs, ...grown].map((port) => port.id));
+
     const inputs: Record<PortId, Value> = {};
-    for (const [portId, value] of Object.entries(options.inputs ?? {})) {
-      if (!definition.inputs.some((p) => p.id === portId)) {
+    for (const [portId, value] of Object.entries(provided)) {
+      if (!known.has(portId)) {
         throw new Error(`Node type ${type} has no input port "${portId}"`);
       }
       inputs[portId] = value;
@@ -123,9 +140,34 @@ export class Graph {
     return this.nodes.size;
   }
 
+  /**
+   * The node's ports, including any it grew for itself. Everything that reads
+   * ports goes through here; the registry only knows the type's fixed ones.
+   */
+  schemaOf(nodeId: NodeId): NodeSchema {
+    const node = this.requireNode(nodeId);
+    const base = this.registry.require(node.type);
+    if (base.expand === undefined) return base;
+
+    const grown = base.expand(node.inputs);
+    return {
+      ...base,
+      inputs: [...base.inputs, ...(grown.inputs ?? [])],
+      outputs: [...base.outputs, ...(grown.outputs ?? [])],
+    };
+  }
+
+  inputPortOf(nodeId: NodeId, portId: PortId): PortDef | undefined {
+    return this.schemaOf(nodeId).inputs.find((port) => port.id === portId);
+  }
+
+  outputPortOf(nodeId: NodeId, portId: PortId): PortDef | undefined {
+    return this.schemaOf(nodeId).outputs.find((port) => port.id === portId);
+  }
+
   setInput(nodeId: NodeId, portId: PortId, value: Value): void {
     const node = this.requireNode(nodeId);
-    if (this.registry.inputPort(node.type, portId) === undefined) {
+    if (this.inputPortOf(nodeId, portId) === undefined) {
       throw new Error(`Node type ${node.type} has no input port "${portId}"`);
     }
     node.inputs[portId] = value;
@@ -137,7 +179,7 @@ export class Graph {
     const node = this.requireNode(nodeId);
     const literal = node.inputs[portId];
     if (literal !== undefined) return literal;
-    const port = this.registry.inputPort(node.type, portId);
+    const port = this.inputPortOf(nodeId, portId);
     return port?.default ?? null;
   }
 
@@ -166,11 +208,11 @@ export class Graph {
     const target = this.nodes.get(to.node);
     if (target === undefined) return `Unknown node: ${to.node}`;
 
-    const outPort = this.registry.outputPort(source.type, from.port);
+    const outPort = this.outputPortOf(from.node, from.port);
     if (outPort === undefined) {
       return `Node type ${source.type} has no output port "${from.port}"`;
     }
-    const inPort = this.registry.inputPort(target.type, to.port);
+    const inPort = this.inputPortOf(to.node, to.port);
     if (inPort === undefined) {
       return `Node type ${target.type} has no input port "${to.port}"`;
     }

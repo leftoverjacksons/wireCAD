@@ -160,7 +160,7 @@ function exportShapes(request: ExportRequest): void {
     if (nodeResult === undefined) continue;
     if (nodeResult.status === 'error' || nodeResult.status === 'skipped') continue;
 
-    for (const port of registry.require(graph.requireNode(nodeId).type).outputs) {
+    for (const port of graph.schemaOf(nodeId).outputs) {
       if (port.type !== 'geometry') continue;
       const value = nodeResult.outputs[port.id];
       if (value !== undefined && isGeometry(value)) shapes.push(value.handle as Shape);
