@@ -148,6 +148,13 @@ export const tabs: readonly FeatureTab[] = [
             numbers: [{ id: 'radius', label: 'Radius', value: 2 }],
           },
           {
+            id: 'chamfer',
+            label: 'Chamfer',
+            nodeType: 'solid.chamfer',
+            operands: [{ id: 'solid', label: 'Edges', type: 'edges' }],
+            numbers: [{ id: 'distance', label: 'Distance', value: 2 }],
+          },
+          {
             id: 'shell',
             label: 'Shell',
             nodeType: 'solid.shell',

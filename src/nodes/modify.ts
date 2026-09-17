@@ -18,6 +18,18 @@ export const filletSchema: NodeSchema = {
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
 };
 
+export const chamferSchema: NodeSchema = {
+  type: 'solid.chamfer',
+  label: 'Chamfer',
+  category: 'Modify',
+  inputs: [
+    { id: 'solid', label: 'Solid', type: 'geometry' },
+    { id: 'edges', label: 'Edges', type: 'edges', default: [] },
+    { id: 'distance', label: 'Distance', type: 'number', default: 2 },
+  ],
+  outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
+};
+
 export const shellSchema: NodeSchema = {
   type: 'solid.shell',
   label: 'Shell',
@@ -33,7 +45,7 @@ export const shellSchema: NodeSchema = {
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
 };
 
-export const modifySchemas: readonly NodeSchema[] = [filletSchema, shellSchema];
+export const modifySchemas: readonly NodeSchema[] = [filletSchema, chamferSchema, shellSchema];
 
 export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
   const SKIN = () => oc.BRepOffset_Mode.BRepOffset_Skin;
@@ -161,35 +173,63 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
     return solid;
   }
 
-  const fillet: NodeDefinition = {
-    ...filletSchema,
-    evaluate(inputs) {
-      const shape = shapeOf(inputs.solid ?? null, 'solid');
-      const radius = asPositive(inputs.radius ?? null, 'radius');
+  /**
+   * Fillet and chamfer differ only in which maker runs; both take one amount per
+   * edge through `Add_2`, and both are driven by the same edge selection.
+   */
+  function edgeFeature(
+    schema: NodeSchema,
+    amountPort: string,
+    makeBuilder: (shape: Shape) => Shape,
+  ): NodeDefinition {
+    return {
+      ...schema,
+      evaluate(inputs) {
+        const shape = shapeOf(inputs.solid ?? null, 'solid');
+        const amount = asPositive(inputs[amountPort] ?? null, amountPort);
 
-      // An empty selection rounds the whole body, which is what a fillet with
-      // nothing picked meant before selections existed.
-      const selection = readEdgeRefs(inputs.edges ?? [], 'edges');
-      const edges =
-        selection.length === 0 ? uniqueEdges(shape) : resolveEdgeRefs(oc, shape, selection);
-      if (edges.length === 0) throw new Error('That shape has no edges to fillet');
-
-      const maker = new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational);
-      for (const edge of edges) maker.Add_2(radius, edge);
-
-      try {
-        kernelCall('Fillet', `a radius of ${radius} mm is too large for these edges`, () =>
-          maker.Build(),
-        );
-        if (!maker.IsDone()) {
-          throw new Error(`Fillet of ${radius} mm does not fit on this shape`);
+        // An empty selection takes every edge, which is what these nodes did
+        // before selections existed.
+        const selection = readEdgeRefs(inputs.edges ?? [], 'edges');
+        const edges =
+          selection.length === 0 ? uniqueEdges(shape) : resolveEdgeRefs(oc, shape, selection);
+        if (edges.length === 0) {
+          throw new Error(`That shape has no edges to ${schema.label.toLowerCase()}`);
         }
-        return { result: geometry(maker.Shape()) };
-      } finally {
-        maker.delete?.();
-      }
-    },
-  };
+
+        const maker = makeBuilder(shape);
+        for (const edge of edges) maker.Add_2(amount, edge);
+
+        try {
+          // An amount that does not fit aborts inside the kernel rather than
+          // reporting, so the guard is what turns it into something readable.
+          const cause = `${amount} mm is too large for ${
+            edges.length === 1 ? 'that edge' : 'these edges'
+          }`;
+          kernelCall(schema.label, cause, () => maker.Build());
+          if (!maker.IsDone()) {
+            throw new Error(`${schema.label} of ${amount} mm does not fit on this shape`);
+          }
+          return { result: geometry(maker.Shape()) };
+        } finally {
+          maker.delete?.();
+        }
+      },
+    };
+  }
+
+  const fillet = edgeFeature(
+    filletSchema,
+    'radius',
+    (shape) =>
+      new oc.BRepFilletAPI_MakeFillet(shape, oc.ChFi3d_FilletShape.ChFi3d_Rational) as Shape,
+  );
+
+  const chamfer = edgeFeature(
+    chamferSchema,
+    'distance',
+    (shape) => new oc.BRepFilletAPI_MakeChamfer(shape) as Shape,
+  );
 
   const shell: NodeDefinition = {
     ...shellSchema,
@@ -269,5 +309,5 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
     },
   };
 
-  return [fillet, shell];
+  return [fillet, chamfer, shell];
 }

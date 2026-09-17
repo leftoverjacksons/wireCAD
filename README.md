@@ -24,8 +24,8 @@ is ready, typically around two seconds.
 
 - **Toolbar** — a **Sketch** tab (Rectangle, Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
-  (Fillet, Shell) and *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each
-  button opens a dialog.
+  (Fillet, Chamfer, Shell) and *Construct* (XY/XZ/YZ datum planes, Offset
+  Plane). Each button opens a dialog.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
@@ -47,11 +47,13 @@ is ready, typically around two seconds.
   storage as you work, so a refresh resumes where you left off rather than
   reopening the starter model. *New* is an ordinary edit, so Ctrl+Z brings the
   previous model back.
-- **Fillet** rounds the edges you pick, at one radius. Press *Fillet*, then click
-  edges in the 3D view — they light up as you hover and turn blue once taken;
-  clicking a picked edge again drops it. Picking nothing and wiring a solid
-  straight into the node still rounds every edge, which is what the node did
-  before selections existed. **Shell** hollows it to
+- **Fillet** rounds the edges you pick, at one radius, and **Chamfer** bevels
+  them at one distance. Press either, then click edges in the 3D view — they
+  light up as you hover and turn blue once taken; clicking a picked edge again
+  drops it. Both read the same Edge Selection node, so a set picked for one can
+  be rewired into the other. Picking nothing and wiring a solid straight into
+  the node still takes every edge, which is what these nodes did before
+  selections existed. **Shell** hollows it to
   a wall thickness, leaving open whichever face you click — the opening is
   stored as the same normal-and-rank reference a face plane uses, so it survives
   the model changing underneath it.
@@ -215,9 +217,11 @@ buried in the fillet.
   rather than an inner loop.
 
 - No sketch constraint solver; sketches are parametric rectangles and circles.
-- One radius per Fillet node. Different radii on different edges means a second
-  Fillet node, rather than a list of radius groups in one dialog.
-- No chamfer, draft, sweep, loft, or patterns yet.
+- One radius per Fillet node and one distance per Chamfer node. Varying the
+  amount across edges means a second node, rather than a list of groups in one
+  dialog. Chamfers are symmetric; there is no two-distance or distance-and-angle
+  form yet.
+- No draft, sweep, loft, or patterns yet.
 - Feature dialogs do not preview: nothing changes until you press Create.
 - The kernel's own failure reasons do not survive this WebAssembly build, so a
   refused operation reports the likely cause rather than what OpenCASCADE said.

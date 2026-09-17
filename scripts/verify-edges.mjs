@@ -192,6 +192,64 @@ if (target === null) {
   if (!madeNodes) process.exitCode = 1;
 }
 
+// Chamfer runs the same selection through a different kernel builder.
+console.log('');
+console.log('chamfer:');
+
+const cham = await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('sketch.rectangle', { id: 'rect', inputs: { width: 60, height: 40 } });
+  graph.addNode('solid.extrude', { id: 'body', inputs: { distance: 20 } });
+  graph.connect({ node: 'rect', port: 'profile' }, { node: 'body', port: 'profile' });
+  await window.__settle();
+
+  const refs = [];
+  for (const e of window.wirecad.viewport.edgesOf('body') ?? []) {
+    if (Math.abs(e.direction.z) < 0.9) continue;
+    refs.push(e.fraction.x, e.fraction.y, e.fraction.z, e.direction.x, e.direction.y, e.direction.z, e.length);
+  }
+  graph.addNode('edge.selection', { id: 'sel', inputs: { refs } });
+  graph.addNode('solid.chamfer', { id: 'cham', inputs: { distance: 3 } });
+  graph.connect({ node: 'body', port: 'solid' }, { node: 'cham', port: 'solid' });
+  graph.connect({ node: 'sel', port: 'edges' }, { node: 'cham', port: 'edges' });
+  await window.__settle();
+
+  const ok = {
+    error: window.wirecad.reports().find((r) => r.nodeId === 'cham')?.error ?? null,
+    volume: (() => {
+      const mesh = window.wirecad.meshes().find((m) => m.nodeId === 'cham');
+      return mesh === undefined ? null : window.__volume(mesh);
+    })(),
+  };
+
+  // A distance no side can accommodate must report, not crash the kernel.
+  graph.setInput('cham', 'distance', 300);
+  await window.__settle();
+  const refused = window.wirecad.reports().find((r) => r.nodeId === 'cham')?.error ?? null;
+  return { ok, refused };
+});
+
+// Each 90-degree corner loses a right triangle of legs d, over the full height.
+const chamferWant = 60 * 40 * 20 - 4 * ((3 * 3) / 2) * 20;
+const chamferOk =
+  cham.ok.error === null && cham.ok.volume !== null && Math.abs(cham.ok.volume - chamferWant) < 1;
+console.log(
+  `${chamferOk ? 'PASS' : 'FAIL'}  4 vertical edges at 3 mm → ${cham.ok.error ?? `${cham.ok.volume?.toFixed(0)} mm3, expected ${chamferWant}`}`,
+);
+if (!chamferOk) process.exitCode = 1;
+
+const refusedOk = cham.refused !== null;
+console.log(`${refusedOk ? 'PASS' : 'FAIL'}  an impossible distance reports → ${cham.refused ?? 'no error raised'}`);
+if (!refusedOk) process.exitCode = 1;
+
+await page.getByRole('button', { name: 'Chamfer', exact: true }).click();
+const chamDialog = await page.locator('.feature-dialog').innerText();
+const chamUi = chamDialog.includes('Chamfer') && chamDialog.includes('Edges') && chamDialog.includes('Distance');
+console.log(`${chamUi ? 'PASS' : 'FAIL'}  Chamfer dialog asks for edges → ${JSON.stringify(chamDialog.split('\n').slice(0, 4))}`);
+if (!chamUi) process.exitCode = 1;
+await page.getByRole('button', { name: 'Cancel' }).click();
+
 // The profile that drove an extrude used to stay on screen, so its outline sat
 // on top of the body's lower edges and swallowed clicks meant for them.
 console.log('');
