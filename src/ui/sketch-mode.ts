@@ -1,6 +1,8 @@
 import type { Graph } from '../core/graph.js';
-import type { NodeId, PlaneValue, Vec3 } from '../core/types.js';
+import type { NodeId, PlaneValue, Value, Vec3 } from '../core/types.js';
 import { pointOnPlane } from '../geometry/plane.js';
+import { inferCircle, inferDimensions, inferSketch } from '../sketch/infer.js';
+import { encodeSketch } from '../sketch/model.js';
 import type { Viewport } from '../viewport.js';
 import type { PlaneChoice } from './features.js';
 import { placeDownstream, resolvePlaneSource } from './features.js';
@@ -279,22 +281,19 @@ export class SketchMode {
     try {
       const planePort = resolvePlaneSource(this.graph, source, created);
 
-      const rectangle = asRectangle(this.points);
-      const node = isCircle
-        ? this.graph.addNode('sketch.circle', {
-            inputs: {
-              radius: distance(first, this.cursor!),
-              u: first.u,
-              v: first.v,
-            },
-          })
-        : rectangle !== null
-          ? // A drawn rectangle is still a rectangle, so give it Width and
-            // Height rather than four anonymous corners.
-            this.graph.addNode('sketch.rectangle', { inputs: rectangle })
-          : this.graph.addNode('sketch.polygon', {
-              inputs: { points: this.points.flatMap((point) => [point.u, point.v]) },
-            });
+      // What was drawn becomes a constrained sketch: the relations the drawing
+      // shows, and the dimensions the shape can honestly be named by.
+      const radius = isCircle ? distance(first, this.cursor!) : 0;
+      const model = isCircle ? inferCircle(first, radius) : inferSketch(this.points);
+      const encoded = encodeSketch(model);
+      const node = this.graph.addNode('sketch.constrained', {
+        inputs: {
+          points: encoded.points,
+          entities: encoded.entities as Value[],
+          constraints: encoded.constraints as Value[],
+          dims: inferDimensions(model, isCircle ? [first] : this.points, radius) as Value[],
+        },
+      });
 
       created.push(node.id);
       this.graph.connect(planePort, { node: node.id, port: 'plane' });
@@ -307,38 +306,4 @@ export class SketchMode {
       this.hintEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
     }
   }
-}
-
-/**
- * Four corners spanning a box, in either winding and from any starting corner,
- * described the way the Rectangle node wants them. Anything else is null.
- */
-export function asRectangle(
-  points: ReadonlyArray<{ u: number; v: number }>,
-): { width: number; height: number; u: number; v: number } | null {
-  if (points.length !== 4) return null;
-
-  const us = points.map((point) => point.u);
-  const vs = points.map((point) => point.v);
-  const minU = Math.min(...us);
-  const maxU = Math.max(...us);
-  const minV = Math.min(...vs);
-  const maxV = Math.max(...vs);
-
-  const width = maxU - minU;
-  const height = maxV - minV;
-  if (width <= 0 || height <= 0) return null;
-
-  // Every corner must sit on a corner of the box, and all four must be used.
-  const tolerance = 1e-6;
-  const seen = new Set<string>();
-  for (const point of points) {
-    const onU = Math.abs(point.u - minU) < tolerance || Math.abs(point.u - maxU) < tolerance;
-    const onV = Math.abs(point.v - minV) < tolerance || Math.abs(point.v - maxV) < tolerance;
-    if (!onU || !onV) return null;
-    seen.add(`${Math.abs(point.u - minU) < tolerance ? 0 : 1}${Math.abs(point.v - minV) < tolerance ? 0 : 1}`);
-  }
-  if (seen.size !== 4) return null;
-
-  return { width, height, u: minU, v: minV };
 }

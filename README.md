@@ -45,9 +45,13 @@ is ready, typically around two seconds.
   camera to it, dims everything else and gives you Line, Rectangle and Circle.
   Points snap to a 1 mm grid. A polyline closes by clicking its first point or
   pressing Enter; Escape cancels and creates nothing. Finishing emits a profile
-  node already wired to its plane. Drawing four corners that happen to make a
-  box gives you a Rectangle with Width and Height rather than four anonymous
-  points.
+  node already wired to its plane, carrying the relations the drawing shows —
+  an edge drawn flat is horizontal, the first point is locked — and the
+  dimensions the shape can honestly be named by. A rectangle comes out with
+  Width and Height and no freedom left. A shape that is not recognisably
+  anything gets its relations and no lengths, because inventing lengths would
+  put contradictions in a sketch nobody asked to over-constrain; it arrives
+  under-constrained, which is what a freshly drawn sketch honestly is.
 - **Profiles are one node** — however complicated the shape, it is a single node
   carrying its own dimensions, named and listed: `P1 U`, `P1 V` and so on, one
   pair per corner, growing with the drawing. Each is an ordinary port, so it can

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mathNodes } from '../nodes/math.js';
 import { polygonSchema, rectangleSchema } from '../nodes/solid.js';
-import { asRectangle } from '../ui/sketch-mode.js';
 import { Graph } from './graph.js';
 import { NodeRegistry } from './registry.js';
 
@@ -76,53 +75,6 @@ describe('profile dimensions', () => {
 
     graph.setInput(node.id, 'points', [0, 0, 1, 0, 1, 1, 0, 1]);
     expect(graph.schemaOf(node.id).inputs).toHaveLength(10);
-  });
-});
-
-describe('recognising a drawn rectangle', () => {
-  it('reads four corners as a width and a height', () => {
-    expect(
-      asRectangle([
-        { u: 2, v: 3 },
-        { u: 12, v: 3 },
-        { u: 12, v: 9 },
-        { u: 2, v: 9 },
-      ]),
-    ).toEqual({ width: 10, height: 6, u: 2, v: 3 });
-  });
-
-  it('does not care which corner the drawing started from', () => {
-    expect(
-      asRectangle([
-        { u: 12, v: 9 },
-        { u: 2, v: 9 },
-        { u: 2, v: 3 },
-        { u: 12, v: 3 },
-      ]),
-    ).toEqual({ width: 10, height: 6, u: 2, v: 3 });
-  });
-
-  it('rejects a quadrilateral that is not a box', () => {
-    expect(
-      asRectangle([
-        { u: 0, v: 0 },
-        { u: 10, v: 0 },
-        { u: 12, v: 6 },
-        { u: 0, v: 6 },
-      ]),
-    ).toBeNull();
-  });
-
-  it('rejects a degenerate box and anything that is not four corners', () => {
-    expect(
-      asRectangle([
-        { u: 0, v: 0 },
-        { u: 0, v: 0 },
-        { u: 0, v: 6 },
-        { u: 0, v: 6 },
-      ]),
-    ).toBeNull();
-    expect(asRectangle([{ u: 0, v: 0 }, { u: 1, v: 0 }, { u: 1, v: 1 }])).toBeNull();
   });
 });
 

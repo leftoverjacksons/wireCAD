@@ -140,6 +140,59 @@ for (const [name, ok, extra] of checks) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
 }
 
+// Now the same thing the way a person gets there: draw a rectangle in sketch
+// mode and check it comes out constrained and dimensioned.
+console.log('');
+console.log('drawing one:');
+
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
+  // Sketch mode needs the plane's value, which only a solve produces.
+  await window.__settle();
+});
+await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
+await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
+await page.getByRole('button', { name: 'Create', exact: true }).click();
+const panel = page.locator('.sketch-panel');
+await panel.getByRole('button', { name: 'Rectangle', exact: true }).click();
+
+const canvas = await page.locator('canvas').first().boundingBox();
+await page.mouse.click(canvas.x + canvas.width * 0.42, canvas.y + canvas.height * 0.42);
+await page.mouse.click(canvas.x + canvas.width * 0.58, canvas.y + canvas.height * 0.56);
+// A rectangle completes on its second corner, so sketch mode has already left.
+await page.locator('.sketch-panel').waitFor({ state: 'hidden', timeout: 10_000 });
+
+const drawn = await page.evaluate(async () => {
+  await window.__settle();
+  const { graph } = window.wirecad;
+  const node = graph.allNodes().find((n) => n.type === 'sketch.constrained');
+  if (node === undefined) return { found: false };
+  const schema = graph.schemaOf(node.id);
+  return {
+    found: true,
+    labels: schema.inputs.filter((p) => p.hidden !== true).map((p) => p.label),
+    error: window.wirecad.reports().find((r) => r.nodeId === node.id)?.error ?? null,
+    relations: (graph.inputValue(node.id, 'constraints') ?? []).map((row) => row[0]),
+  };
+});
+
+const drawChecks = [
+  ['drawing makes a Sketch node', drawn.found, String(drawn.found)],
+  ['it solves                  ', drawn.error === null, drawn.error ?? 'clean'],
+  ['with width and height      ', (drawn.labels ?? []).includes('width') && drawn.labels.includes('height'),
+    (drawn.labels ?? []).join(',')],
+  ['and the relations drawn    ', (drawn.relations ?? []).filter((k) => k === 'horizontal').length === 2 &&
+    (drawn.relations ?? []).filter((k) => k === 'vertical').length === 2,
+    (drawn.relations ?? []).join(',')],
+];
+for (const [name, ok, extra] of drawChecks) {
+  if (!ok) failures += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
+}
+
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();
 if (failures > 0 || pageErrors.length > 0) process.exitCode = 1;
