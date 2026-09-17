@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { annotate, formatLength } from './annotate.js';
+import {
+  annotate,
+  annotateOne,
+  chooseSpan,
+  decodePlaces,
+  encodePlaces,
+  formatLength,
+  placeOf,
+} from './annotate.js';
 import type { Sketch } from './model.js';
 
 const SQUARE: Sketch = {
@@ -85,6 +93,82 @@ describe('annotate', () => {
 
     // Zoomed out, a pixel is worth more millimetres, so the offset grows with it.
     expect(Math.abs(far[0]!.label.v)).toBeCloseTo(Math.abs(near[0]!.label.v) * 4, 6);
+  });
+});
+
+describe('placing a dimension', () => {
+  const from = { u: 0, v: 0 };
+  const to = { u: 40, v: 30 };
+
+  it('reads a placement out to the side of a diagonal as its length', () => {
+    // Straight off the line, perpendicular to it.
+    const { kind } = chooseSpan(from, to, { u: 8, v: 26 });
+    expect(kind).toBe('distance');
+  });
+
+  it('reads one placed above it as the width it covers', () => {
+    const { kind } = chooseSpan(from, to, { u: 20, v: 60 });
+    expect(kind).toBe('horizontalDistance');
+  });
+
+  it('reads one placed beside it as the height it covers', () => {
+    const { kind } = chooseSpan(from, to, { u: 70, v: 15 });
+    expect(kind).toBe('verticalDistance');
+  });
+
+  it('offers nothing but the length of a span already square to an axis', () => {
+    for (const cursor of [{ u: 20, v: 30 }, { u: 60, v: 0 }]) {
+      expect(chooseSpan({ u: 0, v: 0 }, { u: 40, v: 0 }, cursor).kind).toBe('distance');
+    }
+  });
+
+  it('puts the number where the cursor left it', () => {
+    const cursor = { u: 9, v: 44 };
+    const { kind, place } = chooseSpan(from, to, cursor);
+    const sketch = {
+      points: [from, to],
+      entities: [],
+      constraints: [{ kind, a: 0, b: 1, dimension: 'd' } as const],
+    };
+    const drawn = annotateOne(sketch, sketch.constraints[0]!, 0, sketch.points, [], 40, 1, place, {
+      u: 0,
+      v: 0,
+    });
+
+    expect(drawn!.label.u).toBeCloseTo(cursor.u, 6);
+    expect(drawn!.label.v).toBeCloseTo(cursor.v, 6);
+  });
+
+  it('keeps a placement with the geometry as it moves', () => {
+    const sketch = {
+      points: [from, to],
+      entities: [],
+      constraints: [{ kind: 'distance', a: 0, b: 1, dimension: 'd' } as const],
+    };
+    const place = placeOf(sketch, sketch.constraints[0]!, sketch.points, { u: 8, v: 26 })!;
+
+    // The same rule, drawn against points that have since moved bodily sideways.
+    const moved = [
+      { u: 10, v: 10 },
+      { u: 50, v: 40 },
+    ];
+    const drawn = annotateOne(sketch, sketch.constraints[0]!, 0, moved, [], 50, 1, place, {
+      u: 0,
+      v: 0,
+    });
+
+    expect(drawn!.label.u).toBeCloseTo(18, 6);
+    expect(drawn!.label.v).toBeCloseTo(36, 6);
+  });
+
+  it('travels as a flat list and comes back the same', () => {
+    const places = new Map([
+      ['length1', { offset: -12.5, slide: 3 }],
+      ['radius1', { offset: 20, slide: 0.75 }],
+    ]);
+    expect(decodePlaces(encodePlaces(places))).toEqual(places);
+    expect(decodePlaces(['bad', 'worse', 0])).toEqual(new Map());
+    expect(decodePlaces(null)).toEqual(new Map());
   });
 });
 

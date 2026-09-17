@@ -37,6 +37,16 @@ export const constrainedSchema: NodeSchema = {
     { id: 'entities', label: 'Entities', type: 'list', default: [], hidden: true },
     { id: 'constraints', label: 'Constraints', type: 'list', default: [], hidden: true },
     { id: 'dims', label: 'Dimensions', type: 'list', default: [], hidden: true },
+    // Where each dimension was dragged to. Nothing the kernel builds depends on
+    // it, so it is cosmetic and changing it rebuilds nothing.
+    {
+      id: 'places',
+      label: 'Placements',
+      type: 'list',
+      default: [],
+      hidden: true,
+      cosmetic: true,
+    },
   ],
   outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
   expand(inputs) {

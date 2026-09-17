@@ -55,7 +55,9 @@ export class Evaluator {
         if (edge === undefined) {
           const literal = graph.inputValue(nodeId, port.id);
           inputs[port.id] = literal;
-          hashParts.push(`${port.id}=l:${stableStringify(literal)}`);
+          // A cosmetic input says nothing about the result, so it says nothing
+          // about the hash either: moving a dimension is not a rebuild.
+          if (port.cosmetic !== true) hashParts.push(`${port.id}=l:${stableStringify(literal)}`);
           continue;
         }
 

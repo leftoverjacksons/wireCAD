@@ -2,13 +2,23 @@ import type { Graph } from '../core/graph.js';
 import type { NodeId, PlaneValue, Value, Vec3 } from '../core/types.js';
 import { pointOnPlane } from '../geometry/plane.js';
 import { dimensionPort } from '../nodes/constrained.js';
-import type { Annotation } from '../sketch/annotate.js';
-import { annotate } from '../sketch/annotate.js';
+import type { Annotation, Place, SpanKind } from '../sketch/annotate.js';
+import {
+  annotate,
+  annotateOne,
+  chooseSpan,
+  decodePlaces,
+  encodePlaces,
+  formatLength,
+  measureOf,
+  placeOf,
+  placeOfSpan,
+} from '../sketch/annotate.js';
 import type { Draft } from '../sketch/draw.js';
 import { addCircle, addLine, addPoint, addRectangle, removeParts, uniqueName } from '../sketch/draw.js';
 import type { Constraint, Point, Sketch } from '../sketch/model.js';
 import { decodeSketch, dimensionsOf, encodeSketch } from '../sketch/model.js';
-import type { SolveResult } from '../sketch/solver.js';
+import type { Pull, SolveResult } from '../sketch/solver.js';
 import { solveSketch } from '../sketch/solver.js';
 import type { Viewport } from '../viewport.js';
 
@@ -20,6 +30,53 @@ export interface SketchSessionCallbacks {
 
 type Selection = { kind: 'point' | 'entity'; index: number };
 type ToolId = 'select' | 'line' | 'rectangle' | 'circle' | 'point' | 'dimension';
+
+/** The name a dimension goes by while it is still being placed. */
+const PENDING = '\u2026';
+
+/**
+ * A dimension picked out but not yet put anywhere. What it measures can still
+ * change while it is in the air: a second line turns a length into an angle,
+ * and where it is dropped decides whether a diagonal reads as its length or as
+ * one of its two components.
+ */
+interface Placing {
+  constraint: Constraint;
+  /** Null until the cursor has said where it goes, which leaves it automatic. */
+  place: Place | null;
+  value: number;
+  /** What the dimension will be called, before a number is put on the end. */
+  stem: string;
+  /** A kind chosen by hand, which stops the cursor from choosing one. */
+  pinned: SpanKind | null;
+}
+
+/**
+ * A press on the drawing that has not yet decided what it is. Held still it is
+ * a pick; moved it is a drag, of either the geometry or a dimension.
+ */
+interface Grab {
+  hit: Selection | null;
+  /** The dimension under the press, if that is what was taken hold of. */
+  dimension: { name: string; constraint: Constraint } | null;
+  screen: { x: number; y: number };
+  at: Point;
+  moved: boolean;
+  /** The points the drag is carrying, and where each started. */
+  pulls: Array<{ point: number; from: Point }>;
+  /** The field being dragged by its number, which must not take focus. */
+  field: HTMLInputElement | null;
+}
+
+const SPAN_KINDS: Array<{ id: SpanKind; label: string }> = [
+  { id: 'distance', label: 'Aligned' },
+  { id: 'horizontalDistance', label: 'Horizontal' },
+  { id: 'verticalDistance', label: 'Vertical' },
+];
+
+function isSpanKind(kind: Constraint['kind']): kind is SpanKind {
+  return kind === 'distance' || kind === 'horizontalDistance' || kind === 'verticalDistance';
+}
 
 interface DrawTool {
   id: ToolId;
@@ -36,7 +93,11 @@ interface Relation {
 }
 
 const DRAW_TOOLS: DrawTool[] = [
-  { id: 'select', label: 'Select', hint: 'Click what you want to constrain or dimension.' },
+  {
+    id: 'select',
+    label: 'Select',
+    hint: 'Click what you want to constrain or dimension. Drag it to move it, as far as its rules allow.',
+  },
   {
     id: 'line',
     label: 'Line',
@@ -48,7 +109,7 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'dimension',
     label: 'Dimension',
-    hint: 'Click a line, a circle, or two points. Click a second line for an angle, or empty space to settle a length. Then type the number.',
+    hint: 'Click a line, a circle, or two points, then move to place the dimension and click. Click a second line instead for an angle. Then type the number.',
   },
 ];
 
@@ -57,6 +118,8 @@ const CIRCLE_SEGMENTS = 48;
 const PICK_SLACK = 10;
 /** Drawn positions land on this grid, in millimetres, so straight reads straight. */
 const GRID = 1;
+/** How far a press has to travel, in pixels, before it is a drag and not a pick. */
+const DRAG_SLACK = 4;
 
 function isLine(sketch: Sketch, index: number): boolean {
   return sketch.entities[index]?.kind === 'line';
@@ -186,10 +249,23 @@ export class SketchSession {
   /** The numbers drawn on the sketch, one field per dimension. */
   private readonly labelLayer: HTMLElement;
   private readonly labels = new Map<string, HTMLInputElement>();
+  /** The number of the dimension being placed, which has no field of its own yet. */
+  private readonly previewLabel: HTMLElement;
   private annotations: Annotation[] = [];
+  private preview: Annotation | null = null;
   private releaseCamera: (() => void) | null = null;
   /** A dimension just made, whose number should be waiting to be typed over. */
   private pendingLabel: string | null = null;
+
+  /** Where each dimension was dragged to, by name. */
+  private places = new Map<string, Place>();
+  /** The dimension tool's own panel, and the state behind it. */
+  private readonly dialogue: HTMLElement;
+  private readonly dialogueStep: HTMLElement;
+  private readonly dialogueValue: HTMLElement;
+  private readonly kindButtons = new Map<SpanKind, HTMLButtonElement>();
+  private placing: Placing | null = null;
+  private grab: Grab | null = null;
 
   private nodeId: NodeId | null = null;
   private plane: PlaneValue | null = null;
@@ -258,6 +334,39 @@ export class SketchSession {
     remove.addEventListener('click', () => this.deletePicked());
     relations.row.append(remove);
 
+    this.dialogue = document.createElement('div');
+    this.dialogue.className = 'sketch-dialogue';
+    this.dialogue.hidden = true;
+
+    const dialogueTitle = document.createElement('div');
+    dialogueTitle.className = 'sketch-group-label';
+    dialogueTitle.textContent = 'Dimension';
+
+    this.dialogueStep = document.createElement('div');
+    this.dialogueStep.className = 'sketch-dialogue-step';
+
+    const kinds = document.createElement('div');
+    kinds.className = 'sketch-tools';
+    for (const kind of SPAN_KINDS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'tool-button';
+      button.textContent = kind.label;
+      button.addEventListener('click', () => this.pinKind(kind.id));
+      this.kindButtons.set(kind.id, button);
+      kinds.append(button);
+    }
+
+    this.dialogueValue = document.createElement('div');
+    this.dialogueValue.className = 'sketch-dialogue-value';
+
+    this.dialogue.append(dialogueTitle, this.dialogueStep, kinds, this.dialogueValue);
+
+    this.previewLabel = document.createElement('div');
+    this.previewLabel.className = 'sketch-label sketch-label-preview';
+    this.previewLabel.hidden = true;
+    this.labelLayer.append(this.previewLabel);
+
     this.hintEl = document.createElement('div');
     this.hintEl.className = 'sketch-hint';
 
@@ -273,10 +382,20 @@ export class SketchSession {
     done.addEventListener('click', () => this.exit());
     actions.append(done);
 
-    this.panel.append(heading, draw.el, relations.el, this.hintEl, this.listEl, actions);
+    this.panel.append(
+      heading,
+      draw.el,
+      relations.el,
+      this.dialogue,
+      this.hintEl,
+      this.listEl,
+      actions,
+    );
 
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
+    this.onDragMove = this.onDragMove.bind(this);
+    this.onDragUp = this.onDragUp.bind(this);
     this.onKeyDown = this.onKeyDown.bind(this);
   }
 
@@ -325,11 +444,14 @@ export class SketchSession {
     }
 
     this.draft = { sketch, dimensions };
+    this.places = decodePlaces(node.inputs.places);
     this.nodeId = nodeId;
     this.plane = plane;
     this.picked = [];
     this.chain = [];
     this.cursor = null;
+    this.placing = null;
+    this.endGrab();
 
     this.panel.hidden = false;
     this.labelLayer.hidden = false;
@@ -363,19 +485,24 @@ export class SketchSession {
     this.viewport.canvas.removeEventListener('pointermove', this.onPointerMove);
     document.removeEventListener('keydown', this.onKeyDown);
 
+    this.endGrab();
     this.nodeId = null;
     this.plane = null;
     this.draft = null;
     this.picked = [];
     this.chain = [];
     this.result = null;
+    this.placing = null;
+    this.places = new Map();
 
     this.releaseCamera?.();
     this.releaseCamera = null;
     this.labelLayer.hidden = true;
-    this.labelLayer.replaceChildren();
+    for (const field of this.labels.values()) field.parentElement?.remove();
     this.labels.clear();
+    this.previewLabel.hidden = true;
     this.annotations = [];
+    this.preview = null;
 
     this.panel.hidden = true;
     this.viewport.clearSketchOverlay();
@@ -445,6 +572,7 @@ export class SketchSession {
     this.graph.setInput(nodeId, 'entities', encoded.entities as Value[]);
     this.graph.setInput(nodeId, 'constraints', encoded.constraints as Value[]);
     this.graph.setInput(nodeId, 'dims', dims as Value[]);
+    this.graph.setInput(nodeId, 'places', encodePlaces(this.places) as Value[]);
     for (const [name, value] of draft.dimensions) {
       this.graph.setInput(nodeId, dimensionPort(name), value);
     }
@@ -455,19 +583,19 @@ export class SketchSession {
   // --------------------------------------------------------------- tools
 
   private setTool(tool: ToolId): void {
-    // The dimension tool keeps whatever is already picked: pressing it with a
-    // line selected is the short way to dimension that line.
-    if (tool === 'dimension' && this.picked.length > 0 && this.applyDimension(true)) {
-      this.tool = tool;
-      for (const [id, button] of this.toolButtons) button.classList.toggle('is-active', id === tool);
-      this.hintEl.textContent = DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '';
-      return;
-    }
-
     this.tool = tool;
     this.chain = [];
-    this.cursor = null;
+    this.placing = null;
     if (tool !== 'select' && tool !== 'dimension') this.picked = [];
+
+    // The dimension tool keeps whatever is already picked: pressing it with a
+    // line selected is the short way to dimension that line, and what it picked
+    // up goes straight to being placed.
+    // Placed automatically to begin with: the last place the cursor went was a
+    // pick, which says nothing about where the dimension should sit. Moving the
+    // cursor is what says that.
+    this.cursor = null;
+    if (tool === 'dimension') this.placing = this.buildPlacing(null, null);
 
     for (const [id, button] of this.toolButtons) button.classList.toggle('is-active', id === tool);
     this.hintEl.textContent = DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '';
@@ -487,77 +615,165 @@ export class SketchSession {
     this.tryAdding(relation.apply(this.picked, draft.sketch), relation.label);
   }
 
+  // ----------------------------------------------------------- dimensions
+
   /**
-   * Turns what is picked into a dimension, if it says enough to be one.
+   * What the current picks would measure, and where it would sit.
    *
-   * Returns false when the selection is not yet a dimension — one line could
-   * still become an angle if another is picked — so the tool knows to wait
-   * rather than complain.
+   * Rebuilt on every movement of the cursor while a dimension is in the air,
+   * because until it is dropped the cursor is still deciding what it measures:
+   * a diagonal put out to its side reads as its length, put above it as the
+   * width it covers, and put beside it as the height.
    */
-  private applyDimension(quiet = false): boolean {
+  private buildPlacing(at: Point | null, pinned: SpanKind | null): Placing | null {
     const draft = this.draft;
-    if (draft === null || this.result === null) return false;
+    const solved = this.result;
+    if (draft === null || solved === null) return null;
 
     const sketch = draft.sketch;
     const chosenLines = lines(this.picked);
     const chosenPoints = points(this.picked);
-    const solved = this.result.points;
 
-    let constraint: Constraint | null = null;
-    let value = 0;
-
-    if (chosenLines.length === 1 && chosenPoints.length === 0) {
-      const entity = sketch.entities[chosenLines[0]!]!;
-      if (entity.kind === 'circle') {
-        constraint = {
-          kind: 'radius',
-          circle: chosenLines[0]!,
-          dimension: uniqueName(draft.dimensions, 'radius'),
-        };
-        value = this.result.radii[chosenLines[0]!]!;
-      } else {
-        constraint = {
-          kind: 'distance',
-          a: entity.a,
-          b: entity.b,
-          dimension: uniqueName(draft.dimensions, 'length'),
-        };
-        const from = solved[entity.a]!;
-        const to = solved[entity.b]!;
-        value = Math.hypot(to.u - from.u, to.v - from.v);
-      }
-    } else if (chosenPoints.length === 2 && chosenLines.length === 0) {
-      constraint = {
-        kind: 'distance',
-        a: chosenPoints[0]!,
-        b: chosenPoints[1]!,
-        dimension: uniqueName(draft.dimensions, 'distance'),
-      };
-      const from = solved[chosenPoints[0]!]!;
-      const to = solved[chosenPoints[1]!]!;
-      value = Math.hypot(to.u - from.u, to.v - from.v);
-    } else if (chosenLines.length === 2 && chosenLines.every((i) => isLine(sketch, i))) {
-      constraint = {
+    if (chosenLines.length === 2 && chosenLines.every((index) => isLine(sketch, index))) {
+      const constraint: Constraint = {
         kind: 'angle',
         a: chosenLines[0]!,
         b: chosenLines[1]!,
-        dimension: uniqueName(draft.dimensions, 'angle'),
+        dimension: PENDING,
       };
-      value = this.angleBetween(chosenLines[0]!, chosenLines[1]!);
+      return {
+        constraint,
+        place: at === null ? null : placeOf(sketch, constraint, solved.points, at),
+        value: this.angleBetween(chosenLines[0]!, chosenLines[1]!),
+        stem: 'angle',
+        pinned: null,
+      };
     }
 
-    if (constraint === null) {
-      if (!quiet) {
-        this.hintEl.textContent =
-          'Dimension: pick a line, a circle, two points, or two lines for an angle.';
+    if (chosenLines.length === 1 && chosenPoints.length === 0 && isCircle(sketch, chosenLines[0]!)) {
+      const constraint: Constraint = {
+        kind: 'radius',
+        circle: chosenLines[0]!,
+        dimension: PENDING,
+      };
+      return {
+        constraint,
+        place: at === null ? null : placeOf(sketch, constraint, solved.points, at),
+        value: solved.radii[chosenLines[0]!]!,
+        stem: 'radius',
+        pinned: null,
+      };
+    }
+
+    let a: number;
+    let b: number;
+    let stem: string;
+    if (chosenLines.length === 1 && chosenPoints.length === 0 && isLine(sketch, chosenLines[0]!)) {
+      const entity = sketch.entities[chosenLines[0]!]!;
+      if (entity.kind !== 'line') return null;
+      a = entity.a;
+      b = entity.b;
+      stem = 'length';
+    } else if (chosenPoints.length === 2 && chosenLines.length === 0) {
+      a = chosenPoints[0]!;
+      b = chosenPoints[1]!;
+      stem = 'distance';
+    } else {
+      return null;
+    }
+
+    let from = solved.points[a]!;
+    let to = solved.points[b]!;
+    const kind: SpanKind =
+      pinned ?? (at === null ? 'distance' : chooseSpan(from, to, at).kind);
+
+    // A component is measured with its sign, so the two ends are put in the
+    // order that makes it positive. Written the other way round the number
+    // would be the negative of what it reads, and applying it would turn the
+    // geometry back to front rather than resize it.
+    const backwards =
+      (kind === 'horizontalDistance' && to.u < from.u) ||
+      (kind === 'verticalDistance' && to.v < from.v);
+    if (backwards) {
+      [a, b] = [b, a];
+      [from, to] = [to, from];
+    }
+
+    return {
+      constraint: { kind, a, b, dimension: PENDING },
+      place: at === null ? null : placeOfSpan(kind, from, to, at),
+      value: measureOf(kind, from, to),
+      stem:
+        kind === 'horizontalDistance' ? 'width' : kind === 'verticalDistance' ? 'height' : stem,
+      pinned,
+    };
+  }
+
+  /** One click of the dimension tool: picking what to measure, then placing it. */
+  private dimensionClick(at: Point): void {
+    const draft = this.draft;
+    if (draft === null) return;
+    const sketch = draft.sketch;
+    const hit = this.nearest(at, this.slack());
+
+    if (this.placing !== null) {
+      // A second line turns a length into an angle, which is the one click that
+      // is not a placement.
+      const already = this.picked;
+      const only = already.length === 1 ? already[0] : undefined;
+      if (
+        hit !== null &&
+        hit.kind === 'entity' &&
+        isLine(sketch, hit.index) &&
+        only !== undefined &&
+        only.kind === 'entity' &&
+        isLine(sketch, only.index) &&
+        hit.index !== only.index
+      ) {
+        this.picked = [...already, hit];
+        this.placing = this.buildPlacing(at, null);
+        this.render();
+        return;
       }
-      return false;
+
+      this.commitDimension();
+      return;
     }
 
-    const name = (constraint as { dimension: string }).dimension;
-    draft.dimensions.set(name, value);
+    if (hit === null) {
+      this.picked = [];
+      this.render();
+      return;
+    }
+
+    const already = this.picked.findIndex(
+      (entry) => entry.kind === hit.kind && entry.index === hit.index,
+    );
+    if (already >= 0) this.picked.splice(already, 1);
+    else this.picked.push(hit);
+
+    this.placing = this.buildPlacing(at, null);
+    this.render();
+  }
+
+  /** Puts the dimension in the air where it is, and asks for its number. */
+  private commitDimension(): boolean {
+    const pending = this.placing;
+    const draft = this.draft;
+    if (pending === null || draft === null) return false;
+
+    const name = uniqueName(draft.dimensions, pending.stem);
+    const constraint = { ...pending.constraint, dimension: name } as Constraint;
+
+    this.placing = null;
+    draft.dimensions.set(name, pending.value);
+    if (pending.place !== null) this.places.set(name, pending.place);
+
     if (!this.tryAdding([constraint], 'Dimension')) {
       draft.dimensions.delete(name);
+      this.places.delete(name);
+      this.picked = [];
+      this.render();
       return false;
     }
 
@@ -566,6 +782,13 @@ export class SketchSession {
     this.pendingLabel = name;
     this.render();
     return true;
+  }
+
+  /** Says which of the three a span means, instead of letting the cursor say. */
+  private pinKind(kind: SpanKind): void {
+    if (this.placing === null || !isSpanKind(this.placing.constraint.kind)) return;
+    this.placing = this.buildPlacing(this.cursor, kind);
+    this.render();
   }
 
   private angleBetween(a: number, b: number): number {
@@ -639,6 +862,9 @@ export class SketchSession {
     this.callbacks.onBeforeChange();
     this.sync();
     removeParts(draft, entities, [...loose]);
+    for (const name of this.places.keys()) {
+      if (!draft.dimensions.has(name)) this.places.delete(name);
+    }
     this.picked = [];
     this.chain = [];
     this.resolve();
@@ -655,7 +881,10 @@ export class SketchSession {
       const stillUsed = draft.sketch.constraints.some(
         (other) => 'dimension' in other && other.dimension === removed.dimension,
       );
-      if (!stillUsed) draft.dimensions.delete(removed.dimension);
+      if (!stillUsed) {
+        draft.dimensions.delete(removed.dimension);
+        this.places.delete(removed.dimension);
+      }
     }
 
     this.callbacks.onBeforeChange();
@@ -751,7 +980,14 @@ export class SketchSession {
 
   private onPointerMove(event: PointerEvent): void {
     if (this.tool === 'select') return;
+
     this.cursor = this.snapped(event.clientX, event.clientY);
+    if (this.tool === 'dimension') {
+      if (this.placing === null) return;
+      this.placing = this.buildPlacing(this.cursor, this.placing.pinned);
+      this.render();
+      return;
+    }
     this.renderPreview();
   }
 
@@ -762,20 +998,154 @@ export class SketchSession {
     const at = this.snapped(event.clientX, event.clientY);
     if (at === null) return;
     event.preventDefault();
+    this.cursor = at;
 
-    if (this.tool !== 'select' && this.tool !== 'dimension') {
+    if (this.tool === 'dimension') {
+      this.dimensionClick(at);
+      return;
+    }
+
+    if (this.tool !== 'select') {
       this.draw(at);
       return;
     }
 
+    // Held still, a press picks what is under it. Moved, it drags it: geometry
+    // as far as its rules allow, a dimension to wherever reads best.
     const hit = this.nearest(at, this.slack());
+    const annotation = hit === null ? this.annotationAt(at, this.slack()) : null;
+    this.startGrab(
+      {
+        hit,
+        dimension: annotation,
+        screen: { x: event.clientX, y: event.clientY },
+        at,
+        moved: false,
+        pulls: [],
+        field: null,
+      },
+      event.pointerId,
+    );
+  }
 
-    // Empty space settles a dimension that could have gone on being added to:
-    // one line is a length until a second line makes it an angle.
-    if (hit === null) {
-      if (this.tool === 'dimension' && this.picked.length > 0) {
-        if (this.applyDimension()) return;
+  // ---------------------------------------------------------------- dragging
+
+  private startGrab(grab: Grab, pointerId: number | null): void {
+    this.endGrab();
+    this.grab = grab;
+    if (pointerId !== null) {
+      try {
+        this.viewport.canvas.setPointerCapture(pointerId);
+      } catch {
+        // No capture is a nuisance, not a failure: the document listeners below
+        // still see the drag out.
       }
+    }
+    document.addEventListener('pointermove', this.onDragMove);
+    document.addEventListener('pointerup', this.onDragUp);
+  }
+
+  private endGrab(): void {
+    this.grab = null;
+    document.removeEventListener('pointermove', this.onDragMove);
+    document.removeEventListener('pointerup', this.onDragUp);
+  }
+
+  private onDragMove(event: PointerEvent): void {
+    const grab = this.grab;
+    if (grab === null || this.draft === null) return;
+
+    if (!grab.moved) {
+      const travelled = Math.hypot(event.clientX - grab.screen.x, event.clientY - grab.screen.y);
+      if (travelled < DRAG_SLACK) return;
+      if (!this.beginDrag(grab)) {
+        this.endGrab();
+        return;
+      }
+      grab.moved = true;
+    }
+
+    const at = this.snapped(event.clientX, event.clientY);
+    if (at === null) return;
+
+    if (grab.dimension !== null) {
+      const place = placeOf(
+        this.draft.sketch,
+        grab.dimension.constraint,
+        this.result?.points ?? [],
+        at,
+      );
+      if (place !== null) this.places.set(grab.dimension.name, place);
+      this.render();
+      return;
+    }
+
+    // Everything dragged moves by the same amount, so a line keeps its length
+    // unless something else makes it change.
+    const pull: Pull[] = grab.pulls.map(({ point, from }) => ({
+      point,
+      to: { u: from.u + (at.u - grab.at.u), v: from.v + (at.v - grab.at.v) },
+    }));
+    this.result = solveSketch(this.draft.sketch, this.draft.dimensions, { pull });
+    this.render();
+  }
+
+  private onDragUp(): void {
+    const grab = this.grab;
+    if (grab === null) return;
+    this.endGrab();
+
+    if (!grab.moved) {
+      this.pick(grab.hit);
+      return;
+    }
+
+    if (grab.dimension !== null) {
+      this.commit();
+      this.hintEl.textContent = 'Dimension moved.';
+      return;
+    }
+
+    // What the drag arrived at is where the sketch now is.
+    this.sync();
+    this.after();
+    this.hintEl.textContent = this.result?.solved === true ? 'Moved.' : 'These rules cannot all hold';
+  }
+
+  /** Works out what a press that has started moving is actually dragging. */
+  private beginDrag(grab: Grab): boolean {
+    const draft = this.draft;
+    const solved = this.result;
+    if (draft === null || solved === null) return false;
+
+    if (grab.dimension !== null) {
+      grab.field?.blur();
+      this.callbacks.onBeforeChange();
+      return true;
+    }
+
+    const moving: number[] = [];
+    if (grab.hit?.kind === 'point') moving.push(grab.hit.index);
+    else if (grab.hit?.kind === 'entity') {
+      const entity = draft.sketch.entities[grab.hit.index];
+      if (entity === undefined) return false;
+      if (entity.kind === 'circle') moving.push(entity.centre);
+      else moving.push(entity.a, entity.b);
+    } else {
+      return false;
+    }
+
+    // Dragging works from where the solver has the points, not from where they
+    // were last written down, or the first movement would jump.
+    this.sync();
+    grab.pulls = moving.map((point) => ({ point, from: { ...solved.points[point]! } }));
+    this.callbacks.onBeforeChange();
+    return true;
+  }
+
+  /** A press that never moved: the old, plain business of selecting something. */
+  private pick(hit: Selection | null): void {
+    if (hit === null) {
       this.picked = [];
       this.render();
       return;
@@ -786,25 +1156,31 @@ export class SketchSession {
     );
     if (already >= 0) this.picked.splice(already, 1);
     else this.picked.push(hit);
-
-    // A circle, two points or two lines can only mean one thing, so they are
-    // taken as soon as they are picked. A single line waits, in case the next
-    // click is the second line of an angle.
-    if (this.tool === 'dimension' && this.readyToDimension() && this.applyDimension(true)) return;
-
     this.render();
   }
 
-  /** Whether the picks can only mean one dimension, with nothing to wait for. */
-  private readyToDimension(): boolean {
-    const sketch = this.draft?.sketch;
-    if (sketch === undefined) return false;
+  /** The dimension under a point on the drawing, by its lines or its number. */
+  private annotationAt(at: Point, slack: number): { name: string; constraint: Constraint } | null {
+    const draft = this.draft;
+    if (draft === null) return null;
 
-    const chosenLines = lines(this.picked);
-    const chosenPoints = points(this.picked);
-    if (chosenPoints.length === 2 && chosenLines.length === 0) return true;
-    if (chosenLines.length === 2) return true;
-    return chosenLines.length === 1 && isCircle(sketch, chosenLines[0]!);
+    let best: Annotation | null = null;
+    let bestDistance = slack;
+    for (const entry of this.annotations) {
+      let distance = Math.hypot(entry.label.u - at.u, entry.label.v - at.v);
+      for (const [from, to] of entry.lines) {
+        distance = Math.min(distance, distanceToSegment(at, from, to));
+      }
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = entry;
+      }
+    }
+
+    if (best === null) return null;
+    const constraint = draft.sketch.constraints[best.constraint];
+    if (constraint === undefined) return null;
+    return { name: best.dimension, constraint };
   }
 
   /** Points win over entities, because a point is the harder thing to hit. */
@@ -854,8 +1230,14 @@ export class SketchSession {
     if (event.key !== 'Escape') return;
     event.preventDefault();
 
-    // Escape backs out one step at a time: the chain in hand, then the tool,
-    // then the picks, and only then the session itself.
+    // Escape backs out one step at a time: the dimension in the air, then the
+    // chain in hand, then the tool, then the picks, and only then the session.
+    if (this.placing !== null) {
+      this.placing = null;
+      this.picked = [];
+      this.render();
+      return;
+    }
     if (this.chain.length > 0) {
       this.chain = [];
       this.renderPreview();
@@ -911,6 +1293,7 @@ export class SketchSession {
     this.renderAnnotations(solved);
     this.renderPreview();
     this.renderPanel(solved);
+    this.renderDialogue();
   }
 
   /**
@@ -935,10 +1318,29 @@ export class SketchSession {
       solved.radii,
       draft.dimensions,
       scale,
+      this.places,
     );
 
+    // The one being placed is drawn the same way as the ones already there, so
+    // what is being dragged around is exactly what gets left behind.
+    this.preview =
+      this.placing === null
+        ? null
+        : annotateOne(
+            draft.sketch,
+            this.placing.constraint,
+            -1,
+            solved.points,
+            solved.radii,
+            this.placing.value,
+            scale,
+            this.placing.place ?? undefined,
+            { u: 0, v: 0 },
+          );
+
+    const drawing = this.preview === null ? this.annotations : [...this.annotations, this.preview];
     this.viewport.setSketchAnnotations(
-      this.annotations.flatMap(({ lines: drawn }) =>
+      drawing.flatMap(({ lines: drawn }) =>
         drawn.map(
           ([from, to]) =>
             [pointOnPlane(plane, from.u, from.v), pointOnPlane(plane, to.u, to.v)] as [Vec3, Vec3],
@@ -986,6 +1388,17 @@ export class SketchSession {
           event.stopPropagation();
         });
 
+        // Dragging the number moves the dimension; clicking it types over the
+        // number. Which one it was is not known until the pointer either moves
+        // or does not, so the press starts as neither.
+        const name = entry.dimension;
+        holder.addEventListener('pointerdown', (event) => this.grabLabel(event, name));
+        // A number just placed is focused with its text selected, and dragging
+        // selected text is a drag of the text as far as the browser is
+        // concerned: it swallows the pointer and never lets go of it. Refusing
+        // that leaves the press to mean what it means here.
+        holder.addEventListener('dragstart', (event) => event.preventDefault());
+
         holder.append(field);
         this.labelLayer.append(holder);
         this.labels.set(entry.dimension, field);
@@ -1012,6 +1425,17 @@ export class SketchSession {
     if (plane === null || this.labelLayer.hidden) return;
 
     const bounds = this.labelLayer.getBoundingClientRect();
+
+    this.previewLabel.hidden = this.preview === null;
+    if (this.preview !== null) {
+      this.previewLabel.textContent = this.preview.text;
+      const at = this.viewport.screenPositionOf(
+        pointOnPlane(plane, this.preview.label.u, this.preview.label.v),
+      );
+      this.previewLabel.style.left = `${at.x - bounds.left}px`;
+      this.previewLabel.style.top = `${at.y - bounds.top}px`;
+    }
+
     for (const entry of this.annotations) {
       const field = this.labels.get(entry.dimension);
       const holder = field?.parentElement;
@@ -1022,6 +1446,70 @@ export class SketchSession {
       );
       holder.style.left = `${at.x - bounds.left}px`;
       holder.style.top = `${at.y - bounds.top}px`;
+    }
+  }
+
+  /** Taking hold of a dimension by its number, to move it rather than type it. */
+  private grabLabel(event: PointerEvent, name: string): void {
+    const draft = this.draft;
+    if (draft === null || event.button !== 0) return;
+
+    const index = draft.sketch.constraints.findIndex(
+      (constraint) => 'dimension' in constraint && constraint.dimension === name,
+    );
+    const constraint = draft.sketch.constraints[index];
+    if (constraint === undefined) return;
+
+    const at = this.snapped(event.clientX, event.clientY);
+    if (at === null) return;
+
+    // Not prevented: a press that never moves is a click into the field, and
+    // taking that away would make the number untypable.
+    this.startGrab(
+      {
+        hit: null,
+        dimension: { name, constraint },
+        screen: { x: event.clientX, y: event.clientY },
+        at,
+        moved: false,
+        pulls: [],
+        field: this.labels.get(name) ?? null,
+      },
+      null,
+    );
+  }
+
+  /** The dimension tool's own panel: what to do next, and what it will measure. */
+  private renderDialogue(): void {
+    const active = this.tool === 'dimension';
+    this.dialogue.hidden = !active;
+    if (!active) return;
+
+    const pending = this.placing;
+    const span = pending !== null && isSpanKind(pending.constraint.kind);
+
+    if (pending === null) {
+      this.dialogueStep.textContent =
+        this.picked.length === 0
+          ? 'Pick a line, a circle, or two points.'
+          : 'Pick one more, or a second line for an angle.';
+      this.dialogueValue.textContent = '';
+    } else {
+      this.dialogueStep.textContent =
+        pending.constraint.kind === 'angle'
+          ? 'Move to set how far out the arc sits, then click.'
+          : pending.constraint.kind === 'radius'
+            ? 'Move to lay out the leader, then click.'
+            : 'Move to place it, then click. Click another line instead for an angle.';
+      this.dialogueValue.textContent =
+        pending.constraint.kind === 'angle'
+          ? `${formatLength(pending.value)}°`
+          : `${formatLength(pending.value)} mm`;
+    }
+
+    for (const [kind, button] of this.kindButtons) {
+      button.disabled = !span;
+      button.classList.toggle('is-active', span && pending!.constraint.kind === kind);
     }
   }
 

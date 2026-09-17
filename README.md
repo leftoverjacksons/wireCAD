@@ -78,14 +78,31 @@ is ready, typically around two seconds.
   tool, then the picks, then the session. Everything drawn is written to the
   node as it happens, so leaving is not what commits the work, and a sketch
   nobody drew in is removed rather than left behind reporting that it is empty.
-- **Dimensioning** — *Dimension* is a tool like the drawing ones. Click what you
-  want measured and the dimension appears on the sketch, drawn with witness
-  lines and arrowheads, its number waiting to be typed over: type and press
-  Enter and the sketch follows it. A circle, two points or two lines can only
-  mean one thing, so they are taken as soon as they are picked; a single line
-  waits, because a second line would make it an angle instead of a length, and
-  a click on empty space settles it. Pressing *Dimension* with something already
-  selected dimensions that, which is the short way round.
+- **Dimensioning** — *Dimension* is a tool like the drawing ones, and pressing
+  it opens its own panel. Click what you want measured — a line, a circle, two
+  points — and the dimension follows the cursor: move it to where it reads best
+  and click to leave it there. It arrives drawn with witness lines and
+  arrowheads, its number waiting to be typed over: type and press Enter and the
+  sketch follows it. Clicking a second line instead of placing it makes an angle
+  of the two. Pressing *Dimension* with something already selected dimensions
+  that, which is the short way round.
+- **What a placement means** — two points are three dimensions at once, and
+  which one is wanted is said by where the dimension is put: out to the side of
+  a diagonal gives its own length, straight up or down gives the width it
+  covers, off to one side gives the height. The panel names the one the cursor
+  is currently asking for — Aligned, Horizontal or Vertical — and pressing one
+  of those names pins it, so a placement that would read as a component can be
+  held to the length. A span already square to an axis has no components worth
+  the name, so it is always just its length.
+- **Moving things about** — with Select, drag a point, an edge or a circle and
+  the sketch follows as far as its rules allow: a point nothing holds goes where
+  it is put, a point on a horizontal line slides along it, and a fully
+  dimensioned sketch does not move at all. The cursor's pull is solved for
+  alongside the constraints and then dropped, so what it could not have is
+  refused rather than approximated, and the whole drag is one step to undo.
+  Dimensions move the same way: drag one by its number or by its line, and where
+  it sits is kept with the sketch, measured against what it measures rather than
+  in the plane, so it stays put as the geometry moves under it.
 - **Constraining** — with Select, click points and edges in the 3D view, then
   apply a relation: Horizontal, Vertical, Parallel, Perpendicular, Equal,
   Coincident, Concentric, On line, Midpoint. *Delete* removes what is picked,
@@ -186,6 +203,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 | `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
+| `npm run verify:drag` | Checks a sketch can be pushed around by hand, and that where a dimension is put decides what it measures |
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
 | `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
 
@@ -367,6 +385,15 @@ solving runs twice: first with a weak pull towards where the sketch already was,
 which picks the nearest solution out of those available, then without it, from a
 starting point that has nowhere far left to go.
 
+Dragging rides on the same two passes. A dragged point contributes a residual
+pulling it towards the cursor, which joins the first pass as one more thing to
+satisfy; the second pass, with the pull gone, puts the constraints exactly right
+again from wherever that landed. A pull is a wish rather than a rule, so what
+the constraints cannot grant is dropped instead of approximated: the point slides
+along what holds it, or does not move at all. What is being dragged is left out
+of the pull towards where the sketch was, since asking a point both to follow the
+cursor and to stay put would only water the drag down.
+
 Row-reducing that same Jacobian answers two questions worth asking. Its rank
 against the number of unknowns gives the degrees of freedom still loose, so a
 sketch can say it is under-constrained; its rank against the number of residuals
@@ -505,8 +532,14 @@ discarded.
   datum plane — has nothing to show when clicked.
 - Relations are listed in the panel but not drawn on the sketch: a dimension
   shows itself, a perpendicular does not.
-- A dimension is drawn where the geometry puts it. There is no dragging one to a
-  tidier place, and two dimensions on the same edge sit on top of each other.
+- Two dimensions on the same edge start out on top of each other. They can be
+  dragged apart, but nothing spaces them out on its own.
+- A dragged dimension is placed where it was dropped and stays there: nothing
+  moves it back out of the way when the geometry it measures grows past it.
+- Dragging an angle moves its arc in and out but not around: which of the four
+  corners it reads is fixed by the two lines' direction.
+- Dragging a circle moves it. There is no dragging its rim to change the radius,
+  because only points are pulled, not the radius itself: dimension it or type it.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a

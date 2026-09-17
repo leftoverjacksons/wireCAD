@@ -268,4 +268,103 @@ describe('solving a sketch', () => {
     expect(result.points[2]!.u).toBeCloseTo(20, 9);
     expect(result.points[2]!.v).toBeCloseTo(5, 9);
   });
+
+  it('lets a loose point follow the cursor exactly', () => {
+    const sketch: Sketch = {
+      points: [
+        { u: 0, v: 0 },
+        { u: 40, v: 0 },
+      ],
+      entities: [{ kind: 'line', a: 0, b: 1 }],
+      constraints: [
+        { kind: 'lockU', point: 0, dimension: 'zero' },
+        { kind: 'lockV', point: 0, dimension: 'zero' },
+      ],
+    };
+
+    const result = solveSketch(sketch, dims({ zero: 0 }), {
+      pull: [{ point: 1, to: { u: 25, v: 18 } }],
+    });
+
+    expect(result.solved).toBe(true);
+    expect(result.points[1]!.u).toBeCloseTo(25, 4);
+    expect(result.points[1]!.v).toBeCloseTo(18, 4);
+  });
+
+  it('slides a dragged point along what holds it rather than breaking it', () => {
+    const sketch: Sketch = {
+      points: [
+        { u: 0, v: 0 },
+        { u: 40, v: 0 },
+      ],
+      entities: [{ kind: 'line', a: 0, b: 1 }],
+      constraints: [
+        { kind: 'lockU', point: 0, dimension: 'zero' },
+        { kind: 'lockV', point: 0, dimension: 'zero' },
+        { kind: 'horizontal', line: 0 },
+      ],
+    };
+
+    // Dragged up and to the right; the line is horizontal, so only the right
+    // part of that can be honoured.
+    const result = solveSketch(sketch, dims({ zero: 0 }), {
+      pull: [{ point: 1, to: { u: 25, v: 18 } }],
+    });
+
+    expect(result.solved).toBe(true);
+    expect(result.points[1]!.u).toBeCloseTo(25, 3);
+    expect(result.points[1]!.v).toBeCloseTo(0, 6);
+  });
+
+  it('will not drag a sketch that is fully dimensioned', () => {
+    const sketch: Sketch = {
+      points: [
+        { u: 0, v: 0 },
+        { u: 40, v: 0 },
+      ],
+      entities: [{ kind: 'line', a: 0, b: 1 }],
+      constraints: [
+        { kind: 'lockU', point: 0, dimension: 'zero' },
+        { kind: 'lockV', point: 0, dimension: 'zero' },
+        { kind: 'lockU', point: 1, dimension: 'far' },
+        { kind: 'lockV', point: 1, dimension: 'zero' },
+      ],
+    };
+
+    const result = solveSketch(sketch, dims({ zero: 0, far: 40 }), {
+      pull: [{ point: 1, to: { u: 25, v: 18 } }],
+    });
+
+    expect(result.solved).toBe(true);
+    expect(result.points[1]!.u).toBeCloseTo(40, 6);
+    expect(result.points[1]!.v).toBeCloseTo(0, 6);
+  });
+
+  it('carries the rest of the drawing along with a dragged point', () => {
+    const sketch: Sketch = {
+      points: [
+        { u: 0, v: 0 },
+        { u: 40, v: 0 },
+        { u: 20, v: 0 },
+      ],
+      entities: [{ kind: 'line', a: 0, b: 1 }],
+      constraints: [
+        { kind: 'lockU', point: 0, dimension: 'zero' },
+        { kind: 'lockV', point: 0, dimension: 'zero' },
+        { kind: 'midpoint', point: 2, line: 0 },
+      ],
+    };
+
+    const result = solveSketch(sketch, dims({ zero: 0 }), {
+      pull: [{ point: 1, to: { u: 40, v: 20 } }],
+    });
+
+    expect(result.solved).toBe(true);
+
+    // The midpoint is still exactly the midpoint, and the dragged end is where
+    // it was asked to go, give or take the last pass settling the constraints.
+    expect(result.points[2]!.u).toBeCloseTo((result.points[0]!.u + result.points[1]!.u) / 2, 9);
+    expect(result.points[2]!.v).toBeCloseTo((result.points[0]!.v + result.points[1]!.v) / 2, 9);
+    expect(Math.abs(result.points[1]!.v - 20)).toBeLessThan(0.2);
+  });
 });

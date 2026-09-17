@@ -9,7 +9,7 @@ import type { Constraint, Point, Sketch } from './model.js';
  * its proportions as the view zooms rather than growing with the model.
  */
 export interface Annotation {
-  /** Index into the sketch's constraints, so a click can find its rule. */
+  /** Index into the sketch's constraints, so a click can find its rule. -1 while placing. */
   constraint: number;
   dimension: string;
   value: number;
@@ -21,14 +21,39 @@ export interface Annotation {
   label: Point;
 }
 
-/** How far the dimension line sits off what it measures, in pixels. */
-const OFFSET = 30;
+/**
+ * Where a dimension was put, relative to what it measures, in millimetres.
+ *
+ * Relative rather than absolute, so a dimension stays where it was put as the
+ * geometry it measures moves: `offset` is how far off the measured span the
+ * dimension line sits, and `slide` is how far the number has been slid along
+ * it. A radius reads them as a leader length and a leader angle; an angle reads
+ * `offset` as how far out its arc is drawn.
+ */
+export interface Place {
+  offset: number;
+  slide: number;
+}
+
+/** The three things a straight measurement between two points can mean. */
+export type SpanKind = 'distance' | 'horizontalDistance' | 'verticalDistance';
+
+/** How far a dimension line sits off what it measures by default, in pixels. */
+const OFFSET = 26;
 /** How far a witness line runs past the dimension line, in pixels. */
-const OVERSHOOT = 6;
-const ARROW = 9;
-const ARROW_SPREAD = 0.3;
+const OVERSHOOT = 4;
+const ARROW = 5;
+const ARROW_SPREAD = 0.36;
 /** Radius of the arc an angle is drawn on, in pixels. */
 const ARC = 34;
+/** Within this, in millimetres, a span is straight enough to have no components. */
+const STRAIGHT = 1e-6;
+/**
+ * How much a placement has to favour an axis before it stops meaning the
+ * measurement it is nearest. Dragging straight out from a line is the common
+ * gesture and should keep giving the length of the line.
+ */
+const ALIGNED_BIAS = 0.12;
 
 function add(a: Point, b: Point, times = 1): Point {
   return { u: a.u + b.u * times, v: a.v + b.v * times };
@@ -50,6 +75,10 @@ function unit(a: Point): Point {
 /** Turned a quarter turn, which is the direction a dimension is offset along. */
 function across(a: Point): Point {
   return { u: -a.v, v: a.u };
+}
+
+function dot(a: Point, b: Point): number {
+  return a.u * b.u + a.v * b.v;
 }
 
 function midpoint(a: Point, b: Point): Point {
@@ -90,28 +119,224 @@ interface Measured {
   along: Point;
 }
 
+/** What a span of the given kind measures, and in which direction it reads. */
+export function spanOf(kind: SpanKind, from: Point, to: Point): Measured {
+  if (kind === 'distance') return { from, to, along: unit(subtract(to, from)) };
+
+  // Measured along one axis only, so the ends are squared up onto it.
+  return kind === 'horizontalDistance'
+    ? { from, to: { u: to.u, v: from.v }, along: { u: Math.sign(to.u - from.u) || 1, v: 0 } }
+    : { from, to: { u: from.u, v: to.v }, along: { u: 0, v: Math.sign(to.v - from.v) || 1 } };
+}
+
 /** What a distance-like constraint spans, and in which direction it reads. */
 function span(constraint: Constraint, points: readonly Point[]): Measured | null {
-  if (constraint.kind === 'distance') {
-    const from = points[constraint.a];
-    const to = points[constraint.b];
-    if (from === undefined || to === undefined) return null;
-    return { from, to, along: unit(subtract(to, from)) };
+  if (
+    constraint.kind !== 'distance' &&
+    constraint.kind !== 'horizontalDistance' &&
+    constraint.kind !== 'verticalDistance'
+  ) {
+    return null;
   }
 
-  if (constraint.kind === 'horizontalDistance' || constraint.kind === 'verticalDistance') {
-    const from = points[constraint.a];
-    const to = points[constraint.b];
-    if (from === undefined || to === undefined) return null;
+  const from = points[constraint.a];
+  const to = points[constraint.b];
+  if (from === undefined || to === undefined) return null;
+  return spanOf(constraint.kind, from, to);
+}
 
-    // Measured along one axis only, so the ends are squared up onto it.
-    const horizontal = constraint.kind === 'horizontalDistance';
-    return horizontal
-      ? { from, to: { u: to.u, v: from.v }, along: { u: Math.sign(to.u - from.u) || 1, v: 0 } }
-      : { from, to: { u: from.u, v: to.v }, along: { u: 0, v: Math.sign(to.v - from.v) || 1 } };
+/** What a span of this kind reads, in millimetres. */
+export function measureOf(kind: SpanKind, from: Point, to: Point): number {
+  if (kind === 'horizontalDistance') return Math.abs(to.u - from.u);
+  if (kind === 'verticalDistance') return Math.abs(to.v - from.v);
+  return Math.hypot(to.u - from.u, to.v - from.v);
+}
+
+/** Where a dimension of this kind ends up, given where the cursor put it. */
+export function placeOfSpan(kind: SpanKind, from: Point, to: Point, cursor: Point): Place {
+  const measured = spanOf(kind, from, to);
+  const offset = subtract(cursor, midpoint(measured.from, measured.to));
+  return {
+    offset: dot(offset, across(measured.along)),
+    slide: dot(offset, measured.along),
+  };
+}
+
+/**
+ * Which measurement a placement means.
+ *
+ * Two points are three dimensions at once — the distance between them, and each
+ * of its two components — and which one is wanted is said by where the dimension
+ * is put: out to the side of a diagonal gives its length, straight up gives its
+ * width, sideways gives its height. That is how it is done in Fusion and in
+ * SolidWorks, and it is the reason placement is a step rather than a setting.
+ *
+ * A span already square to an axis has no components worth the name, so it is
+ * always just its length.
+ */
+export function chooseSpan(from: Point, to: Point, cursor: Point): { kind: SpanKind; place: Place } {
+  const du = to.u - from.u;
+  const dv = to.v - from.v;
+  const straight = Math.abs(du) < STRAIGHT || Math.abs(dv) < STRAIGHT;
+
+  const facing = unit(subtract(cursor, midpoint(from, to)));
+  const candidates: Array<{ kind: SpanKind; away: Point; bias: number }> = straight
+    ? [{ kind: 'distance', away: across(unit({ u: du, v: dv })), bias: 1 }]
+    : [
+        { kind: 'distance', away: across(unit({ u: du, v: dv })), bias: ALIGNED_BIAS },
+        { kind: 'horizontalDistance', away: { u: 0, v: 1 }, bias: 0 },
+        { kind: 'verticalDistance', away: { u: 1, v: 0 }, bias: 0 },
+      ];
+
+  let best = candidates[0]!;
+  let bestScore = -Infinity;
+  for (const candidate of candidates) {
+    // Either way along the offset direction counts: a dimension put below a
+    // line means the same as one put above it.
+    const score = Math.abs(dot(facing, candidate.away)) + candidate.bias;
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
   }
 
-  return null;
+  return { kind: best.kind, place: placeOfSpan(best.kind, from, to, cursor) };
+}
+
+/** Where a cursor puts an existing dimension, whatever kind it is. */
+export function placeOf(
+  sketch: Sketch,
+  constraint: Constraint,
+  points: readonly Point[],
+  cursor: Point,
+): Place | null {
+  if (constraint.kind === 'radius') {
+    const entity = sketch.entities[constraint.circle];
+    if (entity?.kind !== 'circle') return null;
+    const centre = points[entity.centre];
+    if (centre === undefined) return null;
+    const out = subtract(cursor, centre);
+    return { offset: length(out), slide: Math.atan2(out.v, out.u) };
+  }
+
+  if (constraint.kind === 'angle') {
+    const corner = cornerOf(sketch, points, constraint.a, constraint.b);
+    if (corner === null) return null;
+    return { offset: length(subtract(cursor, corner.at)), slide: 0 };
+  }
+
+  const measured = span(constraint, points);
+  if (measured === null) return null;
+  const offset = subtract(cursor, midpoint(measured.from, measured.to));
+  return { offset: dot(offset, across(measured.along)), slide: dot(offset, measured.along) };
+}
+
+/**
+ * Draws one dimension. Used both for the ones the sketch holds and for the one
+ * being placed, so what you drag around is exactly what you end up with.
+ */
+export function annotateOne(
+  sketch: Sketch,
+  constraint: Constraint,
+  index: number,
+  points: readonly Point[],
+  radii: readonly number[],
+  value: number,
+  /** Model units per pixel, so the drawing keeps its size on screen. */
+  scale: number,
+  place: Place | undefined,
+  /** Which way to put an unplaced dimension: away from here. */
+  centre: Point,
+): Annotation | null {
+  if (!('dimension' in constraint)) return null;
+  if (constraint.kind === 'lockU' || constraint.kind === 'lockV') return null;
+
+  const base = { constraint: index, dimension: constraint.dimension, value };
+
+  if (constraint.kind === 'radius') {
+    const entity = sketch.entities[constraint.circle];
+    if (entity?.kind !== 'circle') return null;
+    const at = points[entity.centre];
+    if (at === undefined) return null;
+
+    const radius = radii[constraint.circle] ?? 0;
+    // Out at a slant by default, so the leader does not lie along anything
+    // already drawn.
+    const angle = place === undefined ? Math.PI / 4 : place.slide;
+    const along = { u: Math.cos(angle), v: Math.sin(angle) };
+    const reach =
+      place === undefined
+        ? radius + OFFSET * scale
+        : Math.max(place.offset, radius + OVERSHOOT * scale);
+    const rim = add(at, along, radius);
+
+    return {
+      ...base,
+      text: `R${formatLength(value)}`,
+      lines: [
+        [at, add(at, along, reach)],
+        ...arrowhead(rim, { u: -along.u, v: -along.v }, ARROW * scale),
+      ],
+      label: add(at, along, reach),
+    };
+  }
+
+  if (constraint.kind === 'angle') {
+    const corner = cornerOf(sketch, points, constraint.a, constraint.b);
+    if (corner === null) return null;
+
+    const gap = OVERSHOOT * 2 * scale;
+    const reach = place === undefined ? ARC * scale + gap : Math.max(place.offset, gap * 2);
+    const radius = Math.max(reach - gap, gap);
+    const steps = 12;
+    const lines: Array<[Point, Point]> = [];
+    let previous = add(corner.at, corner.from, radius);
+    for (let step = 1; step <= steps; step++) {
+      const turn = corner.start + (corner.sweep * step) / steps;
+      const next = add(corner.at, { u: Math.cos(turn), v: Math.sin(turn) }, radius);
+      lines.push([previous, next]);
+      previous = next;
+    }
+
+    const middle = corner.start + corner.sweep / 2;
+    const facing = { u: Math.cos(middle), v: Math.sin(middle) };
+    return {
+      ...base,
+      text: `${formatLength(value)}°`,
+      lines,
+      label: add(corner.at, facing, reach),
+    };
+  }
+
+  const measured = span(constraint, points);
+  if (measured === null) return null;
+
+  // Unplaced, it goes to whichever side faces away from the drawing, so it
+  // lands outside the shape rather than across it. Placed, it goes where it
+  // was put.
+  const away = across(measured.along);
+  const towards = subtract(midpoint(measured.from, measured.to), centre);
+  const side = dot(away, towards) < 0 ? -1 : 1;
+  const offset = place === undefined ? OFFSET * scale * side : place.offset;
+  const slide = place === undefined ? 0 : place.slide;
+
+  const from = add(measured.from, away, offset);
+  const to = add(measured.to, away, offset);
+  const tip = OVERSHOOT * scale * (offset < 0 ? -1 : 1);
+  const head = ARROW * scale;
+
+  return {
+    ...base,
+    text: formatLength(value),
+    lines: [
+      [measured.from, add(from, away, tip)],
+      [measured.to, add(to, away, tip)],
+      [from, to],
+      ...arrowhead(from, { u: -measured.along.u, v: -measured.along.v }, head),
+      ...arrowhead(to, measured.along, head),
+    ],
+    label: add(midpoint(from, to), measured.along, slide),
+  };
 }
 
 /**
@@ -126,96 +351,26 @@ export function annotate(
   points: readonly Point[],
   radii: readonly number[],
   dimensions: ReadonlyMap<string, number>,
-  /** Model units per pixel, so the drawing keeps its size on screen. */
   scale: number,
+  places: ReadonlyMap<string, Place> = new Map(),
 ): Annotation[] {
   const centre = centreOf(points);
   const out: Annotation[] = [];
 
   for (const [index, constraint] of sketch.constraints.entries()) {
     if (!('dimension' in constraint)) continue;
-    if (constraint.kind === 'lockU' || constraint.kind === 'lockV') continue;
-
-    const value = dimensions.get(constraint.dimension) ?? 0;
-    const base = { constraint: index, dimension: constraint.dimension, value };
-
-    if (constraint.kind === 'radius') {
-      const entity = sketch.entities[constraint.circle];
-      if (entity?.kind !== 'circle') continue;
-      const at = points[entity.centre];
-      if (at === undefined) continue;
-
-      const radius = radii[constraint.circle] ?? 0;
-      // Out at a slant, so the leader does not lie along anything already drawn.
-      const along = unit({ u: 1, v: 1 });
-      const rim = add(at, along, radius);
-      const tail = add(rim, along, OFFSET * scale);
-
-      out.push({
-        ...base,
-        text: `R${formatLength(value)}`,
-        lines: [[at, tail], ...arrowhead(rim, { u: -along.u, v: -along.v }, ARROW * scale)],
-        label: add(tail, along, OVERSHOOT * scale),
-      });
-      continue;
-    }
-
-    if (constraint.kind === 'angle') {
-      const first = sketch.entities[constraint.a];
-      const second = sketch.entities[constraint.b];
-      if (first?.kind !== 'line' || second?.kind !== 'line') continue;
-
-      const corner = cornerOf(sketch, points, constraint.a, constraint.b);
-      if (corner === null) continue;
-
-      const radius = ARC * scale;
-      const steps = 12;
-      const lines: Array<[Point, Point]> = [];
-      let previous = add(corner.at, corner.from, radius);
-      for (let step = 1; step <= steps; step++) {
-        const turn = corner.start + (corner.sweep * step) / steps;
-        const next = add(corner.at, { u: Math.cos(turn), v: Math.sin(turn) }, radius);
-        lines.push([previous, next]);
-        previous = next;
-      }
-
-      const middle = corner.start + corner.sweep / 2;
-      const facing = { u: Math.cos(middle), v: Math.sin(middle) };
-      out.push({
-        ...base,
-        text: `${formatLength(value)}°`,
-        lines,
-        label: add(corner.at, facing, radius + OVERSHOOT * 2 * scale),
-      });
-      continue;
-    }
-
-    const measured = span(constraint, points);
-    if (measured === null) continue;
-
-    // Offset to whichever side faces away from the drawing, so the dimension
-    // lands outside the shape rather than across it.
-    const away = across(measured.along);
-    const towards = subtract(midpoint(measured.from, measured.to), centre);
-    const side = away.u * towards.u + away.v * towards.v < 0 ? -1 : 1;
-    const out_ = { u: away.u * side, v: away.v * side };
-
-    const from = add(measured.from, out_, OFFSET * scale);
-    const to = add(measured.to, out_, OFFSET * scale);
-    const head = ARROW * scale;
-
-    out.push({
-      ...base,
-      text: formatLength(value),
-      lines: [
-        [measured.from, add(from, out_, OVERSHOOT * scale)],
-        [measured.to, add(to, out_, OVERSHOOT * scale)],
-        [from, to],
-        ...arrowhead(from, { u: -measured.along.u, v: -measured.along.v }, head),
-        ...arrowhead(to, measured.along, head),
-      ],
-      label: add(midpoint(from, to), out_, OVERSHOOT * scale),
-    });
+    const drawn = annotateOne(
+      sketch,
+      constraint,
+      index,
+      points,
+      radii,
+      dimensions.get(constraint.dimension) ?? 0,
+      scale,
+      places.get(constraint.dimension),
+      centre,
+    );
+    if (drawn !== null) out.push(drawn);
   }
 
   return out;
@@ -252,4 +407,31 @@ function cornerOf(
   while (sweep > Math.PI) sweep -= Math.PI * 2;
 
   return { at, from: unit(d1), start, sweep };
+}
+
+// ---------------------------------------------------------------- storage
+//
+// Where a dimension was put travels with the sketch as a flat list of name,
+// offset and slide. It says nothing about the shape, so it is stored apart from
+// the constraints and nothing is rebuilt when it changes.
+
+export function encodePlaces(places: ReadonlyMap<string, Place>): Array<string | number> {
+  const out: Array<string | number> = [];
+  for (const [name, place] of places) out.push(name, place.offset, place.slide);
+  return out;
+}
+
+export function decodePlaces(value: unknown): Map<string, Place> {
+  const out = new Map<string, Place>();
+  if (!Array.isArray(value)) return out;
+  for (let i = 0; i + 2 < value.length; i += 3) {
+    const name = value[i];
+    const offset = value[i + 1];
+    const slide = value[i + 2];
+    if (typeof name !== 'string') continue;
+    if (typeof offset !== 'number' || typeof slide !== 'number') continue;
+    if (!Number.isFinite(offset) || !Number.isFinite(slide)) continue;
+    out.set(name, { offset, slide });
+  }
+  return out;
 }

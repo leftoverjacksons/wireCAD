@@ -518,6 +518,7 @@ export class Viewport {
 
   /** Where a model point lands on screen, in client coordinates. */
   screenPositionOf(point: Vec3): { x: number; y: number } {
+    this.syncCamera();
     const projected = new THREE.Vector3(point.x, point.y, point.z).project(this.camera);
     const rect = this.renderer.domElement.getBoundingClientRect();
     return {
@@ -526,8 +527,20 @@ export class Viewport {
     };
   }
 
+  /**
+   * Brings the camera's matrices up to date before anything is measured against
+   * them. Moving the camera sets where it is, and only drawing works out what
+   * that means for where things land on screen — so asking in between, which is
+   * exactly what happens when a sketch is opened and its dimensions are placed,
+   * would otherwise be answered from the view before last.
+   */
+  private syncCamera(): void {
+    this.camera.updateMatrixWorld();
+  }
+
   /** Hit-test for hover, without the click-versus-drag gate that picking uses. */
   edgeAt(clientX: number, clientY: number): EdgeHit | null {
+    this.syncCamera();
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -743,6 +756,7 @@ export class Viewport {
 
   /** Where a screen position lands on the plane, in the plane's own U/V axes. */
   planePoint(clientX: number, clientY: number, plane: PlaneValue): { u: number; v: number } | null {
+    this.syncCamera();
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,

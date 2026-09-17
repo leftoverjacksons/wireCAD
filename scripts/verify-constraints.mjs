@@ -340,13 +340,35 @@ await pickEdge(2, 0);
 await editor.getByRole('button', { name: 'Equal', exact: true }).click();
 const afterEqual = await editor.locator('.sketch-status').innerText();
 
+// A dimension is picked out, then put somewhere: where it lands is part of
+// what it means.
+const placeOut = async (a, b, outU, outV) => {
+  const at = await page.evaluate(
+    ([a, b, outU, outV]) => {
+      const points = window.wirecad.sketch.solvedPoints();
+      const mid = {
+        u: (points[a].u + points[b].u) / 2,
+        v: (points[a].v + points[b].v) / 2,
+      };
+      return window.wirecad.screenOfSketch(mid.u + outU, mid.v + outV);
+    },
+    [a, b, outU, outV],
+  );
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(300);
+};
+
 await pickEdge(0, 1);
 await editor.getByRole('button', { name: 'Dimension', exact: true }).click();
+await placeOut(0, 1, 0, -18);
 const afterDimension = await editor.locator('.sketch-status').innerText();
 
 // One slope length is all that is left between this and a determined sketch.
 await pickEdge(1, 2);
-await editor.getByRole('button', { name: 'Dimension', exact: true }).click();
+// Out square to the slope, which is what asks for its length rather than for
+// one of the two components it covers.
+await placeOut(1, 2, -24, -18);
 const afterSecond = await editor.locator('.sketch-status').innerText();
 
 const state = await page.evaluate(() => {
@@ -451,12 +473,19 @@ const typed = await page.evaluate(async () => {
   };
 });
 
-// A circle needs no settling click: a radius is the only thing it can mean.
+// A circle can only mean its radius, but it still gets laid out before it is
+// left behind.
 const circle = await page.evaluate(() => {
   const points = window.wirecad.sketch.solvedPoints();
   return window.wirecad.screenOfSketch(points[3].u + 6, points[3].v);
 });
 await page.mouse.click(circle.x, circle.y);
+const leader = await page.evaluate(() => {
+  const points = window.wirecad.sketch.solvedPoints();
+  return window.wirecad.screenOfSketch(points[3].u + 18, points[3].v - 18);
+});
+await page.mouse.move(leader.x, leader.y);
+await page.mouse.click(leader.x, leader.y);
 await page.waitForTimeout(500);
 const radius = await page.evaluate(() => ({
   labels: [...document.querySelectorAll('.sketch-label-field')].map((f) => f.value),
@@ -466,8 +495,8 @@ const radius = await page.evaluate(() => ({
 await drawing.getByRole('button', { name: 'Finish', exact: true }).click();
 
 const dimensionChecks = [
-  ['one line waits for more  ', waiting === 0, `${waiting} labels`],
-  ['empty space settles it   ', placed.labels.length === 1 && placed.labels[0] === '40',
+  ['one line waits to be put  ', waiting === 0, `${waiting} labels`],
+  ['the placing click sets it ', placed.labels.length === 1 && placed.labels[0] === '40',
     placed.labels.join(',') || 'none'],
   ['and it is ready to type  ', placed.focused.includes('sketch-label-field'), placed.focused || 'nothing focused'],
   ['it takes one away        ', looseAfter === looseBefore - 1,
@@ -477,7 +506,7 @@ const dimensionChecks = [
     typed.error ?? typed.dims.join(',')],
   ['the drawing says so too  ', typed.labels.includes('55'), typed.labels.join(',')],
   ['and the node grew a port ', typed.ports.includes('length1'), typed.ports.join(',')],
-  ['a radius needs no settling', radius.labels.some((value) => value.startsWith('R')),
+  ['a radius lays out its lead', radius.labels.some((value) => value.startsWith('R')),
     radius.labels.join(',') || 'none'],
 ];
 for (const [name, ok, extra] of dimensionChecks) {
@@ -523,6 +552,10 @@ const baseAt = await page.evaluate(() => {
 });
 await page.mouse.click(baseAt.x, baseAt.y);
 await reopenPanel.getByRole('button', { name: 'Dimension', exact: true }).click();
+const settle = { x: baseAt.x, y: baseAt.y + 70 };
+await page.mouse.move(settle.x, settle.y);
+await page.mouse.click(settle.x, settle.y);
+await page.waitForTimeout(400);
 const withDimension = await page.evaluate(() =>
   Object.keys(window.wirecad.graph.requireNode('sk').inputs).filter((k) => k.startsWith('d_')),
 );

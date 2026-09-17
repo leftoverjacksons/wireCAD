@@ -58,6 +58,12 @@ export interface PortDef {
   readonly default?: Value;
   /** Stored and evaluated as usual, but not drawn as a row on the node. */
   readonly hidden?: boolean;
+  /**
+   * Carried by the node but not part of what it makes — where a dimension was
+   * dragged to, and nothing else of that sort. Kept out of the hash, so moving
+   * a label does not rebuild the geometry it labels.
+   */
+  readonly cosmetic?: boolean;
   /** A fixed set of answers, drawn as a dropdown rather than a text field. */
   readonly options?: readonly string[];
   /**

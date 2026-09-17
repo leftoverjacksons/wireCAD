@@ -30,9 +30,23 @@ export interface SolveResult {
   redundant: number;
 }
 
+/** A point being dragged, and where the cursor is asking it to go. */
+export interface Pull {
+  point: number;
+  to: Point;
+}
+
 export interface SolveOptions {
   tolerance?: number;
   maxIterations?: number;
+  /**
+   * Points the cursor is dragging. A pull is a wish, not a rule: it is solved
+   * for alongside the constraints and then dropped, so a point goes where it is
+   * asked only as far as what holds it allows. A point nothing holds follows the
+   * cursor exactly; one on a horizontal line slides along it; one in a fully
+   * dimensioned sketch does not move at all.
+   */
+  pull?: readonly Pull[];
   /**
    * Prefer the solution nearest where the sketch already sits. Constraints leave
    * directions free — "these two edges are equal" holds anywhere along a
@@ -351,12 +365,35 @@ export function solveSketch(
   // configuration, which picks the nearest solution out of the ones available;
   // the second drops it and drives the constraints the rest of the way home, from
   // a starting point already close enough that it has nowhere far to go.
+  //
+  // A drag works the same way, and for the same reason: the cursor's pull joins
+  // the first pass as one more thing to satisfy, and the second pass, with the
+  // pull gone, puts the constraints exactly right again from wherever that
+  // landed. What the drag could not have is dropped rather than approximated.
   const start = [...x];
-  const passes = (options.settle ?? true) ? [SETTLE_WEIGHT, 0] : [0];
+  const dragging = options.pull ?? [];
+  const settling = options.settle ?? true;
+  const passes: Array<{ weight: number; pull: readonly Pull[] }> =
+    dragging.length > 0
+      ? [{ weight: SETTLE_WEIGHT, pull: dragging }, { weight: 0, pull: [] }]
+      : settling
+        ? [{ weight: SETTLE_WEIGHT, pull: [] }, { weight: 0, pull: [] }]
+        : [{ weight: 0, pull: [] }];
   let iterations = 0;
 
-  for (const weight of passes) {
-    iterations += run(sketch, layout, x, dimensions, rows, start, weight, tolerance, maxIterations);
+  for (const pass of passes) {
+    iterations += run(
+      sketch,
+      layout,
+      x,
+      dimensions,
+      rows,
+      start,
+      pass.weight,
+      pass.pull,
+      tolerance,
+      maxIterations,
+    );
   }
 
   residual = evaluate(sketch, layout, x, dimensions);
@@ -366,6 +403,8 @@ export function solveSketch(
 
 /** How hard the first pass pulls back towards where the sketch already was. */
 const SETTLE_WEIGHT = 0.1;
+/** How hard a dragged point is pulled towards the cursor, against everything else. */
+const PULL_WEIGHT = 1;
 
 function run(
   sketch: Sketch,
@@ -375,27 +414,55 @@ function run(
   rows: number,
   start: readonly number[],
   weight: number,
+  pull: readonly Pull[],
   tolerance: number,
   maxIterations: number,
 ): number {
   const worstOf = (r: readonly number[]): number => r.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
   const costOf = (r: readonly number[]): number => r.reduce((sum, v) => sum + v * v, 0);
 
-  /** Constraint residuals, then the pull towards the starting point. */
+  // What is being dragged is not also asked to stay where it was: the pull
+  // towards the starting point keeps everything else from wandering, and over a
+  // dragged point it would only water the drag down.
+  const held = new Set<number>();
+  for (const wish of pull) {
+    const slot = layout.pointAt[wish.point];
+    if (slot === undefined) continue;
+    held.add(slot);
+    held.add(slot + 1);
+  }
+
+  /** Constraint residuals, the pull towards the starting point, then the drag. */
   const full = (at: readonly number[]): number[] => {
     const r = evaluate(sketch, layout, at, dimensions);
-    if (weight === 0) return r;
-    for (let i = 0; i < layout.size; i++) r.push(weight * (at[i]! - start[i]!));
+    if (weight !== 0) {
+      for (let i = 0; i < layout.size; i++) {
+        r.push(held.has(i) ? 0 : weight * (at[i]! - start[i]!));
+      }
+    }
+    for (const wish of pull) {
+      const slot = layout.pointAt[wish.point];
+      if (slot === undefined) continue;
+      r.push(PULL_WEIGHT * (at[slot]! - wish.to.u), PULL_WEIGHT * (at[slot + 1]! - wish.to.v));
+    }
     return r;
   };
 
-  const height = weight === 0 ? rows : rows + layout.size;
+  const height = (weight === 0 ? rows : rows + layout.size) + pull.length * 2;
+
+  // What counts as done. Without a drag it is the constraints alone, so a
+  // sketch that already holds stops where it is. With one, the cursor's wish is
+  // part of what is being solved, or the first step would never be taken.
+  const done = (at: readonly number[]): boolean =>
+    pull.length === 0
+      ? worstOf(evaluate(sketch, layout, at, dimensions)) <= tolerance
+      : worstOf(full(at)) <= tolerance;
   let residual = full(x);
   let cost = costOf(residual);
   let lambda = 1e-3;
   let iterations = 0;
 
-  while (iterations < maxIterations && worstOf(evaluate(sketch, layout, x, dimensions)) > tolerance) {
+  while (iterations < maxIterations && !done(x)) {
     iterations += 1;
 
     const J = jacobianOf(full, x, layout.size, height);

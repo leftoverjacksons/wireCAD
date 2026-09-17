@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mathNodes } from '../nodes/math.js';
+import type { NodeDefinition } from './types.js';
 import { Evaluator } from './evaluator.js';
 import { Graph } from './graph.js';
 import { NodeRegistry } from './registry.js';
@@ -10,7 +11,36 @@ function setup() {
   return { registry, graph: new Graph(registry), evaluator: new Evaluator(registry) };
 }
 
+/** A node carrying a note nothing it makes depends on. */
+const noteNode: NodeDefinition = {
+  type: 'test.noted',
+  label: 'Noted',
+  category: 'Test',
+  inputs: [
+    { id: 'value', label: 'Value', type: 'number', default: 1 },
+    { id: 'note', label: 'Note', type: 'string', default: '', cosmetic: true },
+  ],
+  outputs: [{ id: 'result', label: 'Result', type: 'number' }],
+  evaluate: (inputs) => ({ result: Number(inputs.value) * 2 }),
+};
+
 describe('Evaluator', () => {
+  it('rebuilds nothing when only a cosmetic input changed', () => {
+    const { registry, graph, evaluator } = setup();
+    registry.register(noteNode);
+    const node = graph.addNode('test.noted', { inputs: { value: 3 } });
+
+    expect(evaluator.evaluate(graph).stats.evaluated).toBe(1);
+
+    graph.setInput(node.id, 'note', 'moved the label');
+    const second = evaluator.evaluate(graph);
+    expect(second.stats.evaluated).toBe(0);
+    expect(second.results.get(node.id)?.status).toBe('cached');
+
+    graph.setInput(node.id, 'value', 4);
+    expect(evaluator.evaluate(graph).stats.evaluated).toBe(1);
+  });
+
   it('evaluates a wired chain', () => {
     const { graph, evaluator } = setup();
     const width = graph.addNode('math.number', { inputs: { value: 4 } });
