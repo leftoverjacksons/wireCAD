@@ -1,4 +1,6 @@
 export const AUTOSAVE_KEY = 'wirecad.autosave.v1';
+/** Where a session that would not reopen is kept, rather than written over. */
+export const REJECTED_KEY = 'wirecad.autosave.v1.rejected';
 
 export function download(data: BlobPart, filename: string, mime: string): void {
   const url = URL.createObjectURL(new Blob([data], { type: mime }));
@@ -53,4 +55,27 @@ export function timestampedName(extension: string): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
   return `wirecad-${stamp}.${extension}`;
+}
+
+/**
+ * Puts aside a session that could not be reopened.
+ *
+ * The next autosave is moments away and would write over it, and a document
+ * that failed to load is exactly the one worth keeping: it is somebody's work,
+ * and it is the evidence for why it would not open.
+ */
+export function keepRejected(text: string): void {
+  try {
+    window.localStorage.setItem(REJECTED_KEY, text);
+  } catch {
+    // Out of room, or storage refused: losing the copy is not worth a failure.
+  }
+}
+
+export function readRejected(): string | null {
+  try {
+    return window.localStorage.getItem(REJECTED_KEY);
+  } catch {
+    return null;
+  }
 }

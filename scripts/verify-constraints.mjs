@@ -377,6 +377,85 @@ for (const [name, ok, extra] of editChecks) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
 }
 
+// A sketch outlives the dimensions it no longer has. Removing a rule takes its
+// number with it, and what is left has to be a document that opens again.
+console.log('');
+console.log('reopening one:');
+
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
+  graph.addNode('sketch.constrained', {
+    id: 'sk',
+    inputs: {
+      points: [0, 0, 40, 0, 25, 20],
+      entities: [['line', 0, 1], ['line', 1, 2], ['line', 2, 0]],
+      constraints: [['lockU', 0, 'originU'], ['lockV', 0, 'originV'], ['horizontal', 0]],
+      dims: ['originU', 0, 'originV', 0],
+    },
+  });
+  graph.connect({ node: 'xy', port: 'plane' }, { node: 'sk', port: 'plane' });
+  await window.__settle();
+});
+
+await page.evaluate(() => window.wirecad.select('sk'));
+await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
+const reopenPanel = page.locator('.sketch-panel');
+await reopenPanel.waitFor({ state: 'visible', timeout: 10_000 });
+
+// Dimension the base, then think better of it and remove the rule.
+const baseAt = await page.evaluate(() => {
+  const points = window.wirecad.sketch.solvedPoints();
+  return window.wirecad.screenOfSketch(
+    (points[0].u + points[1].u) / 2,
+    (points[0].v + points[1].v) / 2,
+  );
+});
+await page.mouse.click(baseAt.x, baseAt.y);
+await reopenPanel.getByRole('button', { name: 'Dimension', exact: true }).click();
+const withDimension = await page.evaluate(() =>
+  Object.keys(window.wirecad.graph.requireNode('sk').inputs).filter((k) => k.startsWith('d_')),
+);
+
+await reopenPanel.locator('.sketch-row').last().locator('.sketch-remove').click();
+await reopenPanel.getByRole('button', { name: 'Finish', exact: true }).click();
+
+const left = await page.evaluate(async () => {
+  await window.__settle();
+  // Autosave is debounced; give it its moment.
+  await new Promise((r) => setTimeout(r, 1200));
+  return {
+    inputs: Object.keys(window.wirecad.graph.requireNode('sk').inputs).filter((k) => k.startsWith('d_')),
+    saved: window.localStorage.getItem('wirecad.autosave.v1') ?? '',
+  };
+});
+
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page
+  .locator('#kernel-status')
+  .filter({ hasText: 'kernel ready' })
+  .waitFor({ timeout: 180_000 });
+
+const reopened = await page.evaluate(() => ({
+  nodes: window.wirecad.graph.allNodes().map((n) => n.type),
+  problem: window.wirecad.autosaveProblem(),
+  panel: document.querySelector('.startup-error') !== null,
+}));
+
+const reopenChecks = [
+  ['a dimension makes a port  ', withDimension.length === 3, withDimension.join(',')],
+  ['removing it takes it away ', left.inputs.length === 2, left.inputs.join(',')],
+  ['the session comes back    ', reopened.nodes.includes('sketch.constrained') &&
+    reopened.problem === null, reopened.problem ?? reopened.nodes.join(',')],
+  ['and the app starts at all ', !reopened.panel, reopened.panel ? 'startup failed' : 'started'],
+];
+for (const [name, ok, extra] of reopenChecks) {
+  if (!ok) failures += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
+}
+
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();
 if (failures > 0 || pageErrors.length > 0) process.exitCode = 1;

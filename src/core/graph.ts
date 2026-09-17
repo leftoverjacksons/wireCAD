@@ -37,6 +37,14 @@ export interface AddNodeOptions {
   position?: { x: number; y: number };
   inputs?: Record<PortId, Value>;
   visible?: boolean;
+  /**
+   * Drop literals for ports this node does not have, instead of refusing.
+   *
+   * Only for loading a document. A literal with no port cannot affect anything,
+   * so keeping the document openable is worth more than insisting on it; a
+   * programmer setting a port that is not there still wants to be told.
+   */
+  lenient?: boolean;
 }
 
 /** Position and label are presentation-only and never affect evaluation. */
@@ -84,6 +92,7 @@ export class Graph {
     const inputs: Record<PortId, Value> = {};
     for (const [portId, value] of Object.entries(provided)) {
       if (!known.has(portId)) {
+        if (options.lenient === true) continue;
         throw new Error(`Node type ${type} has no input port "${portId}"`);
       }
       inputs[portId] = value;
@@ -171,7 +180,26 @@ export class Graph {
       throw new Error(`Node type ${node.type} has no input port "${portId}"`);
     }
     node.inputs[portId] = value;
+    this.prune(node);
     this.emit({ kind: 'input-changed', nodeId, portId });
+  }
+
+  /**
+   * Drops literals for ports the node no longer has.
+   *
+   * The ports a node grows depend on its own inputs, so setting one can take
+   * another away: deleting a sketch dimension takes its port with it. The
+   * number left behind would mean nothing, and worse, it would be refused the
+   * next time the document was opened — which is a file that will not load,
+   * reported far from what caused it.
+   */
+  private prune(node: GraphNode): void {
+    if (this.registry.require(node.type).expand === undefined) return;
+
+    const known = new Set(this.schemaOf(node.id).inputs.map((port) => port.id));
+    for (const portId of Object.keys(node.inputs)) {
+      if (!known.has(portId)) delete node.inputs[portId];
+    }
   }
 
   /** Literal on the port, else the port's declared default, else null. */
@@ -335,19 +363,36 @@ export class Graph {
     };
   }
 
+  /**
+   * Replaces everything here with a document.
+   *
+   * Loading can fail part way through — a type this build does not have, a port
+   * that no longer exists — and a half-loaded document is worse than none: what
+   * did get in keeps the ids it was given, so the next node added collides with
+   * it, and the failure surfaces somewhere else entirely as a duplicate id. So
+   * the document is loaded into a graph of its own first, and only one that
+   * loaded completely is taken on here.
+   */
   private load(data: SerializedGraph): void {
-    this.nodes.clear();
-    this.edges.clear();
-    this.outgoing.clear();
-    this.incoming.clear();
-    this.counter = 0;
+    const scratch = new Graph(this.registry);
+    scratch.absorb(data);
 
+    this.nodes = scratch.nodes;
+    this.edges = scratch.edges;
+    this.outgoing = scratch.outgoing;
+    this.incoming = scratch.incoming;
+    this.counter = scratch.counter;
+  }
+
+  /** Fills a graph from a document, leaving it part filled if it cannot finish. */
+  private absorb(data: SerializedGraph): void {
     const previous = this.suppressed;
     this.suppressed = true;
     try {
       for (const node of data.nodes) {
         this.addNode(node.type, {
           id: node.id,
+          lenient: true,
           position: { ...node.position },
           inputs: node.inputs,
           ...(node.label !== undefined ? { label: node.label } : {}),

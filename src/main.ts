@@ -16,7 +16,15 @@ import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { PlaneChoice } from './ui/features.js';
 import { createSketchNode, tabs } from './ui/features.js';
-import { download, pickFile, readAutosave, timestampedName, writeAutosave } from './ui/file-io.js';
+import {
+  download,
+  keepRejected,
+  pickFile,
+  readAutosave,
+  readRejected,
+  timestampedName,
+  writeAutosave,
+} from './ui/file-io.js';
 import { NodeEditor } from './ui/node-editor.js';
 import { SketchSession } from './ui/sketch-session.js';
 import { buildStarterModel } from './ui/starter.js';
@@ -45,12 +53,18 @@ const graph = new Graph(registry);
 // Prefer whatever the last session left behind over the starter model.
 const autosaved = readAutosave();
 let restoredFromAutosave = false;
+/** Why the last session would not reopen, if it would not. */
+let autosaveProblem: string | null = null;
+
 if (autosaved !== null) {
   try {
     graph.restore(parseDocument(autosaved));
     restoredFromAutosave = true;
-  } catch {
-    restoredFromAutosave = false;
+  } catch (thrown) {
+    // Say why, and keep the document: the next autosave is moments away and
+    // would otherwise write over the only copy of somebody's session.
+    autosaveProblem = thrown instanceof Error ? thrown.message : String(thrown);
+    keepRejected(autosaved);
   }
 }
 if (!restoredFromAutosave) buildStarterModel(graph);
@@ -555,6 +569,9 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   if (message.type === 'ready') {
     statusEl.textContent = `kernel ready in ${(message.loadMs / 1000).toFixed(2)} s`;
     if (restoredFromAutosave) statusEl.textContent += ' · restored last session';
+    if (autosaveProblem !== null) {
+      statusEl.textContent += `\ncould not reopen your last session: ${autosaveProblem}`;
+    }
     requestSolve();
     return;
   }
@@ -644,6 +661,8 @@ if (import.meta.env.DEV) {
     visible: () => lastVisible,
     pending: () => inFlight,
     starter: buildStarterModel,
+    rejected: readRejected,
+    autosaveProblem: () => autosaveProblem,
     select: (nodeId: NodeId) => applySelection(nodeId, true),
     dialog,
     handleAt: () => viewport.handleScreenPosition(),

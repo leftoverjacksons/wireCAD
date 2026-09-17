@@ -390,13 +390,21 @@ the extra ports it needs, and `graph.schemaOf(nodeId)` — not the registry — 
 what everything reads ports from. The registry still only knows the type's fixed
 ports; the node knows the rest.
 
-Two consequences worth stating. A grown port's default is the value the shape
+Three consequences worth stating. A grown port's default is the value the shape
 was drawn at, so overriding one corner is a genuine override rather than a
 restatement of the whole shape, and the stored point list stays the single
-record of what was drawn. And because the inputs decide which ports exist,
-loading a document has to expand before it validates: a saved file carries
-literals for grown ports, and rejecting them would have made any edited profile
-unopenable.
+record of what was drawn. Because the inputs decide which ports exist, loading a
+document has to expand before it validates: a saved file carries literals for
+grown ports, and rejecting them would have made any edited profile unopenable.
+
+And setting one input can take another port away — deleting a sketch dimension
+takes its port with it — so the literal that port held is dropped at the same
+time. A number for a port that no longer exists means nothing, and left in
+place it is worse than nothing: the document still carries it, and the next
+attempt to open that document is refused over a value that could not have
+affected anything. Loading is lenient about such a literal for the same reason,
+because a file that will not open is a worse answer than a number quietly
+discarded.
 
 ## Known gaps
 
