@@ -22,6 +22,62 @@
       <div class="splitter" id="splitter"></div>
       <div id="node-editor"></div>
     </main>
+    <!--
+      Anything that stops the app loading — a module that fails to arrive, a
+      throw while it starts up — otherwise leaves the styled shell and nothing
+      else, which says nothing about what went wrong. This runs before the app
+      and puts the reason on the page.
+    -->
+    <script>
+      (function () {
+        var told = false;
+        function report(what) {
+          if (told) return;
+          told = true;
+
+          var status = document.getElementById('kernel-status');
+          if (status !== null) {
+            status.textContent = 'wireCAD did not start';
+            status.className = 'startup-failed';
+          }
+
+          var panel = document.createElement('div');
+          panel.className = 'startup-error';
+          panel.innerHTML =
+            '<strong>wireCAD did not start.</strong>' +
+            '<p>' +
+            String(what).replace(/[<&]/g, ' ') +
+            '</p>' +
+            '<p>A module that will not load is usually a stale one: stop every ' +
+            'dev server, delete <code>node_modules/.vite</code>, start one ' +
+            'again, and reload the page bypassing its cache ' +
+            '(<code>Ctrl+Shift+R</code>).</p>';
+          document.body.append(panel);
+        }
+
+        window.addEventListener('error', function (event) {
+          // A failed stylesheet or image is not worth a panel over.
+          if (event.target !== window && event.target instanceof HTMLElement) {
+            if (event.target.tagName !== 'SCRIPT') return;
+            report('Could not load ' + (event.target.getAttribute('src') ?? 'a script') + '.');
+            return;
+          }
+          report(event.message ?? 'Something threw while starting up.');
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (event) {
+          report(event.reason && event.reason.message ? event.reason.message : event.reason);
+        });
+
+        // Nothing has claimed the page after this long, and no error arrived
+        // either: say so rather than leaving an empty window.
+        window.setTimeout(function () {
+          if (document.querySelector('.tool-button') === null) {
+            report('The app never finished starting, and said nothing about why.');
+          }
+        }, 20000);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

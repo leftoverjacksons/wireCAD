@@ -856,3 +856,40 @@ input[type='range'] {
 .node[data-kind='list'] { --kind-color: var(--type-list); }
 .node[data-kind='boolean'] { --kind-color: var(--type-boolean); }
 .node[data-kind='string'] { --kind-color: var(--type-string); }
+
+/* Shown by the startup guard in index.html when the app never came up. */
+.startup-failed {
+  color: var(--error);
+}
+
+.startup-error {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  max-width: 560px;
+  padding: 18px 22px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 10px 40px #000a;
+}
+
+.startup-error strong {
+  color: var(--error);
+}
+
+.startup-error p {
+  margin: 10px 0 0;
+}
+
+.startup-error code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--accent);
+}
