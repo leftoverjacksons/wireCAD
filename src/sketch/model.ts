@@ -213,30 +213,3 @@ export function decodeSketch(points: Raw, entities: Raw, constraints: Raw): Sket
 
   return { points: decodedPoints, entities: decodedEntities, constraints: decodedConstraints };
 }
-
-/**
- * The points of a closed loop of lines, in order. Null when the lines do not
- * form exactly one closed loop, which is what a profile has to be.
- */
-export function loopOrder(sketch: Sketch): number[] | null {
-  const lines = sketch.entities.filter((entity): entity is Line => entity.kind === 'line');
-  if (lines.length !== sketch.entities.length || lines.length < 3) return null;
-
-  const remaining = [...lines];
-  const first = remaining.shift()!;
-  const order = [first.a, first.b];
-
-  while (remaining.length > 0) {
-    const tail = order[order.length - 1]!;
-    const index = remaining.findIndex((line) => line.a === tail || line.b === tail);
-    if (index < 0) return null;
-
-    const [line] = remaining.splice(index, 1);
-    order.push(line!.a === tail ? line!.b : line!.a);
-  }
-
-  // The walk must come back to where it started, and visit each point once.
-  if (order[order.length - 1] !== order[0]) return null;
-  order.pop();
-  return new Set(order).size === order.length ? order : null;
-}

@@ -102,7 +102,7 @@ export const tabs: readonly FeatureTab[] = [
           {
             id: 'sketch',
             label: 'Create Sketch',
-            nodeType: 'sketch.polygon',
+            nodeType: 'sketch.constrained',
             kind: 'sketch',
             operands: [{ id: 'plane', label: 'Plane', type: 'plane' }],
             numbers: [],
@@ -259,6 +259,31 @@ export function resolvePlaneSource(
   placeDownstream(graph, node.id);
 
   return { node: node.id, port: 'plane' };
+}
+
+/**
+ * An empty sketch on the chosen plane, ready to be drawn into.
+ *
+ * Nothing is inferred here: what ends up in it is what gets drawn, and the
+ * session writes that to the node as it goes.
+ */
+export function createSketchNode(graph: Graph, source: PlaneChoice): NodeId {
+  const created: NodeId[] = [];
+
+  try {
+    const plane = resolvePlaneSource(graph, source, created);
+    const node = graph.addNode('sketch.constrained', {
+      inputs: { points: [], entities: [], constraints: [], dims: [] },
+    });
+    created.push(node.id);
+
+    graph.connect(plane, { node: node.id, port: 'plane' });
+    placeDownstream(graph, node.id);
+    return node.id;
+  } catch (thrown) {
+    for (const nodeId of created.reverse()) graph.removeNode(nodeId);
+    throw thrown;
+  }
 }
 
 /**

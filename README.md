@@ -22,7 +22,8 @@ is ready, typically around two seconds.
 
 ## Using it
 
-- **Toolbar** — a **Sketch** tab (Rectangle, Circle) and a **Solid** tab, whose
+- **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
+  Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
   (Fillet, Chamfer, Shell) and *Construct* (XY/XZ/YZ datum planes, Offset
   Plane). Each button opens a dialog.
@@ -41,32 +42,44 @@ is ready, typically around two seconds.
 - **Sketching on a face** — start a sketch, then click a flat face of a solid in
   the 3D view. That creates a `Face Plane` node holding the reference, and the
   sketch rides the face when the model changes underneath it.
-- **Sketch mode** — *Create Sketch* asks for a plane or a face, then aligns the
-  camera to it, dims everything else and gives you Line, Rectangle and Circle.
-  Points snap to a 1 mm grid. A polyline closes by clicking its first point or
-  pressing Enter; Escape cancels and creates nothing. Finishing emits a profile
-  node already wired to its plane, carrying the relations the drawing shows —
-  an edge drawn flat is horizontal, the first point is locked — and the
-  dimensions the shape can honestly be named by. A rectangle comes out with
-  Width and Height and no freedom left. A shape that is not recognisably
-  anything gets its relations and no lengths, because inventing lengths would
-  put contradictions in a sketch nobody asked to over-constrain; it arrives
-  under-constrained, which is what a freshly drawn sketch honestly is.
-- **Editing a sketch** — select a Sketch node and press *Edit Sketch*. Click its
-  points and edges in the 3D view to pick them, then apply a relation —
-  Horizontal, Vertical, Parallel, Perpendicular, Equal, Coincident, Concentric,
-  On line, Midpoint — or press *Dimension*, which reads what you picked: a line
-  gives a length, a circle a radius, two points a distance, two lines an angle.
-  The panel says how many degrees of freedom are left, lists every rule with its
-  number editable in place, and removes one with ×. A relation that would
-  contradict what is already there is refused and rolled back rather than
-  leaving the sketch in a state the solver cannot make sense of.
+- **Sketching** — *Create Sketch* asks for a plane or a face, aligns the camera
+  to it, dims everything else and opens a session. It stays open until you press
+  *Finish*: draw as many things as you like, constrain and dimension them as you
+  go, in any order. The tools are Line, Rectangle, Circle and Point, with Select
+  for picking what is already there. Points snap to a 1 mm grid, and a click
+  landing on a point already drawn reuses it, which is how edges join. A line
+  chain carries on until Enter or Escape ends it; clicking back on its first
+  point closes it. Escape backs out one step at a time — the chain, then the
+  tool, then the picks, then the session. Everything drawn is written to the
+  node as it happens, so leaving is not what commits the work, and a sketch
+  nobody drew in is removed rather than left behind reporting that it is empty.
+- **Constraining and dimensioning** — with Select, click points and edges in the
+  3D view, then apply a relation — Horizontal, Vertical, Parallel,
+  Perpendicular, Equal, Coincident, Concentric, On line, Midpoint — or press
+  *Dimension*, which reads what you picked: a line gives a length, a circle a
+  radius, two points a distance, two lines an angle. *Delete* removes what is
+  picked, along with every rule that referred to it. The panel says how many
+  degrees of freedom are left, lists every rule with its number editable in
+  place, and removes one with ×. A relation that would contradict what is
+  already there is refused and rolled back rather than leaving the sketch in a
+  state the solver cannot make sense of. Press *Edit Sketch* with a Sketch node
+  selected to reopen the same session later.
+- **What a drawing asserts** — only what it shows: an edge drawn flat is
+  horizontal, one drawn upright is vertical, and points clicked on top of each
+  other are the same point. Never a length. Inventing lengths would put
+  contradictions in a sketch nobody asked to over-constrain, so a fresh drawing
+  comes out under-constrained, which is what it honestly is, and the dimension
+  tool is how it stops being.
+- **Several outlines in one sketch** — a sketch is not one profile. Whatever it
+  closes around becomes material and whatever is drawn inside that becomes a
+  hole, as deep as you like: a ring drawn inside a hole is solid again. Two
+  outlines side by side extrude into two bodies. Nesting decides which is which,
+  not drawing order, so a plate with a bore is one sketch rather than a boolean.
 - **Profiles are one node** — however complicated the shape, it is a single node
-  carrying its own dimensions, named and listed: `P1 U`, `P1 V` and so on, one
-  pair per corner, growing with the drawing. Each is an ordinary port, so it can
-  be typed in, driven from a parameter node, or read by something else, and each
-  defaults to the value it was drawn at, so a profile nobody has touched is
-  exactly what was drawn.
+  carrying its own dimensions, named and listed: `originU`, `originV`, then
+  whatever the dimension tool added, growing with the drawing. Each is an
+  ordinary port, so it can be typed in, driven from a parameter node, or read by
+  something else, and each defaults to the value it was drawn at.
 - **Reading the graph** — every node says what it makes: Body, Profile, Plane,
   Edges or Value, on a badge in its header, with an accent bar and port colours
   from the same palette.
@@ -310,6 +323,30 @@ thing again, and is refused rather than approximated: if the residuals cannot be
 driven to zero the node reports how far off it got instead of handing back a
 shape that satisfies nothing.
 
+## From a sketch to a face
+
+A solved sketch is a set of points, not an outline, so the outline has to be
+recovered. Lines are walked into closed loops, and each circle is a loop of its
+own. The walk is only unambiguous if every point joins exactly two lines, so a
+branch or a loose end is reported rather than guessed at — the alternative is
+building whichever loop the walk happened to find first and calling it the
+profile.
+
+Which loop is material and which is a hole is decided by where they sit. A
+loop's depth is how many other loops contain it, tested with a point on its own
+boundary — its centre would not do, because the centre of the outer of two
+circles about the same point lies inside the inner one too. Even depth bounds
+material, odd takes it away, so a ring drawn inside a hole is solid again.
+Disjoint outlines become separate faces, and extrude to separate bodies.
+
+Orientation then has to be imposed rather than inherited. A face's outer wire
+must run anticlockwise about its normal and its holes the other way, and how a
+loop was drawn says nothing about which it is meant to be — you can trace a
+rectangle either way round. Getting this wrong does not fail: OpenCASCADE builds
+a face that is quietly wrong, and the error shows up as a body of the wrong
+volume, several percent out, long after the fact. So each wire's signed area is
+measured and the points are reversed to suit the part it plays.
+
 ## Ports a node grows for itself
 
 Most node types have a fixed set of ports. A profile cannot: a drawn shape needs
@@ -329,11 +366,12 @@ unopenable.
 
 ## Known gaps
 
-- A sketch cannot be reopened and redrawn; its points are editable on the node,
-  but there is no "edit sketch" mode yet.
-- Profiles are single closed loops, so a shape with a hole in it needs a boolean
-  rather than an inner loop.
-
+- Dimensions and constraints are listed in the panel, not drawn in the view:
+  there are no dimension lines or constraint glyphs on the sketch itself.
+- Sketch entities are lines and circles. No arcs, splines, or trimming, so a
+  rounded outline is a fillet on the solid rather than in the sketch.
+- Lines have to meet exactly two at a point. A sketch that branches or trails a
+  loose end is reported rather than partly built.
 - One radius per Fillet node and one distance per Chamfer node. Varying the
   amount across edges means a second node, rather than a list of groups in one
   dialog. Chamfers are symmetric; there is no two-distance or distance-and-angle

@@ -15,11 +15,10 @@ import { geometrySchemas } from './nodes/solid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { PlaneChoice } from './ui/features.js';
-import { tabs } from './ui/features.js';
+import { createSketchNode, tabs } from './ui/features.js';
 import { download, pickFile, readAutosave, timestampedName, writeAutosave } from './ui/file-io.js';
 import { NodeEditor } from './ui/node-editor.js';
-import { SketchEditor } from './ui/sketch-editor.js';
-import { SketchMode } from './ui/sketch-mode.js';
+import { SketchSession } from './ui/sketch-session.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
 import type { FaceHit } from './viewport.js';
@@ -91,16 +90,6 @@ function planeValueFor(choice: PlaneChoice): PlaneValue | null {
   return match === undefined ? null : makePlane(match.face.origin, match.face.normal);
 }
 
-const sketchMode = new SketchMode(viewportEl, graph, viewport, {
-  onBeforeChange: () => history.capture(),
-  onFinish: (nodeId) => {
-    applySelection(nodeId, true);
-    editor.reveal(nodeId);
-    requestSolve();
-  },
-  onExit: () => document.body.classList.remove('sketching'),
-});
-
 const dialog = new FeatureDialog(viewportEl, graph, {
   onBeforeChange: () => history.capture(),
   onCommit: (nodeId) => {
@@ -118,20 +107,38 @@ const dialog = new FeatureDialog(viewportEl, graph, {
       statusEl.textContent = 'That plane has not been solved yet — try again in a moment.';
       return;
     }
-    document.body.classList.add('sketching');
-    sketchMode.enter(plane, choice);
+
+    // A sketch starts as an empty node on the chosen plane, and drawing fills
+    // it in. There is nothing to commit at the end, because everything drawn
+    // has already been written to it.
+    history.capture();
+    try {
+      const nodeId = createSketchNode(graph, choice);
+      applySelection(nodeId, true);
+      editor.reveal(nodeId);
+      document.body.classList.add('sketching');
+      sketchSession.enter(nodeId, plane);
+    } catch (thrown) {
+      statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
+    }
   },
 });
 
-const sketchEditor = new SketchEditor(viewportEl, graph, viewport, {
+const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   onBeforeChange: () => history.capture(),
   onChanged: () => requestSolve(),
-  onExit: () => document.body.classList.remove('sketching'),
+  onExit: () => {
+    document.body.classList.remove('sketching');
+    // Leaving a sketch nobody drew in takes the node with it.
+    if (selected !== null && (graph.getNode(selected) ?? null) === null) {
+      applySelection(null, true);
+    }
+  },
 });
 
 /** Reopen the selected sketch, on whatever plane it is actually sitting on. */
 function editSketch(): void {
-  if (!SketchEditor.editable(graph, selected)) {
+  if (!SketchSession.editable(graph, selected)) {
     statusEl.textContent = 'Select a Sketch node first.';
     return;
   }
@@ -144,7 +151,7 @@ function editSketch(): void {
   }
 
   document.body.classList.add('sketching');
-  sketchEditor.enter(selected!, plane);
+  sketchSession.enter(selected!, plane);
 }
 
 const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
@@ -244,6 +251,9 @@ function applyHistory(action: 'undo' | 'redo'): void {
   const changed = action === 'undo' ? history.undo() : history.redo();
   if (!changed) return;
   refreshHistoryButtons();
+  // A session open over an undone edit is holding a copy of a sketch the
+  // document no longer has, so it reads the node again.
+  if (sketchSession.isActive) sketchSession.refresh();
   requestSolve();
 }
 
@@ -552,7 +562,7 @@ if (import.meta.env.DEV) {
     pending: () => inFlight,
     starter: buildStarterModel,
     select: (nodeId: NodeId) => applySelection(nodeId, true),
-    sketchEditor,
+    sketch: sketchSession,
     screenOfSketch: (u: number, v: number) => {
       const plane = lastPlanes[graph.incomingEdge(selected!, 'plane')?.from.node ?? ''] ?? WORLD_XY;
       return viewport.screenPositionOf(pointOnPlane(plane, u, v));

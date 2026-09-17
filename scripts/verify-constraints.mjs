@@ -140,8 +140,9 @@ for (const [name, ok, extra] of checks) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
 }
 
-// Now the same thing the way a person gets there: draw a rectangle in sketch
-// mode and check it comes out constrained and dimensioned.
+// Now the same thing the way a person gets there: draw in a sketch session,
+// with more than one thing in it, and leave when done rather than the session
+// deciding for you.
 console.log('');
 console.log('drawing one:');
 
@@ -149,48 +150,121 @@ await page.evaluate(async () => {
   const { graph } = window.wirecad;
   graph.restore({ version: 1, nodes: [], edges: [] });
   graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
-  // Sketch mode needs the plane's value, which only a solve produces.
+  // A sketch session needs the plane's value, which only a solve produces.
   await window.__settle();
 });
 await page.getByRole('button', { name: 'Sketch', exact: true }).click();
 await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
 await page.getByRole('button', { name: 'Create', exact: true }).click();
-const panel = page.locator('.sketch-panel:not(.sketch-editor)');
-await panel.getByRole('button', { name: 'Rectangle', exact: true }).click();
+
+const panel = page.locator('.sketch-panel');
+await panel.waitFor({ state: 'visible', timeout: 10_000 });
 
 const canvas = await page.locator('canvas').first().boundingBox();
-await page.mouse.click(canvas.x + canvas.width * 0.42, canvas.y + canvas.height * 0.42);
-await page.mouse.click(canvas.x + canvas.width * 0.58, canvas.y + canvas.height * 0.56);
-// A rectangle completes on its second corner, so sketch mode has already left.
-await page.locator('.sketch-panel:not(.sketch-editor)').waitFor({ state: 'hidden', timeout: 10_000 });
+const at = (fx, fy) => [canvas.x + canvas.width * fx, canvas.y + canvas.height * fy];
+
+// A rectangle...
+await panel.getByRole('button', { name: 'Rectangle', exact: true }).click();
+await page.mouse.click(...at(0.36, 0.34));
+await page.mouse.click(...at(0.64, 0.62));
+const afterRectangle = await panel.isVisible();
+
+// ...and a circle inside it, in the same session.
+await panel.getByRole('button', { name: 'Circle', exact: true }).click();
+await page.mouse.click(...at(0.5, 0.48));
+await page.mouse.click(...at(0.54, 0.48));
 
 const drawn = await page.evaluate(async () => {
   await window.__settle();
   const { graph } = window.wirecad;
   const node = graph.allNodes().find((n) => n.type === 'sketch.constrained');
   if (node === undefined) return { found: false };
-  const schema = graph.schemaOf(node.id);
+
+  const points = graph.inputValue(node.id, 'points') ?? [];
+  const entities = graph.inputValue(node.id, 'entities') ?? [];
+  const uv = [];
+  for (let i = 0; i < points.length; i += 2) uv.push({ u: points[i], v: points[i + 1] });
+  const circle = entities.find((row) => row[0] === 'circle');
+
   return {
     found: true,
-    labels: schema.inputs.filter((p) => p.hidden !== true).map((p) => p.label),
+    id: node.id,
+    status: document.querySelector('.sketch-status')?.textContent ?? '',
+    labels: graph.schemaOf(node.id).inputs.filter((p) => p.hidden !== true).map((p) => p.label),
     error: window.wirecad.reports().find((r) => r.nodeId === node.id)?.error ?? null,
     relations: (graph.inputValue(node.id, 'constraints') ?? []).map((row) => row[0]),
+    kinds: entities.map((row) => row[0]),
+    // The rectangle is the four points its edges run through.
+    width: Math.max(...uv.slice(0, 4).map((p) => p.u)) - Math.min(...uv.slice(0, 4).map((p) => p.u)),
+    height: Math.max(...uv.slice(0, 4).map((p) => p.v)) - Math.min(...uv.slice(0, 4).map((p) => p.v)),
+    radius: circle === undefined ? 0 : circle[2],
   };
 });
 
+// Finish is the only thing that ends a session.
+await panel.getByRole('button', { name: 'Finish', exact: true }).click();
+await panel.waitFor({ state: 'hidden', timeout: 10_000 });
+
+const extruded = await page.evaluate(async (sketchId) => {
+  const { graph } = window.wirecad;
+  graph.addNode('solid.extrude', { id: 'drawnBody', inputs: { distance: 10 } });
+  graph.connect({ node: sketchId, port: 'profile' }, { node: 'drawnBody', port: 'profile' });
+  await window.__settle();
+
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === 'drawnBody');
+  return {
+    error: window.wirecad.reports().find((r) => r.nodeId === 'drawnBody')?.error ?? null,
+    volume: mesh === undefined ? null : window.__volume(mesh),
+  };
+}, drawn.id);
+
+const wantVolume = (drawn.width * drawn.height - Math.PI * drawn.radius ** 2) * 10;
 const drawChecks = [
   ['drawing makes a Sketch node', drawn.found, String(drawn.found)],
-  ['it solves                  ', drawn.error === null, drawn.error ?? 'clean'],
-  ['with width and height      ', (drawn.labels ?? []).includes('width') && drawn.labels.includes('height'),
-    (drawn.labels ?? []).join(',')],
-  ['and the relations drawn    ', (drawn.relations ?? []).filter((k) => k === 'horizontal').length === 2 &&
+  ['it stays open after a shape', afterRectangle, afterRectangle ? 'still drawing' : 'it left'],
+  ['a rectangle and a circle    ', drawn.kinds.join(',') === 'line,line,line,line,circle',
+    drawn.kinds.join(',')],
+  ['it solves                   ', drawn.error === null, drawn.error ?? 'clean'],
+  ['with the relations drawn    ', (drawn.relations ?? []).filter((k) => k === 'horizontal').length === 2 &&
     (drawn.relations ?? []).filter((k) => k === 'vertical').length === 2,
     (drawn.relations ?? []).join(',')],
+  ['and no lengths assumed      ', (drawn.labels ?? []).join(',') === 'Plane,originU,originV',
+    (drawn.labels ?? []).join(',')],
+  ['it says how loose it is     ', /degrees of freedom/.test(drawn.status), drawn.status],
+  ['the circle becomes a hole   ', extruded.volume !== null && drawn.radius > 0 &&
+    Math.abs(extruded.volume - wantVolume) / wantVolume < 0.01,
+    extruded.error ?? `${extruded.volume?.toFixed(0)} mm3, wanted ${wantVolume.toFixed(0)}`],
 ];
 for (const [name, ok, extra] of drawChecks) {
   if (!ok) failures += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
+}
+
+// A sketch nobody drew in should not be left behind.
+const abandoned = await (async () => {
+  await page.evaluate(async () => {
+    const { graph } = window.wirecad;
+    graph.restore({ version: 1, nodes: [], edges: [] });
+    graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
+    await window.__settle();
+  });
+  await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+  await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
+  await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await page.locator('.sketch-panel').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByRole('button', { name: 'Finish', exact: true }).click();
+  await page.locator('.sketch-panel').waitFor({ state: 'hidden', timeout: 10_000 });
+  return page.evaluate(() =>
+    window.wirecad.graph.allNodes().filter((n) => n.type === 'sketch.constrained').length,
+  );
+})();
+
+if (abandoned === 0) console.log('PASS  an empty one is not kept  → nothing left behind');
+else {
+  failures += 1;
+  console.log(`FAIL  an empty one is not kept  → ${abandoned} left behind`);
 }
 
 // The interactive editor: select geometry in the view, apply relations, and
@@ -230,7 +304,7 @@ await page.evaluate(() => window.wirecad.select('sk'));
 await page.getByRole('button', { name: 'Sketch', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 
-const editor = page.locator('.sketch-editor');
+const editor = page.locator('.sketch-panel');
 await editor.waitFor({ state: 'visible', timeout: 10_000 });
 const startStatus = await editor.locator('.sketch-status').innerText();
 
@@ -239,7 +313,7 @@ const startStatus = await editor.locator('.sketch-status').innerText();
 const pickEdge = async (a, b) => {
   const info = await page.evaluate(
     ([a, b]) => {
-      const points = window.wirecad.sketchEditor.solvedPoints();
+      const points = window.wirecad.sketch.solvedPoints();
       const from = points[a];
       const to = points[b];
       const uv = { u: (from.u + to.u) / 2, v: (from.v + to.v) / 2 };
@@ -274,7 +348,7 @@ const state = await page.evaluate(() => {
   return { kinds, labels, rows: document.querySelectorAll('.sketch-row').length };
 });
 
-await editor.getByRole('button', { name: 'Done', exact: true }).click();
+await editor.getByRole('button', { name: 'Finish', exact: true }).click();
 
 // Six unknowns, less a locked point and a horizontal base, is three.
 const editChecks = [

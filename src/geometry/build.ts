@@ -27,7 +27,7 @@ export function faceFromWire(oc: OpenCascadeInstance, wire: Shape): Shape {
 }
 
 /** Closed polygon through world-space points. */
-export function faceFromPoints(oc: OpenCascadeInstance, points: readonly Vec3[]): Shape {
+export function wireFromPoints(oc: OpenCascadeInstance, points: readonly Vec3[]): Shape {
   if (points.length < 3) throw new Error('A profile needs at least three points');
 
   const wireMaker = new oc.BRepBuilderAPI_MakeWire_1();
@@ -47,7 +47,11 @@ export function faceFromPoints(oc: OpenCascadeInstance, points: readonly Vec3[])
 
   const wire = wireMaker.Wire();
   wireMaker.delete();
-  return faceFromWire(oc, wire);
+  return wire;
+}
+
+export function faceFromPoints(oc: OpenCascadeInstance, points: readonly Vec3[]): Shape {
+  return faceFromWire(oc, wireFromPoints(oc, points));
 }
 
 export function polygonFace(
@@ -78,7 +82,7 @@ export function rectangleFace(
   ]);
 }
 
-export function circleFace(
+export function circleWire(
   oc: OpenCascadeInstance,
   plane: PlaneValue,
   radius: number,
@@ -103,5 +107,41 @@ export function circleFace(
   normal.delete();
   origin.delete();
 
-  return faceFromWire(oc, wire);
+  return wire;
+}
+
+export function circleFace(
+  oc: OpenCascadeInstance,
+  plane: PlaneValue,
+  radius: number,
+  u: number,
+  v: number,
+): Shape {
+  return faceFromWire(oc, circleWire(oc, plane, radius, u, v));
+}
+
+/**
+ * A face bounded by one wire with others taken out of it.
+ *
+ * Orientation is the caller's to get right: the outer wire has to run
+ * anticlockwise about the face normal and each hole the other way. A hole wire
+ * running the same way as the outer one does not fail — it quietly builds a
+ * face that is wrong.
+ */
+export function faceWithHoles(
+  oc: OpenCascadeInstance,
+  outer: Shape,
+  holes: readonly Shape[],
+): Shape {
+  const maker = new oc.BRepBuilderAPI_MakeFace_15(outer, true);
+  for (const hole of holes) maker.Add(hole);
+
+  if (!maker.IsDone()) {
+    maker.delete();
+    throw new Error('Those outlines do not bound a face');
+  }
+
+  const face = maker.Face();
+  maker.delete();
+  return face;
 }

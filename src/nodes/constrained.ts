@@ -1,9 +1,11 @@
 import type { NodeDefinition, NodeSchema, PortDef, Value } from '../core/types.js';
-import { circleFace, polygonFace } from '../geometry/build.js';
-import type { OpenCascadeInstance } from '../geometry/kernel.js';
+import { circleWire, compoundOf, faceWithHoles, wireFromPoints } from '../geometry/build.js';
+import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { geometry } from '../geometry/kernel.js';
-import { WORLD_XY } from '../geometry/plane.js';
-import { decodeSketch, dimensionsOf, loopOrder } from '../sketch/model.js';
+import { WORLD_XY, pointOnPlane } from '../geometry/plane.js';
+import { decodeSketch, dimensionsOf } from '../sketch/model.js';
+import type { Region } from '../sketch/regions.js';
+import { nestRegions, regionsOf, signedArea } from '../sketch/regions.js';
 import { solveSketch } from '../sketch/solver.js';
 import { asPlane } from './coerce.js';
 
@@ -95,25 +97,43 @@ export function createConstrainedNodes(oc: OpenCascadeInstance): NodeDefinition[
         );
       }
 
-      // One circle is a disc; otherwise the lines have to close into one loop.
-      const only = model.entities[0];
-      if (model.entities.length === 1 && only?.kind === 'circle') {
-        const centre = result.points[only.centre]!;
-        const radius = result.radii[0]!;
-        if (radius <= 0) throw new Error('That circle solved to a radius of zero or less');
-        return { profile: geometry(circleFace(oc, plane, radius, centre.u, centre.v), plane) };
+      // Whatever the sketch closes around becomes material, and whatever is
+      // drawn inside that becomes a hole in it. One sketch can hold as many of
+      // both as it likes; nesting decides which is which, not drawing order.
+      const regions = regionsOf(model);
+      if (regions.length === 0) {
+        throw new Error('This sketch has nothing closed in it yet — draw a loop or a circle');
       }
 
-      const order = loopOrder(model);
-      if (order === null) {
-        throw new Error('A profile needs its lines to make exactly one closed loop');
-      }
+      // A wire bounds material when it runs anticlockwise and takes it away
+      // when it runs clockwise. Which way a loop was drawn says nothing about
+      // which it is meant to be, so each one is turned to suit its part.
+      const wireOf = (region: Region, hole: boolean): Shape => {
+        if (region.kind === 'circle') {
+          const centre = result.points[region.centre]!;
+          const radius = result.radii[region.entity]!;
+          if (radius <= 0) throw new Error('A circle here solved to a radius of zero or less');
+          const wire = circleWire(oc, plane, radius, centre.u, centre.v);
+          return hole ? oc.TopoDS.Wire_1(wire.Reversed()) : wire;
+        }
 
-      const uv = order.flatMap((index) => {
-        const point = result.points[index]!;
-        return [point.u, point.v];
-      });
-      return { profile: geometry(polygonFace(oc, plane, uv), plane) };
+        const uv = region.points.map((index) => result.points[index]!);
+        if (signedArea(uv) < 0 !== hole) uv.reverse();
+        return wireFromPoints(
+          oc,
+          uv.map((point) => pointOnPlane(plane, point.u, point.v)),
+        );
+      };
+
+      const faces = nestRegions(regions, result.points, result.radii).map((face) =>
+        faceWithHoles(
+          oc,
+          wireOf(regions[face.outer]!, false),
+          face.holes.map((hole) => wireOf(regions[hole]!, true)),
+        ),
+      );
+
+      return { profile: geometry(compoundOf(oc, faces), plane) };
     },
   };
 

@@ -33,24 +33,32 @@ await page
 
 console.log(await page.locator('#kernel-status').innerText());
 
-await page.locator('#reports tr').first().waitFor({ timeout: 60_000 });
+await page.waitForFunction(() => (window.wirecad?.reports() ?? []).length > 0, null, {
+  timeout: 60_000,
+});
 await page.waitForTimeout(1500);
 console.log('cold solve  :', await page.locator('#stats').innerText());
 
-const sliders = page.locator('input[type=range]');
-const count = await sliders.count();
-
-for (let index = 0; index < count; index++) {
-  const slider = sliders.nth(index);
-  await slider.focus();
-  for (let press = 0; press < 5; press++) await slider.press('ArrowRight');
+// Change what the starter model is made of, one dimension at a time, and watch
+// what each change costs. Only what depends on it should be recomputed.
+const nudge = async (label, port, value) => {
+  await page.evaluate(
+    ([label, port, value]) => {
+      const { graph } = window.wirecad;
+      const node = graph.allNodes().find((candidate) => candidate.label === label);
+      if (node === undefined) throw new Error(`no node labelled ${label}`);
+      graph.setInput(node.id, port, value);
+      window.wirecad.solve();
+    },
+    [label, port, value],
+  );
   await page.waitForTimeout(2000);
-  const label = await page
-    .locator('.label-row span')
-    .nth(index * 2)
-    .innerText();
-  console.log(`after ${label.padEnd(12)}:`, await page.locator('#stats').innerText());
-}
+  console.log(`after ${`${label}.${port}`.padEnd(20)}:`, await page.locator('#stats').innerText());
+};
+
+await nudge('Body profile', 'width', 80);
+await nudge('Body', 'distance', 30);
+await nudge('Bore profile', 'radius', 12);
 
 const rendered = await page.evaluate(() => {
   const canvas = document.querySelector('canvas');
