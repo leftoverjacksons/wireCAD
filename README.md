@@ -57,6 +57,12 @@ is ready, typically around two seconds.
 - **Reading the graph** — every node says what it makes: Body, Profile, Plane,
   Edges or Value, on a badge in its header, with an accent bar and port colours
   from the same palette.
+- **Dimensions are readable as well as writable** — every dimension a node holds
+  is offered as an output too, so a bore's radius can drive the fillet that
+  breaks its edge without a parameter node standing in between. Drag from the
+  dimension on the right of one node to the dimension on the left of another.
+- **Renaming** — double-click a node's name to change it. Clearing the field
+  puts the type's own name back.
 - **Dimensions live on their node** by default, in a field you can type into.
   Pulling one out to a Number node earns you a sidebar slider and lets two
   features share it, and the graph is there for that — but it is something you
@@ -121,6 +127,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:edges` | Checks per-edge fillet selection, and that a selection survives a resize |
 | `npm run verify:profile` | Checks a profile's named dimensions drive its geometry, typed or wired |
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
+| `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -232,6 +239,21 @@ checks the volume against what those four rounded corners should leave.
 The selection lives in its own `Edge Selection` node, so the set is visible in
 the graph and can be rewired into another operation later rather than being
 buried in the fillet.
+
+## Dimensions as outputs
+
+Every numeric input a node has is also published as an output of the same name,
+so one dimension can drive another directly. A node never restates these when it
+evaluates: the output carries `echoes`, naming the input it repeats, and the
+evaluator fills it in. That keeps the geometry code about geometry, and means a
+node type gets this by being wrapped in `echoDimensions` rather than by
+remembering to return its own inputs.
+
+Echoed outputs follow the order of the inputs they come from, which lines them
+up with their own rows on a profile — Radius in on the left, Radius out on the
+right. On a node with more inputs than outputs the tail of them sits a row or
+two above its input, since a port's row is its position in the column. The
+labels still say which is which.
 
 ## Ports a node grows for itself
 

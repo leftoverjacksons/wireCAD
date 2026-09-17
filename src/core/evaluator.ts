@@ -42,6 +42,9 @@ export class Evaluator {
       const node = graph.requireNode(nodeId);
       const definition = this.registry.require(node.type);
       const schema = graph.schemaOf(nodeId);
+      // An output that only repeats an input is filled here, so a node never has
+      // to restate its own dimensions to publish them.
+      const echoed = schema.outputs.filter((port) => port.echoes !== undefined);
 
       const inputs: Record<PortId, Value> = {};
       const hashParts: string[] = [node.type];
@@ -87,6 +90,7 @@ export class Evaluator {
 
       try {
         const outputs = definition.evaluate(inputs);
+        for (const port of echoed) outputs[port.id] = inputs[port.echoes!] ?? null;
         this.cache.set(hash, { outputs, error: null });
         results.set(nodeId, { status: 'evaluated', hash, outputs });
         stats.evaluated++;

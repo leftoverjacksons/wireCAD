@@ -3,10 +3,11 @@ import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { geometry, kernelCall, shapeOf, tessellate } from '../geometry/kernel.js';
 import { length } from '../geometry/plane.js';
 import { asNumber, asPositive } from './coerce.js';
+import { echoDimensions } from './echo.js';
 import { readEdgeRefs, resolveEdgeRefs } from './edges.js';
 import { matchingFaces } from './face.js';
 
-export const filletSchema: NodeSchema = {
+export const filletSchema: NodeSchema = echoDimensions({
   type: 'solid.fillet',
   label: 'Fillet',
   category: 'Modify',
@@ -16,9 +17,9 @@ export const filletSchema: NodeSchema = {
     { id: 'radius', label: 'Radius', type: 'number', default: 2 },
   ],
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
-};
+});
 
-export const chamferSchema: NodeSchema = {
+export const chamferSchema: NodeSchema = echoDimensions({
   type: 'solid.chamfer',
   label: 'Chamfer',
   category: 'Modify',
@@ -28,9 +29,9 @@ export const chamferSchema: NodeSchema = {
     { id: 'distance', label: 'Distance', type: 'number', default: 2 },
   ],
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
-};
+});
 
-export const shellSchema: NodeSchema = {
+export const shellSchema: NodeSchema = echoDimensions({
   type: 'solid.shell',
   label: 'Shell',
   category: 'Modify',
@@ -43,7 +44,7 @@ export const shellSchema: NodeSchema = {
     { id: 'rank', label: 'Rank', type: 'number', default: 0 },
   ],
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
-};
+});
 
 export const modifySchemas: readonly NodeSchema[] = [filletSchema, chamferSchema, shellSchema];
 

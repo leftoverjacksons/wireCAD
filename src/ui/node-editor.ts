@@ -136,6 +136,47 @@ export class NodeEditor {
     }
   }
 
+  /** Rename in place. Clearing the field puts the type's own name back. */
+  private beginRename(nodeId: NodeId): void {
+    const view = this.views.get(nodeId);
+    const title = view?.element.querySelector('.node-title');
+    if (view === undefined || !(title instanceof HTMLElement)) return;
+
+    const field = document.createElement('input');
+    field.type = 'text';
+    field.className = 'node-rename';
+    field.value = this.graph.requireNode(nodeId).label ?? '';
+    field.placeholder = view.schema.label;
+    field.addEventListener('pointerdown', (event) => event.stopPropagation());
+    field.addEventListener('dblclick', (event) => event.stopPropagation());
+
+    let settled = false;
+    const finish = (commit: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (!commit) {
+        field.replaceWith(title);
+        return;
+      }
+      this.callbacks.onBeforeChange();
+      // Renaming rebuilds the view, which is what removes the field.
+      this.graph.setLabel(nodeId, field.value);
+      this.callbacks.onDocumentChanged();
+    };
+
+    field.addEventListener('blur', () => finish(true));
+    field.addEventListener('keydown', (event) => {
+      // Keep typing away from the editor's own shortcuts.
+      event.stopPropagation();
+      if (event.key === 'Enter') finish(true);
+      else if (event.key === 'Escape') finish(false);
+    });
+
+    title.replaceWith(field);
+    field.focus();
+    field.select();
+  }
+
   // ---------------------------------------------------------------- rendering
 
   rebuild(): void {
@@ -171,6 +212,11 @@ export class NodeEditor {
     const title = document.createElement('span');
     title.className = 'node-title';
     title.textContent = node.label ?? schema.label;
+    title.title = 'Double-click to rename';
+    title.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      this.beginRename(nodeId);
+    });
 
     // Colour and name the node by what it makes, so a Body reads as a Body.
     const kind = nodeKind(schema);

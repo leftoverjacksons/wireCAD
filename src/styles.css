@@ -666,6 +666,18 @@ input[type='range'] {
 }
 
 /* What the node makes, named and coloured from the same palette as its ports. */
+.node-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
 .node-kind {
   flex: 0 0 auto;
   margin-left: 6px;
@@ -682,7 +694,19 @@ input[type='range'] {
   border-left: 3px solid var(--kind-color, var(--line-bright));
 }
 
-.node[data-kind] .node-kind {
+.node[data-kind] .node-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.node-kind {
   color: var(--kind-color, var(--muted));
 }
 

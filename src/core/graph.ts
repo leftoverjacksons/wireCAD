@@ -188,8 +188,11 @@ export class Graph {
     this.emit({ kind: 'node-moved', nodeId });
   }
 
-  setLabel(nodeId: NodeId, label: string): void {
-    this.requireNode(nodeId).label = label;
+  /** An empty name hands the node back to the label its type carries. */
+  setLabel(nodeId: NodeId, label: string | undefined): void {
+    const node = this.requireNode(nodeId);
+    if (label === undefined || label.trim() === '') delete node.label;
+    else node.label = label.trim();
     this.emit({ kind: 'node-renamed', nodeId });
   }
 

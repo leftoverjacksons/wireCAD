@@ -4,6 +4,7 @@ import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { geometry, geometryOf, kernelCall, shapeOf } from '../geometry/kernel.js';
 import { WORLD_XY } from '../geometry/plane.js';
 import { asList, asNumber, asPlane, asPositive } from './coerce.js';
+import { echoDimensions } from './echo.js';
 
 type ExtrudeOperation = (typeof EXTRUDE_OPERATIONS)[number];
 
@@ -15,7 +16,7 @@ function asOperation(value: unknown): ExtrudeOperation {
   return value as ExtrudeOperation;
 }
 
-export const rectangleSchema: NodeSchema = {
+export const rectangleSchema: NodeSchema = echoDimensions({
   type: 'sketch.rectangle',
   label: 'Rectangle',
   category: 'Sketch',
@@ -27,9 +28,9 @@ export const rectangleSchema: NodeSchema = {
     { id: 'v', label: 'V', type: 'number', default: 0 },
   ],
   outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
-};
+});
 
-export const circleSchema: NodeSchema = {
+export const circleSchema: NodeSchema = echoDimensions({
   type: 'sketch.circle',
   label: 'Circle',
   category: 'Sketch',
@@ -40,7 +41,7 @@ export const circleSchema: NodeSchema = {
     { id: 'v', label: 'V', type: 'number', default: 0 },
   ],
   outputs: [{ id: 'profile', label: 'Profile', type: 'sketch' }],
-};
+});
 
 /**
  * A drawn sketch. `points` holds the shape as drawn and is what decides how many
@@ -73,7 +74,10 @@ export const polygonSchema: NodeSchema = {
 
     // Echoed as outputs too, so one corner can drive something else without a
     // separate parameter node standing in the middle.
-    return { inputs: dimensions, outputs: dimensions };
+    return {
+      inputs: dimensions,
+      outputs: dimensions.map((port) => ({ ...port, echoes: port.id })),
+    };
   },
 };
 
@@ -84,7 +88,7 @@ export function cornerPort(corner: number, axis: 'u' | 'v'): string {
 /** What an extrude does when it meets the body it is pointed at. */
 export const EXTRUDE_OPERATIONS = ['New body', 'Join', 'Cut', 'Intersect'] as const;
 
-export const extrudeSchema: NodeSchema = {
+export const extrudeSchema: NodeSchema = echoDimensions({
   type: 'solid.extrude',
   label: 'Extrude',
   category: 'Create',
@@ -101,7 +105,7 @@ export const extrudeSchema: NodeSchema = {
     { id: 'target', label: 'Target', type: 'geometry' },
   ],
   outputs: [{ id: 'solid', label: 'Solid', type: 'geometry' }],
-};
+});
 
 function booleanSchema(type: string, label: string): NodeSchema {
   return {
@@ -183,7 +187,6 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
       // drawn value, so an untouched profile is exactly what was drawn.
       const corners = raw.length / 2;
       const uv: number[] = [];
-      const outputs: Record<string, number> = {};
       for (let corner = 0; corner < corners; corner++) {
         for (const axis of ['u', 'v'] as const) {
           const portId = cornerPort(corner, axis);
@@ -192,11 +195,10 @@ export function createGeometryNodes(oc: OpenCascadeInstance): NodeDefinition[] {
             throw new Error(`P${corner + 1} ${axis.toUpperCase()} is not a number`);
           }
           uv.push(value);
-          outputs[portId] = value;
         }
       }
 
-      return { ...outputs, profile: geometry(polygonFace(oc, plane, uv), plane) };
+      return { profile: geometry(polygonFace(oc, plane, uv), plane) };
     },
   };
 

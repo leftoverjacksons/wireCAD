@@ -54,6 +54,13 @@ export interface PortDef {
   readonly hidden?: boolean;
   /** A fixed set of answers, drawn as a dropdown rather than a text field. */
   readonly options?: readonly string[];
+  /**
+   * An output that just repeats an input of this id. A dimension a node holds is
+   * worth reading elsewhere — a bore radius driving the fillet that breaks its
+   * edge — so it is offered as an output without the node having to say so again
+   * when it evaluates.
+   */
+  readonly echoes?: PortId;
 }
 
 /** Ports and presentation. The main thread knows this much without a kernel. */
