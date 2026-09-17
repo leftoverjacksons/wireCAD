@@ -382,11 +382,14 @@ export class SketchSession {
     done.addEventListener('click', () => this.exit());
     actions.append(done);
 
+    // The dimension tool's panel goes directly under the tools, rather than
+    // below the relations: it belongs to the tool in hand, and a panel that
+    // opens below the fold has not opened as far as the person is concerned.
     this.panel.append(
       heading,
       draw.el,
-      relations.el,
       this.dialogue,
+      relations.el,
       this.hintEl,
       this.listEl,
       actions,
@@ -600,6 +603,10 @@ export class SketchSession {
     for (const [id, button] of this.toolButtons) button.classList.toggle('is-active', id === tool);
     this.hintEl.textContent = DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '';
     this.render();
+
+    // The panel is taller than the room it has and scrolls. A panel that opens
+    // below the fold has not opened as far as the person is concerned.
+    if (tool === 'dimension') this.dialogue.scrollIntoView({ block: 'nearest' });
   }
 
   private applyRelation(relation: Relation): void {
