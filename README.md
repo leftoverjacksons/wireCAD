@@ -32,8 +32,8 @@ is ready, typically around two seconds.
 - **Extrude** — one node makes bodies and takes them away. *Operation* says what
   it does to the body wired into *Target*: **New body**, **Join**, **Cut** or
   **Intersect**. A bore is the same node as the block it goes through, pointed at
-  it, so the starter model is four feature nodes rather than a block, a plug and
-  a boolean. The *Combine* buttons are still there for putting two bodies that
+  it, so the starter model is four nodes rather than a block, a plug and a
+  boolean. The *Combine* buttons are still there for putting two bodies that
   already exist together.
 - **Planes** — sketches sit on a plane rather than at a world Z offset, and an
   extrude follows its profile's normal. A rectangle drawn on the XZ plane
@@ -57,6 +57,11 @@ is ready, typically around two seconds.
 - **Reading the graph** — every node says what it makes: Body, Profile, Plane,
   Edges or Value, on a badge in its header, with an accent bar and port colours
   from the same palette.
+- **Dimensions live on their node** by default, in a field you can type into.
+  Pulling one out to a Number node earns you a sidebar slider and lets two
+  features share it, and the graph is there for that — but it is something you
+  choose, not what drawing a box costs. Nothing in a new document is wired to a
+  parameter.
 - **Undo** — Ctrl+Z and Ctrl+Shift+Z, or the toolbar buttons. A slider drag is
   one undo step.
 - **Files** — *New*, *Open* (Ctrl+O) and *Save* (Ctrl+S) work on a `.json`
@@ -115,7 +120,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:shell` | Builds fillet-and-shell bodies in Chromium and checks the hollowed volumes |
 | `npm run verify:edges` | Checks per-edge fillet selection, and that a selection survives a resize |
 | `npm run verify:profile` | Checks a profile's named dimensions drive its geometry, typed or wired |
-| `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and sizes the starter model |
+| `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.

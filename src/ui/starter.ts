@@ -2,24 +2,21 @@ import type { Graph } from '../core/graph.js';
 import { autoLayout } from './layout.js';
 
 /**
- * The model a fresh install opens with: a bored block.
+ * The model a fresh install opens with: a bored block, in four nodes.
  *
- * Every dimension a profile needs lives on the profile, and the bore is the same
- * Extrude node as the body with its operation set to Cut, so the whole part is
- * four nodes. Height is the exception, pulled out to a parameter so there is one
- * visible example of a dimension driven from elsewhere — which is the point of
- * the graph, and costs one node rather than seven.
+ * Every dimension sits on the node that needs it, editable in place. Pulling a
+ * dimension out to a parameter node is worth doing when two features have to
+ * share it or when you want a slider, and the graph is there for that — but it
+ * is a thing you choose, not the price of drawing a box.
  */
 export function buildStarterModel(graph: Graph): void {
-  const height = graph.addNode('math.number', { label: 'Height', inputs: { value: 20 } });
-
   const bodyProfile = graph.addNode('sketch.rectangle', {
     label: 'Body profile',
     inputs: { width: 60, height: 40 },
   });
   const body = graph.addNode('solid.extrude', {
     label: 'Body',
-    inputs: { operation: 'New body' },
+    inputs: { distance: 20, operation: 'New body' },
   });
 
   const boreProfile = graph.addNode('sketch.circle', {
@@ -32,8 +29,6 @@ export function buildStarterModel(graph: Graph): void {
   });
 
   graph.connect({ node: bodyProfile.id, port: 'profile' }, { node: body.id, port: 'profile' });
-  graph.connect({ node: height.id, port: 'result' }, { node: body.id, port: 'distance' });
-
   graph.connect({ node: boreProfile.id, port: 'profile' }, { node: bore.id, port: 'profile' });
   graph.connect({ node: body.id, port: 'solid' }, { node: bore.id, port: 'target' });
 

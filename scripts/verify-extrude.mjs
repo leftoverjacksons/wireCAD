@@ -93,10 +93,18 @@ const out = await page.evaluate(async () => {
   graph.restore({ version: 1, nodes: [], edges: [] });
   window.wirecad.starter(graph);
   await window.__settle();
+  // A dimension is adjustable in place only if nothing is wired into it.
+  const numericPortsWired = graph.allNodes().some((node) =>
+    graph
+      .schemaOf(node.id)
+      .inputs.filter((port) => port.type === 'number')
+      .some((port) => graph.incomingEdge(node.id, port.id) !== undefined),
+  );
   const starter = {
     nodes: graph.nodeCount,
     types: graph.allNodes().map((n) => n.type),
     errors: window.wirecad.reports().filter((r) => r.error !== undefined).length,
+    unwired: !numericPortsWired,
   };
 
   return { cut, intersect, orphan, starter };
@@ -107,7 +115,9 @@ const checks = [
   ['Cut bores the body       ', near(out.cut.volume, 60 * 40 * 20 - bore), detail(out.cut)],
   ['Intersect keeps the plug ', near(out.intersect.volume, bore), detail(out.intersect)],
   ['Cut with no target says so', out.orphan.error !== null, out.orphan.error ?? 'no error'],
-  ['starter is four nodes     ', out.starter.nodes === 5, `${out.starter.nodes}: ${out.starter.types.join(', ')}`],
+  ['starter is four nodes     ', out.starter.nodes === 4, `${out.starter.nodes}: ${out.starter.types.join(', ')}`],
+  ['starter wires no parameters', !out.starter.types.includes('math.number'), out.starter.types.join(', ')],
+  ['every dimension is editable', out.starter.unwired, `${out.starter.unwired ? 'all' : 'some wired'}`],
   ['starter solves clean      ', out.starter.errors === 0, `${out.starter.errors} errored`],
 ];
 
