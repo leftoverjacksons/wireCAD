@@ -7,6 +7,7 @@ import type { GraphNode, NodeId, NodeSchema, PlaneValue } from './core/types.js'
 import { makePlane } from './geometry/plane.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
+import { constrainedSchemas } from './nodes/constrained.js';
 import { edgeSchemas } from './nodes/edges.js';
 import { modifySchemas } from './nodes/modify.js';
 import { planeNodes } from './nodes/plane.js';
@@ -37,6 +38,7 @@ registry.registerAll(geometrySchemas);
 registry.registerAll(faceSchemas);
 registry.registerAll(modifySchemas);
 registry.registerAll(edgeSchemas);
+registry.registerAll(constrainedSchemas);
 
 const graph = new Graph(registry);
 

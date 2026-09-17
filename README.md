@@ -128,6 +128,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:profile` | Checks a profile's named dimensions drive its geometry, typed or wired |
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
+| `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -256,6 +257,36 @@ what is left, from the top; a row with nothing on one side stays empty rather
 than closing up, because closing it up is exactly what would put a dimension
 next to the wrong label.
 
+## Solving a sketch
+
+A `Sketch` node holds points, the lines and circles joining them, and the rules
+those have to satisfy. The shape is whatever satisfies the rules, so the node's
+dimensions are the handles: every dimension the sketch names becomes a port,
+editable in place or driven from elsewhere, and the solver decides where the
+geometry lands.
+
+Constraints come in two kinds. Dimensions carry a number — distance, horizontal
+or vertical distance, radius, angle, and locking a point's U or V. Relations
+carry none — coincident, horizontal, vertical, parallel, perpendicular, equal,
+concentric, point-on-line and midpoint.
+
+The solver is least squares. Each constraint contributes residuals that are zero
+when it holds, and Levenberg-Marquardt moves the points and radii until they all
+are: Gauss-Newton where that converges, damped towards gradient descent where it
+does not, which is what stops a half-drawn sketch flying apart on the first step.
+Sketches are small, tens of unknowns, so the Jacobian is dense and built by
+central differences — one extra pair of evaluations per unknown, in exchange for
+not hand-differentiating every constraint, which is where a solver of this kind
+usually goes quietly wrong.
+
+Row-reducing that same Jacobian answers two questions worth asking. Its rank
+against the number of unknowns gives the degrees of freedom still loose, so a
+sketch can say it is under-constrained; its rank against the number of residuals
+gives the constraints that merely repeat others. A contradiction is a different
+thing again, and is refused rather than approximated: if the residuals cannot be
+driven to zero the node reports how far off it got instead of handing back a
+shape that satisfies nothing.
+
 ## Ports a node grows for itself
 
 Most node types have a fixed set of ports. A profile cannot: a drawn shape needs
@@ -280,7 +311,6 @@ unopenable.
 - Profiles are single closed loops, so a shape with a hole in it needs a boolean
   rather than an inner loop.
 
-- No sketch constraint solver; sketches are parametric rectangles and circles.
 - One radius per Fillet node and one distance per Chamfer node. Varying the
   amount across edges means a second node, rather than a list of groups in one
   dialog. Chamfers are symmetric; there is no two-distance or distance-and-angle

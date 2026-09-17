@@ -12,6 +12,7 @@ import { writeStep } from '../geometry/step.js';
 import { writeBinaryStl } from '../geometry/stl.js';
 import { createFaceNodes } from '../nodes/face.js';
 import { mathNodes } from '../nodes/math.js';
+import { createConstrainedNodes } from '../nodes/constrained.js';
 import { createEdgeNodes } from '../nodes/edges.js';
 import { createModifyNodes } from '../nodes/modify.js';
 import { planeNodes } from '../nodes/plane.js';
@@ -215,6 +216,7 @@ async function start(): Promise<void> {
   registry.registerAll(createFaceNodes(oc));
   registry.registerAll(createModifyNodes(oc));
   registry.registerAll(createEdgeNodes(oc));
+  registry.registerAll(createConstrainedNodes(oc));
   evaluator = new Evaluator(registry, new LruCache(256, disposeCacheEntry));
 
   ready = true;
