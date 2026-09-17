@@ -100,20 +100,23 @@ const MATCH_TOLERANCE = 0.2;
 /** Below this the candidate points a different way and is not the same edge. */
 const DIRECTION_AGREEMENT = 0.8;
 
-export function resolveEdgeRefs(
-  oc: OpenCascadeInstance,
-  shape: Shape,
+/**
+ * Which edge each reference points at, by index into `edges`, or -1 for a
+ * reference that nothing on this shape answers to.
+ *
+ * Kept apart from the kernel so the same matching can run on a tessellated body
+ * the main thread already has — what a selection refers to is a question the
+ * interface asks as often as the evaluator does.
+ */
+export function matchEdgeRefs(
+  edges: readonly EdgeInfo[],
   refs: readonly EdgeRef[],
-): Shape[] {
-  const { mesh, edgeHandles } = tessellate(oc, shape, 1.0, 0.6);
-  if (mesh.edges.length === 0) throw new Error('That shape has no edges');
-
-  const resolved: Shape[] = [];
-  for (const [index, ref] of refs.entries()) {
-    let best: number | null = null;
+): number[] {
+  return refs.map((ref) => {
+    let best = -1;
     let bestScore = Infinity;
 
-    for (const [candidate, info] of mesh.edges.entries()) {
+    for (const [candidate, info] of edges.entries()) {
       // A straight edge that has turned to point elsewhere is a different edge.
       if (
         !isZero(ref.direction) &&
@@ -130,14 +133,28 @@ export function resolveEdgeRefs(
       }
     }
 
-    if (best === null || bestScore > MATCH_TOLERANCE) {
+    return bestScore > MATCH_TOLERANCE ? -1 : best;
+  });
+}
+
+export function resolveEdgeRefs(
+  oc: OpenCascadeInstance,
+  shape: Shape,
+  refs: readonly EdgeRef[],
+): Shape[] {
+  const { mesh, edgeHandles } = tessellate(oc, shape, 1.0, 0.6);
+  if (mesh.edges.length === 0) throw new Error('That shape has no edges');
+
+  const resolved: Shape[] = [];
+  for (const [index, matched] of matchEdgeRefs(mesh.edges, refs).entries()) {
+    if (matched < 0) {
       throw new Error(
         `Edge ${index + 1} of the selection is no longer on this shape — ` +
           'it was removed, or the model moved too far for it to be recognised',
       );
     }
 
-    const handle = edgeHandles[best];
+    const handle = edgeHandles[matched];
     if (handle === undefined) throw new Error(`Could not resolve edge ${index + 1}`);
     if (!resolved.some((seen) => seen.IsSame(handle))) resolved.push(handle);
   }

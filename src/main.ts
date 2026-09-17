@@ -8,7 +8,7 @@ import { WORLD_XY, makePlane, pointOnPlane } from './geometry/plane.js';
 import { faceSchemas, matchingFaces } from './nodes/face.js';
 import { mathNodes } from './nodes/math.js';
 import { constrainedSchemas } from './nodes/constrained.js';
-import { edgeSchemas } from './nodes/edges.js';
+import { edgeSchemas, matchEdgeRefs, unpackEdgeRefs } from './nodes/edges.js';
 import { modifySchemas } from './nodes/modify.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
@@ -29,7 +29,7 @@ import { NodeEditor } from './ui/node-editor.js';
 import { SketchSession } from './ui/sketch-session.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
-import type { FaceHit } from './viewport.js';
+import type { FaceHit, GhostMode } from './viewport.js';
 import { Viewport } from './viewport.js';
 import type {
   ExportFormat,
@@ -327,6 +327,12 @@ const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
     editSketch();
     return;
   }
+
+  // The dialog takes the view from here: no leftover ghost from what was
+  // selected a moment ago.
+  ghostPin = null;
+  edgesPin = null;
+  viewport.clearChosenEdges();
   dialog.open(spec, selected);
 });
 
@@ -467,6 +473,66 @@ function applySelection(
   selected = nodeId;
   if (syncEditor) editor.setSelection(nodeId);
   viewport.setHighlight(nodeId);
+  showWhatItMade(nodeId);
+}
+
+/**
+ * Shows what the selected node is responsible for.
+ *
+ * A node in the middle of a chain has usually been replaced by what came after
+ * it — a profile by the body extruded from it, a body by the fillet on it — so
+ * clicking it says nothing on its own. Its result is put back on screen as a
+ * ghost until something else is selected. A node that holds no geometry of its
+ * own but points at some, like a set of picked edges, lights up what it points
+ * at instead.
+ */
+function showWhatItMade(nodeId: NodeId | null): void {
+  // While a dialog is up it owns the view, and selection means picking operands.
+  if (dialog.isOpen) return;
+
+  const before = `${ghostPin}/${edgesPin}`;
+  ghostPin = null;
+  edgesPin = null;
+
+  const node = nodeId === null ? null : (graph.getNode(nodeId) ?? null);
+  if (node !== null) {
+    const makes = graph
+      .schemaOf(node.id)
+      .outputs.some((port) => port.type === 'geometry' || port.type === 'sketch');
+    if (makes) ghostPin = node.id;
+    else if (node.type === 'edge.selection') edgesPin = bodyBehindSelection(node.id);
+  }
+
+  if (`${ghostPin}/${edgesPin}` === before) return;
+  viewport.clearChosenEdges();
+  requestSolve();
+}
+
+/** The body a set of picked edges was taken from, by way of what consumes it. */
+function bodyBehindSelection(nodeId: NodeId): NodeId | null {
+  for (const edge of graph.outgoingEdges(nodeId)) {
+    const source = graph.incomingEdge(edge.to.node, 'solid');
+    if (source !== undefined) return source.from.node;
+  }
+  return null;
+}
+
+/** Lights up the edges a selected edge selection refers to, once they are drawn. */
+function refreshEdgeHighlight(): void {
+  const body = edgesPin;
+  if (body === null || selected === null) return;
+
+  const edges = viewport.edgesOf(body);
+  if (edges === undefined) return;
+
+  const stored = graph.inputValue(selected, 'refs');
+  if (!Array.isArray(stored)) return;
+
+  const refs = unpackEdgeRefs(stored.filter((value): value is number => typeof value === 'number'));
+  viewport.setChosenEdges(
+    body,
+    matchEdgeRefs(edges, refs).filter((index) => index >= 0),
+  );
 }
 
 /**
@@ -493,9 +559,8 @@ dialog.onEdgesChanged((choice) => {
   // Picking edges off a body while a preview replaces that body would take it
   // out of the view after the first one. It stays, as edges alone, and is the
   // only thing edge picking will hit until the dialog is done with it.
-  pinnedNodes = choice === null ? [] : [choice.nodeId];
-  viewport.setEdgeSource(choice?.nodeId ?? null);
-  viewport.setGhosts(pinnedNodes);
+  pickPin = choice?.nodeId ?? null;
+  viewport.setEdgeSource(pickPin);
   requestSolve();
 });
 
@@ -647,10 +712,20 @@ const worker = new Worker(new URL('./worker/geometry-worker.ts', import.meta.url
 let requestId = 0;
 let inFlight = false;
 let dirty = false;
-/** Bodies the open dialog still needs on screen, whatever has replaced them. */
-let pinnedNodes: NodeId[] = [];
+/** The body an open dialog is picking from, kept on screen while it does. */
+let pickPin: NodeId | null = null;
+/** A selected node's own result, shown through whatever came after it. */
+let ghostPin: NodeId | null = null;
+/** The body a selected edge selection refers to, so its edges can be shown. */
+let edgesPin: NodeId | null = null;
 /** The edges the open dialog has been given, for the handle to sit on. */
 let pickedEdges: { nodeId: NodeId; indices: number[] } | null = null;
+
+/** Everything the view is being asked to show beyond the model itself. */
+function pinnedNodes(): NodeId[] {
+  const pins = [pickPin, ghostPin, edgesPin].filter((id): id is NodeId => id !== null);
+  return [...new Set(pins)];
+}
 
 function requestSolve(): void {
   if (inFlight) {
@@ -662,7 +737,7 @@ function requestSolve(): void {
     type: 'solve',
     requestId: ++requestId,
     document: graph.toJSON(),
-    pinned: [...pinnedNodes],
+    pinned: pinnedNodes(),
   };
   worker.postMessage(message);
 }
@@ -707,7 +782,20 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   lastVisible = message.visible;
   for (const mesh of message.meshes) viewport.setMesh(mesh);
   viewport.retain(message.visible);
-  viewport.setGhosts(pinnedNodes);
+
+  // A body only on screen because it was asked for is drawn as a ghost: edges
+  // alone when something is being picked off it, faint when it is what the
+  // selected node made. One that would be on screen anyway is left alone.
+  const forced = new Set(message.pinnedShown);
+  const ghosts = new Map<NodeId, GhostMode>();
+  for (const nodeId of [pickPin, edgesPin]) {
+    if (nodeId !== null && forced.has(nodeId)) ghosts.set(nodeId, 'edges');
+  }
+  for (const nodeId of message.pinnedShown) {
+    if (!ghosts.has(nodeId)) ghosts.set(nodeId, 'faint');
+  }
+  viewport.setGhosts(ghosts);
+  refreshEdgeHighlight();
   viewport.frameOnce();
   editor.setStatuses(message.reports);
   editor.setShown(message.visible);

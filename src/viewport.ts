@@ -36,6 +36,9 @@ export interface DragHandle {
   onDrag(distance: number): void;
 }
 
+/** How a body is drawn when it is not being drawn the ordinary way. */
+export type GhostMode = 'edges' | 'faint';
+
 export interface EdgeHit {
   nodeId: NodeId;
   edgeIndex: number;
@@ -109,8 +112,14 @@ export class Viewport {
   private hoveredEdge: EdgeHit | null = null;
   private chosenEdges = new Map<NodeId, Set<number>>();
   private edgePicking = false;
-  /** Bodies drawn as edges alone: still there to pick, not there to look at. */
-  private ghosts = new Set<NodeId>();
+  /**
+   * Bodies not drawn the ordinary way.
+   *
+   * 'edges' is for one being picked from underneath its own preview: still
+   * there to pick, not there to look at. 'faint' is for one being pointed at —
+   * what a node made, shown through whatever has replaced it since.
+   */
+  private ghosts = new Map<NodeId, GhostMode>();
   /** While set, only this body's edges can be picked. */
   private edgeSource: NodeId | null = null;
   private framed = false;
@@ -153,6 +162,33 @@ export class Viewport {
     color: 0xff61c6,
     size: 11,
     sizeAttenuation: false,
+    depthTest: false,
+  });
+
+  /**
+   * What a node made, shown through whatever came after it. Violet because the
+   * model is already orange and yellow and the highlights magenta: a ghost is a
+   * different kind of thing and says so. It writes no depth, so the model shows
+   * through it rather than the other way round.
+   */
+  private readonly faintMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa78bfa,
+    emissive: 0x2a1d55,
+    metalness: 0.0,
+    roughness: 0.6,
+    transparent: true,
+    opacity: 0.35,
+    // A ghost usually stands exactly where the body that replaced it stands, so
+    // testing depth against it is a coin toss per triangle and looks it. It is
+    // a reference laid over the view rather than a thing in the scene, so it
+    // neither tests depth nor writes it.
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.FrontSide,
+  });
+
+  private readonly ghostEdgeMaterial = new THREE.LineBasicMaterial({
+    color: 0xa78bfa,
     depthTest: false,
   });
 
@@ -387,22 +423,31 @@ export class Viewport {
 
   /** The edges currently in a selection, drawn so the user can see the set grow. */
   /**
-   * Bodies to draw as their edges only.
+   * Bodies to draw some way other than the ordinary one.
    *
    * A feature's preview sits exactly on top of the body it was made from, so
-   * showing both means two surfaces fighting over the same pixels. The body
-   * underneath is only needed for its edges — what is being picked — so that is
-   * all it draws.
+   * showing both solid means two surfaces fighting over the same pixels: the
+   * one underneath is only needed for its edges, so 'edges' is all it draws.
+   * A body shown because its node was clicked is 'faint' — visible through what
+   * replaced it, and plainly not the model itself.
    */
-  setGhosts(nodeIds: readonly NodeId[]): void {
-    const next = new Set(nodeIds);
-    if (next.size === this.ghosts.size && [...next].every((id) => this.ghosts.has(id))) return;
+  setGhosts(modes: ReadonlyMap<NodeId, GhostMode>): void {
+    const same =
+      modes.size === this.ghosts.size &&
+      [...modes].every(([nodeId, mode]) => this.ghosts.get(nodeId) === mode);
+    if (same) return;
 
-    const touched = new Set([...this.ghosts, ...next]);
-    this.ghosts = next;
+    const touched = new Set([...this.ghosts.keys(), ...modes.keys()]);
+    this.ghosts = new Map(modes);
     for (const nodeId of touched) {
       const mesh = this.meshes.get(nodeId);
-      if (mesh !== undefined) mesh.visible = !this.ghosts.has(nodeId);
+      if (mesh !== undefined) {
+        const mode = this.ghosts.get(nodeId);
+        mesh.visible = mode !== 'edges';
+        mesh.renderOrder = mode === 'faint' ? 3 : this.kinds.get(nodeId) === 'sketch' ? 1 : 0;
+      }
+      this.applyMaterials(nodeId);
+      this.applyEdgeMaterials(nodeId);
     }
   }
 
@@ -797,6 +842,10 @@ export class Viewport {
   }
 
   private baseMaterial(nodeId: NodeId): THREE.Material {
+    // A ghost is not the model, so it does not take the model's colours.
+    if (this.ghosts.get(nodeId) === 'faint') return this.faintMaterial;
+
+
     const isSketch = this.kinds.get(nodeId) === 'sketch';
     if (nodeId === this.highlighted) {
       return isSketch ? this.sketchHighlightMaterial : this.highlightMaterial;
@@ -880,7 +929,8 @@ export class Viewport {
     } else {
       const mesh = new THREE.Mesh(geometry, this.material);
       mesh.userData.nodeId = payload.nodeId;
-      mesh.visible = !this.ghosts.has(payload.nodeId);
+      mesh.visible = this.ghosts.get(payload.nodeId) !== 'edges';
+      mesh.renderOrder = payload.kind === 'sketch' ? 1 : 0;
       mesh.renderOrder = payload.kind === 'sketch' ? 1 : 0;
       this.meshes.set(payload.nodeId, mesh);
       this.scene.add(mesh);
@@ -931,9 +981,13 @@ export class Viewport {
     const chosen = this.chosenEdges.get(nodeId);
     const hot = this.hoveredEdge?.nodeId === nodeId ? this.hoveredEdge.edgeIndex : -1;
 
+    // A ghost's outline is the ghost's colour, so which is which is never in
+    // doubt when one stands exactly where the other does.
+    const base = this.ghosts.get(nodeId) === 'faint' ? this.ghostEdgeMaterial : this.edgeMaterial;
+
     lines.geometry.clearGroups();
     if (edges.length === 0 || (hot < 0 && (chosen === undefined || chosen.size === 0))) {
-      lines.material = this.edgeMaterial;
+      lines.material = base;
       return;
     }
 
@@ -941,7 +995,7 @@ export class Viewport {
       const slot = index === hot ? 1 : (chosen?.has(index) ?? false) ? 2 : 0;
       lines.geometry.addGroup(edge.segmentStart * 2, edge.segmentCount * 2, slot);
     }
-    lines.material = [this.edgeMaterial, this.edgeHoverMaterial, this.edgeChosenMaterial];
+    lines.material = [base, this.edgeHoverMaterial, this.edgeChosenMaterial];
   }
 
   retain(visible: readonly NodeId[]): void {

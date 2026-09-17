@@ -30,6 +30,13 @@ is ready, typically around two seconds.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
+- **Clicking a node** — selecting a node in the graph puts what it made back on
+  screen, in violet, at about a third opacity, until something else is selected.
+  A profile that was extruded, a body that was bored, a fillet that was shelled:
+  each is still there in the model's history but none of them is on screen any
+  more, so clicking the node is the way to ask what it is responsible for. A
+  node that holds no geometry but points at some — a set of picked edges — lights
+  up what it points at instead.
 - **Live preview** — a feature dialog builds what it describes as soon as it has
   what it needs, and keeps it up to date as you type, pick or choose. Create
   keeps what is on screen; Cancel takes it back out and leaves nothing behind,
@@ -170,6 +177,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 | `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
+| `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -363,6 +371,29 @@ The history snapshot is taken once, before the first preview, and forgotten if
 the dialog is cancelled — along with restoring the redo that taking it
 discarded, because as far as the document is concerned nothing happened.
 
+## Showing what a node made
+
+Most nodes in a finished model have nothing on screen. A profile is replaced by
+the body extruded from it, that body by the bore cut through it, that by the
+fillet on its edges — the superseding rule that keeps the view uncluttered also
+means clicking a node in the middle of a chain shows you nothing.
+
+So a selected node is pinned: the worker draws it even though something later
+replaced it, and says which nodes are on screen only because they were asked
+for. Those are drawn as ghosts. Violet, because the model is orange and yellow
+and the highlights magenta, and a ghost is a different kind of thing.
+
+A ghost usually stands exactly where the body that replaced it stands, which
+makes depth testing a coin toss per triangle and looks it. So a ghost neither
+tests depth nor writes it: it is a reference laid over the view rather than a
+thing in the scene. Its outline takes the same violet, so which is which is
+never in doubt.
+
+The same pinning serves a second purpose. While a dialog picks edges off a body,
+its own preview replaces that body — so the body is pinned too, and drawn as its
+edges alone rather than faint, because two solid surfaces in the same place is
+exactly what the ghost rules are avoiding.
+
 ## Dragging a number
 
 Every number a dialog can drag is a length along a direction the model already
@@ -431,6 +462,8 @@ discarded.
 
 ## Known gaps
 
+- A node that makes neither geometry nor a reference to some — a parameter, a
+  datum plane — has nothing to show when clicked.
 - Dimensions and constraints are listed in the panel, not drawn in the view:
   there are no dimension lines or constraint glyphs on the sketch itself.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a

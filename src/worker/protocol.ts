@@ -68,6 +68,8 @@ export interface SolvedMessage {
   requestId: number;
   reports: NodeReport[];
   visible: NodeId[];
+  /** Of those, the ones only on screen because the main thread pinned them. */
+  pinnedShown: NodeId[];
   meshes: MeshPayload[];
   /** Resolved planes, so the interface can sketch on whatever a node produced. */
   planes: Record<NodeId, PlaneValue>;

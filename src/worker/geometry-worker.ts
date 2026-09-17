@@ -66,6 +66,7 @@ function solve(request: SolveRequest): void {
   }
 
   const visible: NodeId[] = [];
+  const pinnedShown: NodeId[] = [];
   const meshes: MeshPayload[] = [];
   const transfer: Transferable[] = [];
   let triangles = 0;
@@ -93,12 +94,14 @@ function solve(request: SolveRequest): void {
     // the same superseding rule covers sketches. An explicit flag on the node
     // overrides the guess in either direction.
     const displayable = definition.outputs.find(
-      (port) =>
-        (port.type === 'sketch' || port.type === 'geometry') &&
-        (node.visible === true || pinned.has(node.id) || !supersededBy(port.id)),
+      (port) => port.type === 'sketch' || port.type === 'geometry',
     );
     if (displayable === undefined) continue;
-    if (node.visible === false) continue;
+
+    // What the model would show on its own, before anyone asked for more.
+    const ordinarily = node.visible !== false && (node.visible === true || !supersededBy(displayable.id));
+    const asked = pinned.has(node.id);
+    if (!ordinarily && !asked) continue;
 
     const nodeResult = result.results.get(node.id);
     if (nodeResult === undefined) continue;
@@ -108,6 +111,7 @@ function solve(request: SolveRequest): void {
     if (value === undefined || !isGeometry(value)) continue;
 
     visible.push(node.id);
+    if (!ordinarily) pinnedShown.push(node.id);
     if (sentHashes.get(node.id) === nodeResult.hash) continue;
 
     const { mesh: buffers } = tessellate(oc, value.handle as Shape);
@@ -141,6 +145,7 @@ function solve(request: SolveRequest): void {
       requestId: request.requestId,
       reports,
       visible,
+      pinnedShown,
       meshes,
       planes,
       stats: result.stats,
