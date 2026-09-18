@@ -216,6 +216,16 @@ built on and what is built on it — and only the feature itself is drawn as the
 model. They are told apart in the graph rather than in the viewport, where the
 marker and the dimmed cone say which is which.
 
+One rule had to give way to another. A node can be pinned hidden, and that flag
+used to win over everything — including a view rolled back to that very node,
+which then showed an arrow and no body. Hiding a result answers "is this in the
+way of the model"; rolling back to it is asking to see that feature, and the two
+are different questions, so the marker's own result is drawn whatever its flag
+says. The flag itself was easy to set by accident, because the eye toggled
+between forced-on and forced-off and never back to automatic: pressing it twice
+on a node the model was hiding anyway looked like nothing had happened and left
+the node pinned hidden. It now cycles through automatic instead.
+
 The marker is session state rather than part of the document, because a saved
 file should open on the model rather than in the middle of somebody's afternoon.
 Editing borrows it and gives it back: the dialog remembers what the marker was,

@@ -147,6 +147,16 @@ describe('rolling the view back to a node', () => {
     expect(modes(graph, { rolledBackTo: round })).toEqual(modes(graph));
   });
 
+  it('draws the node it is looking at even when that node is hidden', () => {
+    const graph = setup();
+    const { block } = chain(graph);
+    graph.setVisibility(block, false);
+
+    // Hiding answers "is this in the way of the model". Rolling back to it is
+    // asking to see that feature, which the flag has nothing to say about.
+    expect(modes(graph, { rolledBackTo: block }).Block).toBe('model');
+  });
+
   it('ignores a marker on a node that has gone', () => {
     const graph = setup();
     const { bore } = chain(graph);

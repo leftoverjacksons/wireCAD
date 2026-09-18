@@ -91,8 +91,8 @@ export function planDisplay(graph: Graph, options: DisplayOptions = {}): Map<Nod
   const marker = options.rolledBackTo ?? null;
 
   // A marker on a node that has since gone is no marker at all.
-  const valid = marker !== null && graph.getNode(marker) !== undefined;
-  const absent = valid ? absentAt(graph, marker!) : new Set<NodeId>();
+  const at = marker !== null && graph.getNode(marker) !== undefined ? marker : null;
+  const absent = at === null ? new Set<NodeId>() : absentAt(graph, at);
 
   const plan = new Map<NodeId, Shown>();
 
@@ -115,7 +115,12 @@ export function planDisplay(graph: Graph, options: DisplayOptions = {}): Map<Nod
       node.visible !== false && (node.visible === true || !replaced);
 
     const beyond = absent.has(node.id);
-    const model = !beyond && wanted(replacing.some((edge) => !absent.has(edge.to.node)));
+    // The node being looked at is drawn whatever its own flag says. Hiding a
+    // result answers the question "is this in the way of the model"; rolling
+    // back to it is asking to see that feature, and a view that answers by
+    // showing nothing is answering a question nobody asked.
+    const model =
+      node.id === at || (!beyond && wanted(replacing.some((edge) => !absent.has(edge.to.node))));
     // Only what would be the model if nothing were rolled back gets an outline.
     // Outlining every node in the cone would draw the same body several times
     // over, each one a feature's worth different from the last.

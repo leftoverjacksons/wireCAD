@@ -413,9 +413,13 @@ export class NodeEditor {
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         this.callbacks.onBeforeChange();
-        // The button reports what is on screen, so a click always means "do the
-        // other thing" — which keeps it reversible without a third state.
-        this.graph.setVisibility(nodeId, !this.shownNodes.has(nodeId));
+        // Two clicks put the node back where it was found, rather than pinning
+        // it to the opposite of what it started at. Pinning "hidden" on a node
+        // the model was hiding anyway looks like nothing has happened, and then
+        // bites later: rolled back to that node, or reached by a dialog, it is
+        // the one thing that should be on screen and is not.
+        const pinned = this.graph.requireNode(nodeId).visible !== undefined;
+        this.graph.setVisibility(nodeId, pinned ? undefined : !this.shownNodes.has(nodeId));
         this.callbacks.onDocumentChanged();
       });
       eye = button;

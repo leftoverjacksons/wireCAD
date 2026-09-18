@@ -228,9 +228,15 @@ stays cached, so it is cheap to adjust a radius and try again.
   the same place cannot swallow a click meant for the body underneath it.
 - **Showing and hiding** — a result that something downstream consumes steps out
   of the way, so extruding a profile takes the profile off screen and leaves the
-  body. The ◉ on a node's header overrides that either way, and the glyph shows
-  what is actually being drawn rather than what was asked for. The setting is
-  part of the document, so it saves and undoes with everything else.
+  body. The ◉ on a node's header overrides that, and the glyph shows what is
+  actually being drawn rather than what was asked for. Pressing it again hands
+  the node back to the automatic rule rather than pinning it to the opposite, so
+  two presses leave the node as they found it: a node pinned *hidden* while the
+  model was hiding it anyway looks like nothing has happened, and would only
+  show up later, as the one thing missing when you go looking at it. The setting
+  is part of the document, so it saves and undoes with everything else — and it
+  never applies to the node you have rolled the view back to, because asking to
+  look at a feature is not the same question as asking whether it is in the way.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
   header. Drag between ports to wire them; drag away from a connected input to
   detach it; click a wire to cut it. Unwired numeric inputs are editable in

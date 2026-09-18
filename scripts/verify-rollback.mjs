@@ -245,6 +245,25 @@ check(
   `${after.marker ?? 'now'} · ${after.model.join(',')}`,
 );
 
+// ------------------------------- a hidden feature is still shown when looked at
+
+await page.evaluate(() => window.__reset());
+await page.evaluate(async () => {
+  // The eye turned off on a node the model was hiding anyway: it looks like
+  // nothing happened until something asks to look at that node.
+  window.wirecad.graph.setVisibility(window.__idOf('Body'), false);
+  await window.__settle();
+});
+await openMenu('Body');
+await choose('roll-back');
+const hidden = await page.evaluate(() => window.__view());
+check(
+  'a hidden feature still shows',
+  hidden.model.join(',') === 'Body' && Math.abs(hidden.volume - 48000) < 5,
+  `${hidden.model.join(',') || 'nothing'} · ${hidden.volume.toFixed(0)} mm3`,
+);
+await page.evaluate(() => window.wirecad.rollBack(null));
+
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();
 if (failures > 0 || pageErrors.length > 0) process.exitCode = 1;
