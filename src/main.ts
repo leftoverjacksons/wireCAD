@@ -15,7 +15,7 @@ import { geometrySchemas } from './nodes/solid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { FeatureSpec, PlaneChoice } from './ui/features.js';
-import { createSketchNode, tabs } from './ui/features.js';
+import { createSketchNode, originPlaneNode, tabs } from './ui/features.js';
 import {
   download,
   keepRejected,
@@ -587,6 +587,20 @@ viewport.onPick((hit) => {
     return;
   }
   applySelection(hit.nodeId, true, describePickedFace(hit));
+});
+
+// Clicking one of the origin squares means that plane, which in this program is
+// a node: the document gains one unless it already has that plane. Selecting it
+// is what feeds it to whatever is asking, exactly as clicking a face does.
+viewport.onPickDatum((axis) => {
+  const existing = graph.allNodes().find((node) => node.type === `plane.${axis}`);
+  if (existing === undefined) history.capture();
+
+  const { nodeId, created } = originPlaneNode(graph, axis);
+  viewport.setFaceHighlight(null);
+  applySelection(nodeId, true);
+  editor.reveal(nodeId);
+  if (created) requestSolve();
 });
 
 // ------------------------------------------------------------------ controls

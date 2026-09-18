@@ -22,6 +22,9 @@ function round(value: number, step: number): number {
   return Number((Math.round(value / step) * step).toFixed(3));
 }
 
+/** One of the three planes through the origin, by the axes it contains. */
+export type DatumAxis = 'xy' | 'xz' | 'yz';
+
 export interface FaceHit {
   nodeId: NodeId;
   faceIndex: number | null;
@@ -131,6 +134,35 @@ export class Viewport {
 
   private readonly raycaster = new THREE.Raycaster();
   private pickListener: ((hit: FaceHit | null) => void) | null = null;
+  private datumListener: ((axis: DatumAxis) => void) | null = null;
+  /** The three origin planes, drawn faintly and pickable like anything else. */
+  private readonly datums = new THREE.Group();
+  private readonly datumFaces: THREE.Mesh[] = [];
+  private hoveredDatum: DatumAxis | null = null;
+  private readonly datumMaterial = new THREE.MeshBasicMaterial({
+    color: 0xa78bfa,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  private readonly datumHoverMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff61c6,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  private readonly datumEdgeMaterial = new THREE.LineBasicMaterial({
+    color: 0xa78bfa,
+    transparent: true,
+    opacity: 0.5,
+  });
+  private readonly datumEdgeHoverMaterial = new THREE.LineBasicMaterial({
+    color: 0xff61c6,
+    transparent: true,
+    opacity: 0.9,
+  });
   private edgePickListener: ((hit: EdgeHit | null) => void) | null = null;
   private highlighted: NodeId | null = null;
   private highlightedFace: FaceHit | null = null;
@@ -317,6 +349,7 @@ export class Viewport {
     grid.rotation.x = Math.PI / 2;
     this.scene.add(grid);
 
+    this.buildDatums();
     this.installPicking();
 
     new ResizeObserver(() => this.resize()).observe(container);
@@ -364,7 +397,17 @@ export class Viewport {
         return;
       }
 
-      canvas.style.cursor = this.handleTaken(event.clientX, event.clientY) ? 'ns-resize' : '';
+      if (this.handleTaken(event.clientX, event.clientY)) {
+        canvas.style.cursor = 'ns-resize';
+        this.setHoveredDatum(null);
+        return;
+      }
+
+      canvas.style.cursor = '';
+
+      // Not mid-drag: the pointer is orbiting the view, not pointing at things.
+      const pointing = this.pickingEnabled && event.buttons === 0;
+      this.setHoveredDatum(pointing ? this.datumAt(event.clientX, event.clientY) : null);
     });
 
     const release = (event: PointerEvent) => {
@@ -399,6 +442,14 @@ export class Viewport {
         return;
       }
 
+      // An origin plane is a thing to click, and it is in front of whatever is
+      // behind it or it is not clicked at all.
+      const datum = this.datumAt(event.clientX, event.clientY);
+      if (datum !== null) {
+        this.datumListener?.(datum);
+        return;
+      }
+
       const hits = this.raycaster.intersectObjects([...this.meshes.values()], false);
       const hit = hits[0];
       if (hit === undefined) {
@@ -426,6 +477,122 @@ export class Viewport {
 
   onPick(listener: (hit: FaceHit | null) => void): void {
     this.pickListener = listener;
+  }
+
+  /** Whether the origin squares are on screen: a sketch takes them away. */
+  datumsShown(): boolean {
+    return this.datums.visible;
+  }
+
+  /** Told which origin plane was clicked, when one was. */
+  onPickDatum(listener: (axis: DatumAxis) => void): void {
+    this.datumListener = listener;
+  }
+
+  // -------------------------------------------------------- origin planes
+
+  /**
+   * The three planes through the origin, drawn as squares.
+   *
+   * A model has to start somewhere, and before there is a face to sketch on the
+   * only somewheres are these. Drawing them is what makes them clickable rather
+   * than a thing you have to know to make from a menu.
+   *
+   * They are built once, at one unit across, and scaled to suit whatever is in
+   * the scene: a square that is always the same size in millimetres is either
+   * lost inside a large model or swamps a small one.
+   */
+  private buildDatums(): void {
+    const square = new THREE.PlaneGeometry(1, 1);
+    const outline = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-0.5, -0.5, 0),
+      new THREE.Vector3(0.5, -0.5, 0),
+      new THREE.Vector3(0.5, 0.5, 0),
+      new THREE.Vector3(-0.5, 0.5, 0),
+      new THREE.Vector3(-0.5, -0.5, 0),
+    ]);
+
+    // A plane geometry faces +Z; the other two are that one turned onto its
+    // side, so each ends up holding the pair of axes it is named for.
+    const turns: Array<{ axis: DatumAxis; rotate: (object: THREE.Object3D) => void }> = [
+      { axis: 'xy', rotate: () => {} },
+      { axis: 'xz', rotate: (object) => object.rotateX(Math.PI / 2) },
+      { axis: 'yz', rotate: (object) => object.rotateY(Math.PI / 2) },
+    ];
+
+    for (const turn of turns) {
+      const holder = new THREE.Group();
+      turn.rotate(holder);
+
+      const face = new THREE.Mesh(square, this.datumMaterial);
+      face.userData.datum = turn.axis;
+      face.renderOrder = 1;
+      holder.add(face);
+      this.datumFaces.push(face);
+
+      const border = new THREE.Line(outline, this.datumEdgeMaterial);
+      border.userData.datum = turn.axis;
+      border.renderOrder = 2;
+      holder.add(border);
+
+      this.datums.add(holder);
+    }
+
+    this.scene.add(this.datums);
+    this.sizeDatums();
+  }
+
+  /** Keeps the squares in proportion with whatever the scene holds. */
+  private sizeDatums(): void {
+    const size = Math.max(this.sceneRadius() * 0.8, 40);
+    this.datums.scale.setScalar(size);
+  }
+
+  /** Which origin plane a pointer is over, if any. */
+  private datumAt(clientX: number, clientY: number): DatumAxis | null {
+    if (!this.datums.visible) return null;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.syncCamera();
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    // The squares first, because there are three of them and this runs on every
+    // movement of the pointer. Only once one is under the cursor is it worth
+    // asking the model — which may be hundreds of thousands of triangles —
+    // whether it is in front of it.
+    const datum = this.raycaster.intersectObjects(this.datumFaces, false)[0];
+    if (datum === undefined) return null;
+
+    // A body in front of a plane wins: the square is behind it, and so is the
+    // click. Otherwise a plane through a solid would take every click on it.
+    const solid = this.raycaster.intersectObjects([...this.meshes.values()], false)[0];
+    if (solid !== undefined && solid.distance < datum.distance) return null;
+
+    const axis = datum.object.userData.datum;
+    return typeof axis === 'string' ? (axis as DatumAxis) : null;
+  }
+
+  /** Lights up the square under the pointer, so it is obvious it can be taken. */
+  private setHoveredDatum(axis: DatumAxis | null): void {
+    if (this.hoveredDatum === axis) return;
+    this.hoveredDatum = axis;
+
+    for (const holder of this.datums.children) {
+      for (const part of holder.children) {
+        const lit = part.userData.datum === axis;
+        if ((part as THREE.Mesh).isMesh === true) {
+          (part as THREE.Mesh).material = lit ? this.datumHoverMaterial : this.datumMaterial;
+        } else {
+          (part as THREE.Line).material = lit
+            ? this.datumEdgeHoverMaterial
+            : this.datumEdgeMaterial;
+        }
+      }
+    }
   }
 
   onEdgePick(listener: (hit: EdgeHit | null) => void): void {
@@ -991,6 +1158,11 @@ export class Viewport {
   }
 
   setDimmed(dimmed: boolean): void {
+    // Not while drawing: the sketch is on a plane of its own, and three more
+    // through the middle of it are in the way rather than of use.
+    this.datums.visible = !dimmed;
+    if (dimmed) this.setHoveredDatum(null);
+
     for (const material of [this.material, this.highlightMaterial]) {
       material.transparent = dimmed;
       material.opacity = dimmed ? 0.25 : 1;
@@ -1129,6 +1301,7 @@ export class Viewport {
 
     this.applyMaterials(payload.nodeId);
     this.setEdgeGeometry(payload);
+    this.sizeDatums();
   }
 
   /** Edges are their own object: line picking and surface picking do not mix. */
@@ -1211,6 +1384,8 @@ export class Viewport {
       if (this.highlightedFace?.nodeId === nodeId) this.highlightedFace = null;
       if (this.hoveredEdge?.nodeId === nodeId) this.hoveredEdge = null;
     }
+
+    this.sizeDatums();
   }
 
   frameOnce(): void {

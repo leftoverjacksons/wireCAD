@@ -370,6 +370,27 @@ export function placeDownstream(graph: Graph, nodeId: NodeId): void {
   graph.setPosition(nodeId, { x, y });
 }
 
+/**
+ * The node standing for one of the three planes through the origin.
+ *
+ * Clicking a square in the view means "this plane", and a plane in this program
+ * is a node — so one is made unless the document already has that plane, in
+ * which case it is the one already there. A second XY Plane node would say
+ * nothing the first does not.
+ */
+export function originPlaneNode(
+  graph: Graph,
+  axis: 'xy' | 'xz' | 'yz',
+): { nodeId: NodeId; created: boolean } {
+  const type = `plane.${axis}`;
+  const existing = graph.allNodes().find((node) => node.type === type);
+  if (existing !== undefined) return { nodeId: existing.id, created: false };
+
+  const node = graph.addNode(type);
+  placeDownstream(graph, node.id);
+  return { nodeId: node.id, created: true };
+}
+
 export function buildFeature(
   graph: Graph,
   spec: FeatureSpec,

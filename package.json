@@ -19,6 +19,7 @@
     "verify:constraints": "node scripts/verify-constraints.mjs",
     "verify:drag": "node scripts/verify-drag.mjs",
     "verify:glyphs": "node scripts/verify-glyphs.mjs",
+    "verify:datums": "node scripts/verify-datums.mjs",
     "verify:preview": "node scripts/verify-preview.mjs",
     "verify:ghost": "node scripts/verify-ghost.mjs"
   },

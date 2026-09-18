@@ -27,6 +27,18 @@ is ready, typically around two seconds.
   foreshortened by being further from the eye. The view it opens on is a true
   isometric — from the near-right-top octant with Z up, which draws the three
   axes 120° apart and foreshortens each of them equally.
+- **The origin planes** — the three planes through the origin are drawn as
+  translucent squares and can be clicked like anything else. A model has to
+  start somewhere, and before there is a face to sketch on the only somewheres
+  are these; drawing them is what makes them a thing you point at rather than a
+  thing you have to know to make from a menu. Clicking one means that plane: the
+  document gains an `XY Plane` node unless it already has one, and that node
+  becomes the selection — so it feeds a dialog waiting for a plane, exactly as
+  clicking a face does. A body in front of a square takes the click instead, so
+  a plane running through a solid does not swallow every click on it, and the
+  squares go away while a sketch has the view. They scale with what is in the
+  scene, because a square fixed in millimetres is either lost inside a large
+  model or swamps a small one.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
@@ -223,6 +235,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 | `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
+| `npm run verify:datums` | Checks the origin planes are clickable, feed a dialog, and give way to a body in front of them |
 | `npm run verify:glyphs` | Checks relations are drawn on the sketch, and that picking one and pressing Delete takes it back |
 | `npm run verify:drag` | Checks a sketch can be pushed around by hand, and that where a dimension is put decides what it measures |
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
@@ -554,6 +567,8 @@ discarded.
 
 - A node that makes neither geometry nor a reference to some — a parameter, a
   datum plane — has nothing to show when clicked.
+- The origin squares carry no labels, and there is no way to turn them off. Which
+  one is which has to be read from how it lies.
 - A relation's mark is placed automatically and cannot be dragged. A dimension
   can be, because it has a name to remember the placement against; a relation is
   known only by its position in the constraint list, which shifts as rules come
