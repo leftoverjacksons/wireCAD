@@ -46,7 +46,34 @@ export const shellSchema: NodeSchema = echoDimensions({
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
 });
 
-export const modifySchemas: readonly NodeSchema[] = [filletSchema, chamferSchema, shellSchema];
+/**
+ * Translation, and only translation.
+ *
+ * A rigid translation is the one transform this program's way of naming
+ * topology survives untouched: edges are matched by their fraction of the
+ * body's bounding box and faces by normal and rank, and moving a body changes
+ * neither. Rotation changes both, and wants its own thinking before it is
+ * offered.
+ */
+export const moveSchema: NodeSchema = echoDimensions({
+  type: 'solid.move',
+  label: 'Move',
+  category: 'Modify',
+  inputs: [
+    { id: 'solid', label: 'Solid', type: 'geometry' },
+    { id: 'dx', label: 'X', type: 'number', default: 0 },
+    { id: 'dy', label: 'Y', type: 'number', default: 0 },
+    { id: 'dz', label: 'Z', type: 'number', default: 0 },
+  ],
+  outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
+});
+
+export const modifySchemas: readonly NodeSchema[] = [
+  filletSchema,
+  chamferSchema,
+  shellSchema,
+  moveSchema,
+];
 
 export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
   const SKIN = () => oc.BRepOffset_Mode.BRepOffset_Skin;
@@ -341,5 +368,33 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
     },
   };
 
-  return [fillet, chamfer, shell];
+  const move: NodeDefinition = {
+    ...moveSchema,
+    evaluate: (inputs) => {
+      const shape = shapeOf(inputs.solid ?? null, 'solid');
+      const dx = asNumber(inputs.dx ?? null, 'dx');
+      const dy = asNumber(inputs.dy ?? null, 'dy');
+      const dz = asNumber(inputs.dz ?? null, 'dz');
+
+      const trsf = new oc.gp_Trsf_1();
+      const vector = new oc.gp_Vec_4(dx, dy, dz);
+      trsf.SetTranslation_1(vector);
+
+      // Copied rather than moved in place, even for a translation of nothing:
+      // handing the input's own handle back would give one shape two owners,
+      // and the second to be evicted from the cache would free it twice.
+      const maker = new oc.BRepBuilderAPI_Transform_2(shape, trsf, true);
+      const moved = kernelCall('Move', 'this shape could not be moved', () => {
+        if (!maker.IsDone()) throw new Error('the kernel did not finish the transform');
+        return maker.Shape();
+      });
+
+      vector.delete?.();
+      trsf.delete?.();
+      maker.delete?.();
+      return { result: geometry(moved) };
+    },
+  };
+
+  return [fillet, chamfer, shell, move];
 }

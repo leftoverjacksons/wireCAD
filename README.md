@@ -46,7 +46,7 @@ is ready, typically around two seconds.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
-  (Fillet, Chamfer, Shell) and *Construct* (XY/XZ/YZ datum planes, Offset
+  (Fillet, Chamfer, Shell, Move) and *Construct* (XY/XZ/YZ datum planes, Offset
   Plane). Each button opens a dialog.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
@@ -200,6 +200,23 @@ is ready, typically around two seconds.
   out as the outer radius minus the wall. The one rule is that every fillet
   radius has to be larger than the wall thickness, since an inner radius of zero
   or less has nowhere to go. Shell says so rather than guessing when it cannot.
+- **Moving a body** — *Move* shifts a body along X, Y and Z, and where the move
+  lands in the chain decides what that means. Moving the last body picks the
+  whole thing up, bores and fillets and all, as if you had lifted it. Moving a
+  body that other features are built on puts the move *before* them, so the
+  block shifts and the bore stays where its sketch puts it: the block has moved
+  relative to its own features. Both are the same operation — a move goes into
+  the chain at the body it is given, taking everything that was reading that
+  body with it, and at the end of a chain, where nothing is reading it, that is
+  an ordinary append.
+- **The move gizmo** — three arrows, one per axis, standing where the body was
+  when you started rather than following it as you pull. Drag one and that
+  number follows in tenths of a millimetre, or type the numbers instead.
+  Translation is the only transform offered, because it is the one that leaves
+  the way this program names faces and edges untouched: an edge is matched by
+  its fraction of the body's bounding box and a face by its normal and rank, and
+  moving a body changes neither. Rotation changes both, and wants its own
+  thinking before it is offered.
 - **Export** — *STL* writes a binary mesh for printing, *STEP* writes the actual
   B-rep for other CAD tools, both in millimetres. Exports cover the selected
   body, or every visible body when nothing is selected; sketches are excluded.
@@ -270,6 +287,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
 | `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
 | `npm run verify:menu` | Checks a node's menu says what deleting it would cost, and that a suppressed feature is held back rather than removed |
+| `npm run verify:move` | Checks a move at the end of a chain shifts the whole body, and one in the middle leaves what was cut from it where it was |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.

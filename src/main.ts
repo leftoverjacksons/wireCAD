@@ -236,17 +236,80 @@ function unit(vector: Vec3): Vec3 {
 }
 
 /**
- * Where a feature's number runs, and from where.
+ * One arrow per axis of the move gizmo, in colours from the palette the rest of
+ * the interface uses.
+ *
+ * Not the red-green-blue triad other CAD programs draw: there is nothing red or
+ * green anywhere else here, and an arrow in a colour this program uses for
+ * nothing would be asking to be read as a warning. Which arrow is which is said
+ * by where it points, in a view where the three axes are 120° apart, and by the
+ * X, Y and Z fields sitting in the dialog beside them.
+ */
+const MOVE_AXES: ReadonlyArray<{ port: string; direction: Vec3; colour: number }> = [
+  { port: 'dx', direction: { x: 1, y: 0, z: 0 }, colour: 0xff61c6 },
+  { port: 'dy', direction: { x: 0, y: 1, z: 0 }, colour: 0xf4ff61 },
+  { port: 'dz', direction: { x: 0, y: 0, z: 1 }, colour: 0x5cecff },
+];
+
+/**
+ * Where the body being moved sat before the move started.
+ *
+ * The arrows stay anchored there for the life of the dialog and their heads
+ * carry the numbers out from it, the way the fillet's one arrow grows with its
+ * radius. Following the body instead would move the thing you are holding as
+ * you hold it.
+ */
+let movePivot: Vec3 | null = null;
+
+interface HandleAxis {
+  origin: Vec3;
+  direction: Vec3;
+  port: string;
+  minimum?: number;
+  stalk?: boolean;
+  colour?: number;
+}
+
+/**
+ * Where a feature's numbers run, and from where.
  *
  * Every number a dialog can drag is a length along some direction the model
  * already has: an extrude travels along its profile's normal, a fillet or
  * chamfer grows outward from the edge it rounds, a shell thickens inward from
- * the face it opens. A number with no such direction — there are none left, but
- * there could be — gets no arrow rather than an arbitrary one.
+ * the face it opens, and a move runs along all three world axes at once. A
+ * number with no such direction — there are none left, but there could be —
+ * gets no arrow rather than an arbitrary one.
  */
-function handleAxis(
-  spec: FeatureSpec,
-): { origin: Vec3; direction: Vec3; port: string; minimum?: number } | null {
+function handleAxes(spec: FeatureSpec, previewNodeId: NodeId): HandleAxis[] {
+  if (spec.nodeType === 'solid.move') {
+    if (movePivot === null) {
+      // The preview *is* the moved body, so where it sat before the move is
+      // its centre less however far it has been moved so far. Worked out once,
+      // from the first mesh that arrives, and kept.
+      const centre = lastCentres.get(previewNodeId);
+      if (centre === undefined) return [];
+      movePivot = {
+        x: centre.x - (dialog.numberOf('dx') ?? 0),
+        y: centre.y - (dialog.numberOf('dy') ?? 0),
+        z: centre.z - (dialog.numberOf('dz') ?? 0),
+      };
+    }
+
+    const pivot = movePivot;
+    return MOVE_AXES.map((axis) => ({
+      origin: pivot,
+      direction: axis.direction,
+      port: axis.port,
+      stalk: true,
+      colour: axis.colour,
+    }));
+  }
+
+  const single = handleAxis(spec);
+  return single === null ? [] : [single];
+}
+
+function handleAxis(spec: FeatureSpec): HandleAxis | null {
   if (spec.nodeType === 'solid.extrude') {
     const profile = dialog.operandNode('profile');
     if (profile === null) return null;
@@ -311,23 +374,31 @@ function handleAxis(
   return null;
 }
 
-/** An arrow on the model for the number the open dialog is about to commit. */
+/** Arrows on the model for the numbers the open dialog is about to commit. */
 function refreshDragHandle(previewNodeId: NodeId | null): void {
   const spec = dialog.feature;
-  const axis = spec === null ? null : handleAxis(spec);
 
-  if (previewNodeId === null || axis === null) {
-    viewport.setDragHandle(null);
+  // The pivot belongs to one move, and only while it is being set up.
+  if (spec === null || spec.nodeType !== 'solid.move' || previewNodeId === null) {
+    movePivot = null;
+  }
+
+  if (spec === null || previewNodeId === null) {
+    viewport.setDragHandles([]);
     return;
   }
 
-  viewport.setDragHandle({
-    origin: axis.origin,
-    direction: axis.direction,
-    distance: dialog.numberOf(axis.port) ?? 0,
-    ...(axis.minimum === undefined ? {} : { minimum: axis.minimum }),
-    onDrag: (distance) => dialog.setNumber(axis.port, distance),
-  });
+  viewport.setDragHandles(
+    handleAxes(spec, previewNodeId).map((axis) => ({
+      origin: axis.origin,
+      direction: axis.direction,
+      distance: dialog.numberOf(axis.port) ?? 0,
+      ...(axis.minimum === undefined ? {} : { minimum: axis.minimum }),
+      ...(axis.stalk === true ? { stalk: true } : {}),
+      ...(axis.colour === undefined ? {} : { colour: axis.colour }),
+      onDrag: (distance) => dialog.setNumber(axis.port, distance),
+    })),
+  );
 }
 
 const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
@@ -851,6 +922,9 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   );
   refreshEdgeHighlight();
   refreshPlaneHighlight();
+  // A handle placed against the model needs the model: the first mesh for a
+  // preview arrives after the preview itself, and the arrows wait for it.
+  if (dialog.isOpen) refreshDragHandle(dialog.previewNodeId);
   viewport.frameOnce();
   editor.setStatuses(message.reports);
   editor.setShown(message.visible);
@@ -916,6 +990,7 @@ if (import.meta.env.DEV) {
     select: (nodeId: NodeId) => applySelection(nodeId, true),
     dialog,
     handleAt: () => viewport.handleScreenPosition(),
+    handles: () => viewport.handleScreenPositions(),
     sketch: sketchSession,
     screenOfSketch: (u: number, v: number) => {
       const plane = lastPlanes[graph.incomingEdge(selected!, 'plane')?.from.node ?? ''] ?? WORLD_XY;

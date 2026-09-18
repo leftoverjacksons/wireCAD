@@ -1,4 +1,5 @@
 import type { Graph } from '../core/graph.js';
+import { removeAndHeal } from '../core/rewire.js';
 import type { NodeId, PortRef, Vec3 } from '../core/types.js';
 import type { FeatureSpec, OperandSpec, PlaneChoice } from './features.js';
 import type { EdgeRef } from '../nodes/edges.js';
@@ -205,7 +206,14 @@ export class FeatureDialog {
     this.previewSignature = null;
     if (preview === null) return;
 
-    for (const nodeId of [preview.nodeId, ...preview.created]) {
+    // A feature that spliced itself into the chain took the operand's consumers
+    // with it, so taking it back out has to hand them back — which is exactly
+    // what healing is. For everything else, which was appended and so has no
+    // consumers of its own, healing is a plain removal.
+    if ((this.graph.getNode(preview.nodeId) ?? null) !== null) {
+      removeAndHeal(this.graph, preview.nodeId);
+    }
+    for (const nodeId of preview.created) {
       if ((this.graph.getNode(nodeId) ?? null) !== null) this.graph.removeNode(nodeId);
     }
     this.callbacks.onPreviewChanged(null);

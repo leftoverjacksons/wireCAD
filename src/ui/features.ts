@@ -1,4 +1,5 @@
 import type { Graph } from '../core/graph.js';
+import { spliceAfter } from '../core/rewire.js';
 import type { DataType, NodeId, PortRef, Vec3 } from '../core/types.js';
 import { EDGE_STRIDE } from '../nodes/edges.js';
 import { EXTRUDE_OPERATIONS } from '../nodes/solid.js';
@@ -53,6 +54,17 @@ export interface FeatureSpec {
    * 'edit' reopens the sketch already selected rather than making anything.
    */
   kind?: 'node' | 'sketch' | 'edit';
+  /**
+   * Whether this feature goes *into* the chain at its first operand rather than
+   * onto the end of it — taking everything that was reading that operand with
+   * it, so what comes after is built on the result instead of on the operand.
+   *
+   * Moving a body needs this and nothing else does yet: a move appended after a
+   * bored block is a second body sitting beside the first, where what was meant
+   * was the block moving and the bore going with it. At the end of a chain,
+   * where nothing is reading the operand, it is an ordinary connect.
+   */
+  splice?: boolean;
 }
 
 export interface FeatureGroup {
@@ -192,6 +204,18 @@ export const tabs: readonly FeatureTab[] = [
             nodeType: 'solid.shell',
             operands: [{ id: 'solid', label: 'Open face', type: 'face' }],
             numbers: [{ id: 'thickness', label: 'Thickness', value: 2 }],
+          },
+          {
+            id: 'move',
+            label: 'Move',
+            nodeType: 'solid.move',
+            operands: [{ id: 'solid', label: 'Body', type: 'geometry' }],
+            numbers: [
+              { id: 'dx', label: 'X', value: 0 },
+              { id: 'dy', label: 'Y', value: 0 },
+              { id: 'dz', label: 'Z', value: 0 },
+            ],
+            splice: true,
           },
         ],
       },
@@ -398,10 +422,20 @@ export function buildFeature(
   numbers: Record<string, number | string>,
 ): NodeId {
   const node = graph.addNode(spec.nodeType, { inputs: numbers });
+  const into = spec.splice === true ? spec.operands[0]?.id : undefined;
 
   try {
     for (const [portId, source] of Object.entries(operands)) {
+      // The spliced operand is not connected here: `spliceAfter` wires it, and
+      // it refuses a node whose input is already spoken for.
+      if (portId === into) continue;
       graph.connect(source, { node: node.id, port: portId });
+    }
+
+    if (into !== undefined) {
+      const source = operands[into];
+      if (source === undefined) throw new Error('There is nothing to splice this onto');
+      spliceAfter(graph, source.node, node.id);
     }
   } catch (thrown) {
     graph.removeNode(node.id);

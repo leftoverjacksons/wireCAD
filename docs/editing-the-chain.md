@@ -56,7 +56,10 @@ Both are wanted. The first is far commoner and needs none of this machinery.
 Translation is the one transform that leaves our topological naming alone:
 edges are matched by bounding-box fraction and faces by normal and rank, and a
 rigid translation preserves both. Rotation would not be so kind, and wants its
-own thinking.
+own thinking. `solid.move` is translation only for that reason, and the node
+copies the shape it is given rather than transforming it in place: handing the
+input's own handle back would give one shape two owners, and the second cache
+entry to be evicted would free it twice.
 
 ## There is no terminator node
 
@@ -120,7 +123,7 @@ really about the dialog:
 |---|-------|-------|--------|
 | 1 | `spliceAfter`, `removeAndHeal`, `branchOf` — pure graph operations | — | **done** |
 | 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | **done** |
-| 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | |
+| 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | **done** |
 | 4 | Editing an existing feature through its dialog | — | |
 | 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | |
 | 6 | Viewport context menu, scoped to face and body | 2, 3 | |
@@ -138,6 +141,31 @@ input — and the prediction is exact rather than a guess: a wire off the
 pass-through output always reconnects, because the input it lands on is freed
 by the removal itself. A test holds the two together, so a change to the healing
 rule that the menu did not hear about fails rather than lies.
+
+Piece 3 turned out to need no decision about which of the two moves was meant.
+A feature spec can now say that it goes *into* the chain at its first operand
+rather than onto the end of it — `splice` in `src/ui/features.ts`, which only
+Move sets — and `buildFeature` calls `spliceAfter` instead of `connect` for that
+one operand. Selecting the last body and selecting a body three features back
+are then the same gesture, and the difference between picking the whole thing up
+and shifting a block out from under its own bore is which body was pointed at.
+
+The preview made the cancel path worth noticing. A preview is the real thing
+standing in the graph already, so a move being set up has already taken the
+bore off the block; removing that node on Cancel would leave the bore wanting a
+target. Withdrawing a preview now heals rather than removes, which puts the
+consumers back where they were, and for every other feature — appended, so with
+no consumers of its own — healing is a plain removal.
+
+The gizmo is three of the arrow the viewport already drew, not a thing of its
+own: `setDragHandles` takes a list, and hit-testing picks the nearest head. Two
+details are new. A number that starts at zero and may go either way has no
+length to draw and nothing to grab, and three of them at once would put all
+three heads on one point, so a handle can ask for a stalk — a fixed length out
+from the origin, with its own distance added to that. And the arrows stay
+anchored where the body was when the dialog opened, worked out once from the
+first mesh that arrives, because a gizmo that follows the body moves the thing
+you are holding while you hold it.
 
 Piece 6 wants `BRepAlgoAPI_Defeaturing` for *delete face*, which is listed as
 supported in this build but has not been called yet. Several things that were
