@@ -199,6 +199,23 @@ with nothing present reading it — a fixed point, reached the way `branchOf`
 reaches its own, because a node is only left unused once everything reading it
 is.
 
+Rolling back to a node shows what that feature *made*, and that turned out to
+be half of what editing wants. The other half is what it was made *from*: at the
+time a fillet is created, the body its edges are being picked off is on screen
+as edges, the picked ones lit, and the radius arrow sits on the last of them.
+Reopened, none of that was there — the body is superseded by the fillet, so
+nothing had drawn it, and an arrow that sits on an edge of a body nobody drew
+cannot be placed at all. That is why a reopened fillet or chamfer had no arrow
+and a shell had none either: both look for geometry on a body that was not on
+screen. So editing pins what the feature reads, drawn as an outline, and finds
+its edge set again by matching the stored references against that body the way
+a solve does. Reopening a feature now looks like making it did.
+
+Both sides of the feature are outlined while it is being edited — what it is
+built on and what is built on it — and only the feature itself is drawn as the
+model. They are told apart in the graph rather than in the viewport, where the
+marker and the dimmed cone say which is which.
+
 The marker is session state rather than part of the document, because a saved
 file should open on the model rather than in the middle of somebody's afternoon.
 Editing borrows it and gives it back: the dialog remembers what the marker was,

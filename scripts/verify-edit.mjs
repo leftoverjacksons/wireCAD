@@ -45,8 +45,12 @@ await page.evaluate(() => {
     if (!window.wirecad.dialog.isOpen) window.wirecad.select(null);
     await window.__settle();
     let total = 0;
+    // What a reopened feature is built on is drawn as an outline beside it.
+    // That is a second solid to anything counting triangles, and it is not the
+    // model, so it is left out of the measurement.
+    const ghosts = window.wirecad.viewport.ghosts ?? new Map();
     for (const mesh of window.wirecad.meshes()) {
-      if (mesh.kind !== 'solid') continue;
+      if (mesh.kind !== 'solid' || ghosts.has(mesh.nodeId)) continue;
       const p = mesh.positions;
       const ix = mesh.indices;
       let signed = 0;
@@ -214,6 +218,93 @@ const moved = await page.evaluate(async () => {
   return minX;
 });
 check('and the body follows it  ', Math.abs(moved - 40) < 0.01, `x from ${moved.toFixed(1)}`);
+
+// ------------------------------- reopening looks like making it did
+
+await page.evaluate(() => window.__reset());
+await page.evaluate(() => {
+  window.wirecad.viewport.ghosts = window.wirecad.viewport.ghosts ?? new Map();
+});
+
+/** What is on screen, how, and what the dialog has hold of. */
+const sceneState = () =>
+  page.evaluate(async () => {
+    await window.__settle();
+    const { viewport, graph } = window.wirecad;
+    const name = (id) => graph.getNode(id)?.label ?? graph.getNode(id)?.type ?? id;
+    return {
+      ghosts: [...(viewport.ghosts ?? new Map())].map(([id, m]) => `${name(id)}:${m}`).sort(),
+      lit: [...(viewport.chosenEdges ?? new Map())].map(([id, s]) => `${name(id)}:${s.size}`).sort(),
+      handles: window.wirecad.handles().length,
+    };
+  });
+
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
+await page.getByRole('button', { name: 'Fillet', exact: true }).click();
+await page.locator('.feature-dialog').waitFor({ state: 'visible' });
+const picks = await page.evaluate(() => {
+  const bore = window.__idOf('Bore');
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === bore);
+  return mesh.edges
+    .map((edge) => edge)
+    .filter((edge) => Math.abs(edge.direction.z) > 0.9 && edge.length > 15)
+    .slice(0, 2)
+    .map((edge) => window.wirecad.viewport.screenPositionOf(edge.midpoint));
+});
+for (const at of picks) {
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(400);
+}
+const making = await sceneState();
+await page.locator('.feature-dialog').getByRole('button', { name: 'Create', exact: true }).click();
+await page.waitForTimeout(700);
+
+await editViaMenu('solid.fillet');
+await page.waitForTimeout(600);
+const reediting = await sceneState();
+check(
+  'a reopened fillet reads as it was',
+  reediting.ghosts.join(',') === making.ghosts.join(',') &&
+    reediting.lit.join(',') === making.lit.join(',') &&
+    reediting.handles === making.handles,
+  `making ${making.ghosts.join(',')} · ${making.lit.join(',')} · ${making.handles} arrow` +
+    ` | again ${reediting.ghosts.join(',')} · ${reediting.lit.join(',')} · ${reediting.handles} arrow`,
+);
+await page.locator('.feature-dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+await page.waitForTimeout(500);
+
+const afterEdit = await sceneState();
+check(
+  'and lets go of it after   ',
+  afterEdit.ghosts.length === 0 && afterEdit.lit.every((entry) => entry.endsWith(':0')),
+  `${afterEdit.ghosts.join(',') || 'no ghosts'} · ${afterEdit.lit.join(',') || 'nothing lit'}`,
+);
+
+// A shell's arrow sits on a face of the body it opens, which is only there to
+// be found because reopening put that body back on screen.
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.addNode('solid.shell', {
+    id: 'hollow',
+    label: 'Hollow',
+    position: { x: 1040, y: 0 },
+    inputs: { thickness: 2, nx: 0, ny: 0, nz: 1, rank: 0 },
+  });
+  const fillet = window.__idOf('solid.fillet');
+  graph.connect({ node: fillet, port: 'result' }, { node: 'hollow', port: 'solid' });
+  window.wirecad.editor.frame();
+  await window.__settle();
+});
+await editViaMenu('Hollow');
+await page.waitForTimeout(600);
+const shell = await sceneState();
+check(
+  'a shell gets its arrow back',
+  shell.handles === 1 && shell.ghosts.some((entry) => entry.endsWith(':edges')),
+  `${shell.handles} arrow · ${shell.ghosts.join(',') || 'no ghosts'}`,
+);
+await page.locator('.feature-dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+await page.waitForTimeout(400);
 
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();

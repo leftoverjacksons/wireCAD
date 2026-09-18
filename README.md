@@ -244,8 +244,12 @@ stays cached, so it is cheap to adjust a radius and try again.
   whatever built it: a sketch goes back to its drawing session, and anything a
   toolbar dialog made reopens in that dialog holding the values it has now.
   Opening one rolls the view back to it, so what is on screen is what that
-  feature made rather than what came after it, and closing the dialog gives the
-  model back. Changing a number changes the feature as you type — there is no
+  feature made rather than what came after it — with what it was made *from*
+  put back beside it, as an outline: the body the edges were picked off, the
+  profile that was extruded. A reopened fillet shows the edges it holds, lit on
+  that body, with its radius arrow on the last of them; a shell gets its arrow
+  back on the face it opens. Reopening a feature looks like making it did.
+  Closing the dialog gives the model back. Changing a number changes the feature as you type — there is no
   preview, because what is on screen is already the thing being changed — and
   *Done* keeps it while *Cancel* puts the numbers back and leaves no undo step
   behind.

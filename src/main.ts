@@ -137,9 +137,11 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
     }
 
     // Editing a feature is looking at the moment it was made: what came after
-    // it steps out of the way until the dialog is done.
+    // it steps out of the way, and what it was made from comes back.
+    editPins = dialogOperandNodes();
     markerBeforeDialog = rolledBackTo;
     setRolledBack(nodeId);
+    requestSolve();
   },
   onRollBack: (nodeId) => setRolledBack(nodeId),
 });
@@ -189,11 +191,19 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     requestSolve();
   },
   onClosed: () => {
+    editPins = [];
+    pickedEdges = null;
+    viewport.clearChosenEdges();
+
     // Whatever the dialog was holding the view at, it is not holding it now.
-    if (markerBeforeDialog === undefined) return;
+    if (markerBeforeDialog === undefined) {
+      requestSolve();
+      return;
+    }
     const restore = markerBeforeDialog;
     markerBeforeDialog = undefined;
     setRolledBack(restore);
+    requestSolve();
   },
   onArmedChanged: (armed) => {
     document.body.classList.toggle('picking', armed);
@@ -896,11 +906,65 @@ let ghostPin: NodeId | null = null;
 let edgesPin: NodeId | null = null;
 /** The edges the open dialog has been given, for the handle to sit on. */
 let pickedEdges: { nodeId: NodeId; indices: number[] } | null = null;
+/**
+ * What a feature being reopened is built on, kept on screen while it is.
+ *
+ * Rolling back to a node shows what that feature *made*. Editing it wants what
+ * it was made *from* as well — the body the edges were picked off, the profile
+ * that was extruded — because that is what was on screen while it was being
+ * made, and because a fillet's arrow sits on an edge of that body and a shell's
+ * on a face of it. Neither can be found on a body nothing has drawn.
+ */
+let editPins: NodeId[] = [];
 
 /** Everything the view is being asked to show beyond the model itself. */
 function pinnedNodes(): NodeId[] {
-  const pins = [pickPin, ghostPin, edgesPin].filter((id): id is NodeId => id !== null);
+  const pins = [pickPin, ghostPin, edgesPin, ...editPins].filter(
+    (id): id is NodeId => id !== null,
+  );
   return [...new Set(pins)];
+}
+
+/** Every node the open dialog's feature reads, by the operands it was given. */
+function dialogOperandNodes(): NodeId[] {
+  const spec = dialog.feature;
+  if (spec === null) return [];
+
+  const nodes: NodeId[] = [];
+  for (const operand of spec.operands) {
+    const node = dialog.operandNode(operand.id);
+    if (node !== null && graph.getNode(node) !== undefined) nodes.push(node);
+  }
+  return [...new Set(nodes)];
+}
+
+/**
+ * The edges a reopened fillet or chamfer was given, found again on the body
+ * they were taken from.
+ *
+ * At the time they were picked this came from the picking itself. Reopened, it
+ * has to be read back out of the graph and matched against the body as it
+ * stands now — the same matching a solve does, so the set shown is the set the
+ * feature will actually round.
+ */
+function editedEdgeSelection(): { nodeId: NodeId; indices: number[] } | null {
+  const spec = dialog.feature;
+  const nodeId = dialog.previewNodeId;
+  if (!dialog.isEditing || spec === null || nodeId === null) return null;
+
+  const operand = spec.operands.find((candidate) => candidate.type === 'edges');
+  if (operand === undefined) return null;
+
+  const body = dialog.operandNode(operand.id);
+  const selection = graph.incomingEdge(nodeId, 'edges');
+  if (body === null || selection === undefined) return null;
+
+  const stored = graph.inputValue(selection.from.node, 'refs');
+  const edges = viewport.edgesOf(body);
+  if (!Array.isArray(stored) || edges === undefined) return null;
+
+  const refs = unpackEdgeRefs(stored.filter((value): value is number => typeof value === 'number'));
+  return { nodeId: body, indices: matchEdgeRefs(edges, refs).filter((index) => index >= 0) };
 }
 
 function requestSolve(): void {
@@ -965,7 +1029,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   // selected node made. One that would be on screen anyway is left alone.
   const forced = new Set(message.pinnedShown);
   const ghosts = new Map<NodeId, GhostMode>();
-  for (const nodeId of [pickPin, edgesPin]) {
+  for (const nodeId of [pickPin, edgesPin, ...editPins]) {
     if (nodeId !== null && forced.has(nodeId)) ghosts.set(nodeId, 'edges');
   }
   for (const nodeId of message.pinnedShown) {
@@ -990,12 +1054,35 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   );
   refreshEdgeHighlight();
   refreshPlaneHighlight();
+
+  // A reopened fillet shows the edges it holds, on the body they came off,
+  // which is also where its arrow sits. Both need that body meshed, so this
+  // waits for the solve that pinned it rather than happening as the dialog
+  // opens.
+  const editedEdges = editedEdgeSelection();
+  if (editedEdges !== null) {
+    pickedEdges = editedEdges;
+    viewport.setChosenEdges(editedEdges.nodeId, editedEdges.indices);
+  }
+
   // A handle placed against the model needs the model: the first mesh for a
   // preview arrives after the preview itself, and the arrows wait for it.
   if (dialog.isOpen) refreshDragHandle(dialog.previewNodeId);
   viewport.frameOnce();
   editor.setStatuses(message.reports);
   editor.setShown(message.visible);
+
+  // Rolled back to a feature that is failing, there is nothing of it to draw —
+  // and an empty view with no reason given is the worst way to be told.
+  if (rolledBackTo !== null) {
+    const report = message.reports.find((entry) => entry.nodeId === rolledBackTo);
+    const name = graph.getNode(rolledBackTo)?.label ?? graph.schemaOf(rolledBackTo).label;
+    if (report?.error !== undefined) {
+      statusEl.textContent = `${name} is failing, so there is nothing of it to show — ${report.error}`;
+    } else if (report?.status === 'skipped') {
+      statusEl.textContent = `${name} has nothing to work on, so there is nothing of it to show`;
+    }
+  }
 
   const errors = message.reports.filter((report) => report.error !== undefined);
   statsEl.textContent =

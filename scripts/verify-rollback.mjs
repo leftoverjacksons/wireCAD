@@ -223,9 +223,13 @@ const mid = await page.evaluate(async () => ({
   ...(await window.__view()),
   marker: window.__name(window.wirecad.rolledBackTo()),
 }));
+// Editing outlines both sides of the feature: what it is built on, and what is
+// built on it. Only the feature itself is drawn as the model.
 check(
   'the feature after it steps aside',
-  mid.model.join(',') === 'Bore' && mid.outlined.join(',') === 'Round',
+  mid.model.join(',') === 'Bore' &&
+    mid.outlined.includes('Round') &&
+    mid.outlined.includes('Body'),
   `${mid.model.join(',')} · outlined ${mid.outlined.join(',') || 'nothing'}`,
 );
 
