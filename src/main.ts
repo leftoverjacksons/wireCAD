@@ -15,7 +15,7 @@ import { geometrySchemas } from './nodes/solid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { FeatureSpec, PlaneChoice } from './ui/features.js';
-import { createSketchNode, originPlaneNode, tabs } from './ui/features.js';
+import { createSketchNode, originPlaneNode, specForNode, tabs } from './ui/features.js';
 import {
   download,
   keepRejected,
@@ -83,13 +83,25 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onDocumentChanged: () => requestSolve(),
   // The editor already holds this selection; only the viewport needs telling.
   onSelectionChanged: (nodeId) => applySelection(nodeId, false),
-  // Reopening a feature is the dialogs' business, and so far only a sketch has
-  // somewhere to be reopened into. A feature dialog that can load its own node
-  // arrives behind these same two calls.
-  canEdit: (nodeId) => SketchSession.editable(graph, nodeId),
+  // Reopening a feature is the dialogs' business: a sketch goes back to its
+  // drawing session, and anything a toolbar dialog built reopens in that dialog
+  // on the node itself.
+  canEdit: (nodeId) =>
+    SketchSession.editable(graph, nodeId) || specForNode(graph, nodeId) !== null,
   onEdit: (nodeId) => {
     applySelection(nodeId, true);
-    editSketch(nodeId);
+    if (SketchSession.editable(graph, nodeId)) {
+      editSketch(nodeId);
+      return;
+    }
+
+    // The dialog takes the view from here, as it does when a feature is built.
+    ghostPin = null;
+    edgesPin = null;
+    viewport.clearChosenEdges();
+    if (!dialog.openOn(nodeId)) {
+      statusEl.textContent = 'That node has no dialog to reopen.';
+    }
   },
 });
 editor.frame();

@@ -10,7 +10,9 @@ import {
   outputPortFor,
   resolveEdgeSource,
   resolvePlaneSource,
+  specForNode,
 } from './features.js';
+import { EDGE_STRIDE } from '../nodes/edges.js';
 
 export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
@@ -57,6 +59,14 @@ export class FeatureDialog {
   private edgeListener: ((choice: EdgeChoice | null) => void) | null = null;
   /** What the feature currently looks like, standing in the graph already. */
   private preview: { nodeId: NodeId; created: NodeId[] } | null = null;
+  /**
+   * The node being reopened, and the values it held when the dialog opened.
+   *
+   * Editing creates nothing: the thing on screen is already the thing being
+   * changed. So there is no preview to take back out, and Cancel is a matter of
+   * putting the numbers back where they were.
+   */
+  private editing: { nodeId: NodeId; before: Map<string, number | string> } | null = null;
   /** Whether the history snapshot taken before the first preview still stands. */
   private captured = false;
   private failure: string | null = null;
@@ -103,6 +113,7 @@ export class FeatureDialog {
     if (this.spec !== null) this.close();
 
     this.spec = spec;
+    this.editing = null;
     this.chosen.clear();
     this.numbers.clear();
     this.choices.clear();
@@ -130,8 +141,97 @@ export class FeatureDialog {
     this.refreshPreview();
   }
 
+  /**
+   * Reopens the feature a node already is.
+   *
+   * The dialog loads what the node is holding and writes changes straight back
+   * to it, so what is on screen is the feature itself rather than a stand-in
+   * for one. Nothing is created and nothing is rewired: what it is built on is
+   * shown but not changed here, because changing that means new nodes, and the
+   * graph is where wires are moved.
+   */
+  openOn(nodeId: NodeId): boolean {
+    const spec = specForNode(this.graph, nodeId);
+    if (spec === null) return false;
+
+    if (this.spec !== null) this.close();
+
+    this.spec = spec;
+    this.chosen.clear();
+    this.numbers.clear();
+    this.choices.clear();
+    this.armedOperand = null;
+    this.edges = null;
+    this.edgeListener?.(null);
+
+    // The values as the node actually answers for them, which is its literal
+    // where it has one and the port's default where it does not. Writing a
+    // default back as a literal says exactly the same thing, so restoring on
+    // Cancel needs no way to unset a port.
+    const before = new Map<string, number | string>();
+    for (const number of spec.numbers) {
+      const value = Number(this.graph.inputValue(nodeId, number.id) ?? number.value);
+      this.numbers.set(number.id, value);
+      before.set(number.id, value);
+    }
+    for (const choice of spec.choices ?? []) {
+      const value = String(this.graph.inputValue(nodeId, choice.id) ?? choice.value);
+      this.choices.set(choice.id, value);
+      before.set(choice.id, value);
+    }
+
+    this.editing = { nodeId, before };
+    this.loadOperands(spec, nodeId);
+    this.render();
+    this.callbacks.onArmedChanged(false);
+    this.callbacks.onPreviewChanged(nodeId);
+    return true;
+  }
+
+  /** What the node is built on, read back from its own wires. */
+  private loadOperands(spec: FeatureSpec, nodeId: NodeId): void {
+    for (const operand of spec.operands) {
+      const wire = this.graph.incomingEdge(nodeId, operand.id);
+      if (wire === undefined) continue;
+
+      if (operand.type === 'face') {
+        this.chosen.set(operand.id, {
+          kind: 'face',
+          nodeId: wire.from.node,
+          normal: {
+            x: Number(this.graph.inputValue(nodeId, 'nx') ?? 0),
+            y: Number(this.graph.inputValue(nodeId, 'ny') ?? 0),
+            z: Number(this.graph.inputValue(nodeId, 'nz') ?? 0),
+          },
+          rank: Number(this.graph.inputValue(nodeId, 'rank') ?? 0),
+        });
+        continue;
+      }
+
+      this.chosen.set(operand.id, { kind: 'node', nodeId: wire.from.node });
+    }
+  }
+
+  get isEditing(): boolean {
+    return this.editing !== null;
+  }
+
+  /** Puts the numbers back where the dialog found them. */
+  private restoreEdit(): void {
+    const editing = this.editing;
+    this.editing = null;
+    if (editing === null) return;
+    if ((this.graph.getNode(editing.nodeId) ?? null) === null) return;
+
+    for (const [portId, value] of editing.before) {
+      this.graph.setInput(editing.nodeId, portId, value);
+    }
+    this.callbacks.onPreviewChanged(editing.nodeId);
+  }
+
   /** Leaving without creating: the preview goes back out of the graph. */
   close(): void {
+    this.restoreEdit();
     this.dropPreview();
     if (this.captured) {
       this.callbacks.onForget();
@@ -142,6 +242,7 @@ export class FeatureDialog {
 
   private finish(): void {
     this.spec = null;
+    this.editing = null;
     this.armedOperand = null;
     this.edges = null;
     this.preview = null;
@@ -160,7 +261,7 @@ export class FeatureDialog {
 
   /** The feature as it currently stands, already in the graph. */
   get previewNodeId(): NodeId | null {
-    return this.preview?.nodeId ?? null;
+    return this.preview?.nodeId ?? this.editing?.nodeId ?? null;
   }
 
   get feature(): FeatureSpec | null {
@@ -197,6 +298,7 @@ export class FeatureDialog {
 
   /** Nodes the preview put in the graph, which are not operands to choose from. */
   private previewNodes(): Set<NodeId> {
+    if (this.editing !== null) return new Set([this.editing.nodeId]);
     return new Set(this.preview === null ? [] : [this.preview.nodeId, ...this.preview.created]);
   }
 
@@ -250,6 +352,21 @@ export class FeatureDialog {
   private refreshPreview(): void {
     const spec = this.spec;
     if (spec === null || spec.kind === 'sketch' || spec.kind === 'edit') return;
+
+    // Editing writes to the node itself: there is nothing to build, because
+    // what would be built is already there and already on screen.
+    const editing = this.editing;
+    if (editing !== null) {
+      if (!this.captured) {
+        this.callbacks.onBeforeChange();
+        this.captured = true;
+      }
+      for (const [portId, value] of this.inputValues()) {
+        this.graph.setInput(editing.nodeId, portId, value);
+      }
+      this.callbacks.onPreviewChanged(editing.nodeId);
+      return;
+    }
 
     const ready = spec.operands.every(
       (operand) => operand.optional === true || this.chosen.has(operand.id),
@@ -423,6 +540,32 @@ export class FeatureDialog {
     return choice.kind === 'face' ? `Face of ${label} (rank ${choice.rank})` : label;
   }
 
+  /**
+   * What an operand is wired to, in words, for a feature being reopened.
+   *
+   * Editing shows what the node is built on without offering to change it:
+   * pointing it at something else means new nodes and moved wires, which is
+   * what the graph is for.
+   */
+  private wiredDescription(operand: OperandSpec, nodeId: NodeId): string {
+    const wire = this.graph.incomingEdge(nodeId, operand.id);
+    if (wire === undefined) return 'unconnected';
+    const body = this.describeNode(wire.from.node);
+
+    if (operand.type === 'edges') {
+      const selection = this.graph.incomingEdge(nodeId, 'edges');
+      if (selection === undefined) return `every edge of ${body}`;
+      const refs = this.graph.inputValue(selection.from.node, 'refs');
+      const count = Array.isArray(refs) ? refs.length / EDGE_STRIDE : 0;
+      return `${count} edge${count === 1 ? '' : 's'} of ${body}`;
+    }
+
+    const choice = this.chosen.get(operand.id);
+    return choice !== undefined && choice.kind === 'face'
+      ? `Face of ${body} (rank ${choice.rank})`
+      : body;
+  }
+
   private renderOperand(operand: OperandSpec): HTMLElement {
     const row = document.createElement('div');
     row.className = 'feature-row';
@@ -432,6 +575,16 @@ export class FeatureDialog {
     label.className = 'feature-label';
     label.textContent = operand.optional === true ? `${operand.label} (opt)` : operand.label;
     row.append(label);
+
+    const editing = this.editing;
+    if (editing !== null) {
+      const chip = document.createElement('span');
+      chip.className = 'feature-chip';
+      chip.textContent = this.wiredDescription(operand, editing.nodeId);
+      chip.title = 'Rewire this in the graph';
+      row.append(chip);
+      return row;
+    }
 
     const choice = this.chosen.get(operand.id);
 
@@ -522,7 +675,7 @@ export class FeatureDialog {
 
     const title = document.createElement('div');
     title.className = 'feature-title';
-    title.textContent = spec.label;
+    title.textContent = this.editing === null ? spec.label : `Edit ${spec.label}`;
     this.element.append(title);
 
     for (const operand of spec.operands) this.element.append(this.renderOperand(operand));
@@ -606,7 +759,8 @@ export class FeatureDialog {
     const create = document.createElement('button');
     create.type = 'button';
     create.className = 'tool-button tool-primary';
-    create.textContent = 'Create';
+    // Nothing is created by an edit: what the button ends is the editing.
+    create.textContent = this.editing === null ? 'Create' : 'Done';
     create.addEventListener('click', () => this.commit());
 
     actions.append(cancel, create);
@@ -692,6 +846,17 @@ export class FeatureDialog {
   private commit(): void {
     const spec = this.spec;
     if (spec === null) return;
+
+    // An edit has nothing to check and nothing to build: the values are already
+    // on the node. Keeping them is a matter of not putting the old ones back.
+    const editing = this.editing;
+    if (editing !== null) {
+      this.editing = null;
+      this.captured = false;
+      this.finish();
+      this.callbacks.onCommit(editing.nodeId);
+      return;
+    }
 
     for (const operand of spec.operands) {
       if (this.chosen.has(operand.id) || operand.optional === true) continue;

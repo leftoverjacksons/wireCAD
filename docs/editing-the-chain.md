@@ -110,7 +110,8 @@ really about the dialog:
 - The dialog gains an **edit mode**: open on a node, load its current values,
   change them live — the preview machinery already watches values change —
   and commit, or restore on cancel. No nodes are created, so there is no
-  cleanup to get wrong.
+  cleanup to get wrong. *Built.* The other two below wait on piece 5, which is
+  where a marker in the history comes from.
 - Editing a node **rolls the view back** to it, so what is on screen is what
   that feature made rather than what came after.
 - Because the cone is a display question and not a rebuild, the nodes that
@@ -124,15 +125,26 @@ really about the dialog:
 | 1 | `spliceAfter`, `removeAndHeal`, `branchOf` — pure graph operations | — | **done** |
 | 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | **done** |
 | 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | **done** |
-| 4 | Editing an existing feature through its dialog | — | |
+| 4 | Editing an existing feature through its dialog | — | **done** |
 | 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | |
 | 6 | Viewport context menu, scoped to face and body | 2, 3 | |
 
-Piece 2's *Edit* is an entry and a pair of callbacks rather than a feature of
-its own: today it reopens a sketch in its drawing session, which already
-existed, and for everything else it says that nothing here reopens rather than
-sitting there doing nothing. Piece 4 fills it in from behind, by teaching the
-dialogs to load a node; the menu does not change when it does.
+Piece 2's *Edit* was an entry and a pair of callbacks rather than a feature of
+its own, and piece 4 filled it in from behind exactly as expected: `canEdit`
+learned a second answer and the menu did not change at all.
+
+Piece 4 itself needed no new machinery in the dialog, only a second way in.
+`openOn` loads the node's own values — its literal where it has one, the port's
+default where it does not — which is also why Cancel needs no way to unset a
+port: writing a default back as a literal says the same thing and hashes the
+same. Changes go straight to the node, so there is no preview to build and
+nothing to clean up, and the capture taken before the first change is forgotten
+on Cancel, so an abandoned edit leaves no undo step.
+
+What editing deliberately does not do is rewire. The operand rows show what the
+feature is built on and offer nothing else: pointing a fillet at another body
+means a new edge selection and moved wires, and the graph is where wires are
+moved. Keeping "nothing is created" true is what makes cancelling exact.
 
 What the menu says before it acts is the part worth keeping. `deleteOutcome` in
 `src/ui/node-menu.ts` predicts what `removeAndHeal` will do — how many wires

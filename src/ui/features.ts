@@ -246,6 +246,19 @@ export const features: readonly FeatureSpec[] = tabs.flatMap((tab) =>
   tab.groups.flatMap((group) => group.features),
 );
 
+/**
+ * The dialog a node of this type was built by, where there is one.
+ *
+ * What makes a node reopenable is that a dialog knows how to say what it is:
+ * its numbers, its choices and what it is built on. A sketch has a dialog of
+ * its own kind — the drawing session — and is deliberately not offered here.
+ */
+export function specForNode(graph: Graph, nodeId: NodeId): FeatureSpec | null {
+  const node = graph.getNode(nodeId);
+  if (node === undefined) return null;
+  return features.find((spec) => spec.nodeType === node.type && spec.kind === undefined) ?? null;
+}
+
 /** Where a plane came from: an existing node, or a face that needs a reference node. */
 export type PlaneChoice =
   | { kind: 'node'; nodeId: NodeId }

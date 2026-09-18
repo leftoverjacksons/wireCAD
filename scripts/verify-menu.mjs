@@ -123,11 +123,25 @@ check(
   `delete: ${entry(bore, 'delete')?.detail ?? 'nothing said'}`,
 );
 check(
-  'edit says why it cannot   ',
-  entry(bore, 'edit')?.disabled === true &&
-    entry(bore, 'edit')?.detail === 'Nothing here reopens for editing',
-  entry(bore, 'edit')?.detail ?? 'missing',
+  'edit reopens what made it ',
+  entry(bore, 'edit')?.disabled === false,
+  entry(bore, 'edit')?.disabled === false ? 'offered' : 'refused',
 );
+
+// A node no dialog built says so rather than sitting there dead.
+await page.keyboard.press('Escape');
+await page.evaluate(() => {
+  window.wirecad.graph.addNode('math.number', { id: 'param', label: 'Parameter' });
+});
+const parameter = await openMenu('Parameter');
+check(
+  'and says why when nothing does',
+  entry(parameter, 'edit')?.disabled === true &&
+    entry(parameter, 'edit')?.detail === 'Nothing here reopens for editing',
+  entry(parameter, 'edit')?.detail ?? 'missing',
+);
+await page.keyboard.press('Escape');
+await page.evaluate(() => window.wirecad.graph.removeNode('param'));
 
 // A branch counts only what would have nothing left to read: the bore survives
 // losing the body, because its own profile still feeds it.

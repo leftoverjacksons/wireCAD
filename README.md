@@ -239,9 +239,16 @@ stays cached, so it is cheap to adjust a radius and try again.
   *Hide* or *Show*, *Suppress*, *Delete* and *Delete branch*. Every entry says
   what it will cost before it is chosen, and an entry that would mean nothing for
   that node stays where it is, greyed, saying why — a gap reads as the menu not
-  having thought of it. *Edit* reopens a sketch in its drawing session; the
-  feature dialogs do not reopen yet, and the entry says so rather than doing
-  nothing.
+  having thought of it.
+- **Editing a feature** — *Edit*, from a node's right-click menu, reopens
+  whatever built it: a sketch goes back to its drawing session, and anything a
+  toolbar dialog made reopens in that dialog holding the values it has now.
+  Changing a number changes the feature as you type — there is no preview,
+  because what is on screen is already the thing being changed — and *Done*
+  keeps it while *Cancel* puts the numbers back and leaves no undo step behind.
+  A reopened Move brings its arrows back with it. What the feature is built on
+  is shown but not offered: pointing a fillet at another body means new nodes
+  and moved wires, and the graph is where wires are moved.
 - **Deleting from the middle** — *Delete* takes the node out and joins what it
   was reading to what was reading it, so deleting a fillet leaves the body it was
   rounding and everything built on the fillet goes on being built on the body.
@@ -288,6 +295,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
 | `npm run verify:menu` | Checks a node's menu says what deleting it would cost, and that a suppressed feature is held back rather than removed |
 | `npm run verify:move` | Checks a move at the end of a chain shifts the whole body, and one in the middle leaves what was cut from it where it was |
+| `npm run verify:edit` | Checks a feature reopens on its own values, changes live, and is put back by Cancel |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
