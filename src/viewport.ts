@@ -5,6 +5,13 @@ import type { EdgeInfo, FaceInfo } from './geometry/kernel.js';
 import { planeYAxis } from './geometry/plane.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
 
+/**
+ * The direction an isometric view looks from, with Z up: equally along each
+ * axis, which is what makes all three foreshorten by the same amount and draw
+ * 120° apart on screen.
+ */
+const ISOMETRIC = new THREE.Vector3(1, -1, 1).normalize();
+
 /** How close a pointer has to be to the handle's head, in pixels. */
 const HANDLE_GRAB = 16;
 /** Dragged distances land on this, in millimetres. */
@@ -53,7 +60,16 @@ export interface EdgeHit {
 
 export class Viewport {
   private readonly scene = new THREE.Scene();
-  private readonly camera: THREE.PerspectiveCamera;
+  private readonly camera: THREE.OrthographicCamera;
+  /**
+   * How much of the model, in millimetres, the viewport shows from top to
+   * bottom before the controls' own zoom is applied.
+   *
+   * An orthographic camera has no field of view, so how large the model looks
+   * has nothing to do with how far away the camera is: it is this, and the zoom
+   * the controls keep. Framing sets it; resizing reads it.
+   */
+  private viewHeight = 240;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly controls: OrbitControls;
   private readonly meshes = new Map<NodeId, THREE.Mesh>();
@@ -149,7 +165,13 @@ export class Viewport {
     scale: number;
   } | null = null;
   /** Where the camera was before a sketch took it, so leaving can give it back. */
-  private savedView: { position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 } | null =
+  private savedView: {
+    position: THREE.Vector3;
+    target: THREE.Vector3;
+    up: THREE.Vector3;
+    zoom: number;
+    height: number;
+  } | null =
     null;
 
   private readonly overlay: Array<THREE.LineSegments | THREE.Points> = [];
@@ -260,9 +282,16 @@ export class Viewport {
   constructor(private readonly container: HTMLElement) {
     this.scene.background = new THREE.Color(0x07081c);
 
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 20000);
+    // Orthographic, as a CAD viewport is: parallel edges stay parallel, equal
+    // lengths measure equal wherever they sit, and nothing is foreshortened by
+    // being further away. The depth range is generous because orthographic
+    // depth is linear — there is no precision to lose by making it wide, and a
+    // model larger than expected is never sliced by the far plane.
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 200_000);
     this.camera.up.set(0, 0, 1);
-    this.camera.position.set(120, -150, 110);
+    // True isometric: from the near-right-top octant with Z up, which draws the
+    // three axes 120° apart and foreshortens them equally.
+    this.camera.position.copy(ISOMETRIC).multiplyScalar(600);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -715,6 +744,8 @@ export class Viewport {
         position: this.camera.position.clone(),
         target: this.controls.target.clone(),
         up: this.camera.up.clone(),
+        zoom: this.camera.zoom,
+        height: this.viewHeight,
       };
     }
 
@@ -730,8 +761,10 @@ export class Viewport {
 
     this.camera.up.set(up.x, up.y, up.z);
     this.controls.target.copy(origin);
-    this.camera.position.copy(origin).add(normal.multiplyScalar(span * 1.2));
-    this.camera.updateProjectionMatrix();
+    this.camera.position.copy(origin).add(normal.multiplyScalar(Math.max(span * 4, 500)));
+    this.camera.zoom = 1;
+    this.viewHeight = this.heightFor(span);
+    this.applyFrustum();
     this.controls.enableRotate = false;
     this.controls.update();
   }
@@ -754,6 +787,9 @@ export class Viewport {
       this.camera.up.copy(saved.up);
       this.camera.position.copy(saved.position);
       this.controls.target.copy(saved.target);
+      this.camera.zoom = saved.zoom;
+      this.viewHeight = saved.height;
+      this.applyFrustum();
     }
 
     this.controls.update();
@@ -1188,17 +1224,50 @@ export class Viewport {
     if (box.isEmpty()) return;
 
     const center = box.getCenter(new THREE.Vector3());
-    const radius = box.getSize(new THREE.Vector3()).length();
+    const span = box.getSize(new THREE.Vector3()).length();
 
     this.controls.target.copy(center);
-    this.camera.position
-      .copy(center)
-      .add(new THREE.Vector3(1, -1.3, 0.85).normalize().multiplyScalar(radius * 1.5));
-    this.camera.near = Math.max(radius / 500, 0.01);
-    this.camera.far = radius * 200;
-    this.camera.updateProjectionMatrix();
+    // How far back the camera stands makes no difference to what it sees here,
+    // only to what is in front of it, so it stands well back.
+    this.camera.position.copy(center).add(ISOMETRIC.clone().multiplyScalar(Math.max(span * 4, 500)));
+    this.camera.zoom = 1;
+    // Room around it: the toolbar floats over the top of the viewport, so a
+    // model framed to the glass is a model half under the toolbar.
+    this.viewHeight = this.heightFor(span * 1.5);
+    this.applyFrustum();
     this.controls.update();
     this.framed = true;
+  }
+
+  /**
+   * Fits the frustum to the viewport. The height is what framing decided and
+   * the width follows the shape of the container, so a wider window shows more
+   * of the model rather than the same model stretched.
+   */
+  private applyFrustum(): void {
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    if (width === 0 || height === 0) return;
+
+    const half = this.viewHeight / 2;
+    const aspect = width / height;
+    this.camera.left = -half * aspect;
+    this.camera.right = half * aspect;
+    this.camera.top = half;
+    this.camera.bottom = -half;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * The height needed to show something of this size, whatever shape the
+   * viewport is. A tall narrow window has to pull back further, or the model
+   * runs off the sides.
+   */
+  private heightFor(span: number): number {
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    const aspect = width === 0 || height === 0 ? 1 : width / height;
+    return aspect >= 1 ? span : span / aspect;
   }
 
   private resize(): void {
@@ -1211,8 +1280,7 @@ export class Viewport {
     // at double size with its right and bottom halves clipped away, and every
     // conversion between the screen and the model is out by the same factor.
     this.renderer.setSize(width, height);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    this.applyFrustum();
     this.cameraChanged();
   }
 }

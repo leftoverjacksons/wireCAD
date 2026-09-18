@@ -22,6 +22,11 @@ is ready, typically around two seconds.
 
 ## Using it
 
+- **The viewport is orthographic**, as a CAD viewport should be: parallel edges
+  stay parallel, a length measures the same wherever it sits, and nothing is
+  foreshortened by being further from the eye. The view it opens on is a true
+  isometric — from the near-right-top octant with Z up, which draws the three
+  axes 120° apart and foreshortens each of them equally.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*

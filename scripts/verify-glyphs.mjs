@@ -203,6 +203,52 @@ check(
   typed.join(','),
 );
 
+console.log('');
+console.log('at another zoom:');
+
+// Marks and arrowheads are given in pixels. Zooming must not turn them into
+// millimetres: a mark twice the size because you leaned in is not a mark.
+const standoffs = async () => {
+  const measured = await page.evaluate(() => {
+    const points = window.wirecad.sketch.solvedPoints();
+    const rule = window.wirecad.sketch.drawnRules()[0];
+    if (rule === undefined) return null;
+    const mark = window.wirecad.screenOfSketch(rule.at.u, rule.at.v);
+    // The base of the wedge, which is what the remaining mark hangs off.
+    const edge = window.wirecad.screenOfSketch(
+      (points[1].u + points[2].u) / 2,
+      (points[1].v + points[2].v) / 2,
+    );
+    const here = window.wirecad.screenOfSketch(0, 0);
+    const away = window.wirecad.screenOfSketch(10, 0);
+    return {
+      standoff: Math.hypot(mark.x - edge.x, mark.y - edge.y),
+      perMm: Math.hypot(away.x - here.x, away.y - here.y) / 10,
+    };
+  });
+  return measured;
+};
+
+const near = await standoffs();
+await page.mouse.move(800, 260);
+for (let step = 0; step < 5; step++) {
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(120);
+}
+await page.waitForTimeout(400);
+const far = await standoffs();
+
+check(
+  'zooming changes the view  ',
+  near !== null && far !== null && far.perMm > near.perMm * 1.2,
+  `${near?.perMm.toFixed(2)} → ${far?.perMm.toFixed(2)} pixels per mm`,
+);
+check(
+  'but not the mark itself   ',
+  near !== null && far !== null && Math.abs(far.standoff - near.standoff) < 3,
+  `${near?.standoff.toFixed(1)} → ${far?.standoff.toFixed(1)} pixels off its edge`,
+);
+
 if (pageErrors.length > 0) {
   failures += pageErrors.length;
   console.log('');

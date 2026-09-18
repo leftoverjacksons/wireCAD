@@ -262,6 +262,8 @@ export class SketchSession {
   private glyphs: Glyph[] = [];
   private preview: Annotation | null = null;
   private releaseCamera: (() => void) | null = null;
+  /** What a pixel was worth when the drawing was last laid out. */
+  private lastScale = 0;
   /** A dimension just made, whose number should be waiting to be typed over. */
   private pendingLabel: string | null = null;
 
@@ -476,7 +478,7 @@ export class SketchSession {
 
     this.panel.hidden = false;
     this.labelLayer.hidden = false;
-    this.releaseCamera = this.viewport.onCameraChange(() => this.placeLabels());
+    this.releaseCamera = this.viewport.onCameraChange(() => this.followCamera());
     this.viewport.setPickingEnabled(false);
     this.viewport.setDimmed(true);
     this.viewport.alignToPlane(plane);
@@ -1400,6 +1402,7 @@ export class SketchSession {
 
     // Sizes are given in pixels, so they need what a pixel is worth here.
     const scale = this.viewport.pickTolerance(plane, 1);
+    this.lastScale = scale;
     this.annotations = annotate(
       draft.sketch,
       solved.points,
@@ -1527,6 +1530,33 @@ export class SketchSession {
     if (field === undefined) return;
     field.focus();
     field.select();
+  }
+
+  /**
+   * Keeps the drawing's furniture with the view.
+   *
+   * Arrowheads, relation marks and the standoff of a dimension that has not
+   * been placed by hand are all given in pixels and converted to millimetres
+   * when they are drawn — so a zoom leaves them the wrong size until they are
+   * drawn again. Panning does not change what a pixel is worth, and neither
+   * does orbiting, so the whole drawing is only rebuilt when the scale has
+   * actually moved; everything else just follows the numbers to their new
+   * places on screen.
+   */
+  private followCamera(): void {
+    const plane = this.plane;
+    const solved = this.result;
+    if (plane === null || solved === null) {
+      this.placeLabels();
+      return;
+    }
+
+    const scale = this.viewport.pickTolerance(plane, 1);
+    if (Math.abs(scale - this.lastScale) > this.lastScale * 0.02) {
+      this.renderAnnotations(solved);
+      return;
+    }
+    this.placeLabels();
   }
 
   /** Puts each number where its dimension is, which the view moving changes. */
