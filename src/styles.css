@@ -1021,9 +1021,9 @@ input[type='range'] {
   cursor: pointer;
 }
 
-/* The menu a right-click on a node opens. It sits above the canvas rather than
-   inside it, so zooming the graph does not zoom the words. */
-.node-menu {
+/* The menu a right-click opens, on a node or on a body. It sits above whatever
+   it is about rather than inside it, so zooming does not zoom the words. */
+.menu {
   position: absolute;
   z-index: 20;
   min-width: 200px;
@@ -1035,7 +1035,7 @@ input[type='range'] {
   font-size: 12px;
 }
 
-.node-menu-title {
+.menu-title {
   padding: 4px 8px 6px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
@@ -1044,7 +1044,7 @@ input[type='range'] {
   text-transform: uppercase;
 }
 
-.node-menu-item {
+.menu-item {
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -1059,27 +1059,27 @@ input[type='range'] {
   cursor: pointer;
 }
 
-.node-menu-item:hover:not(:disabled) {
+.menu-item:hover:not(:disabled) {
   background: var(--panel-raised);
 }
 
-.node-menu-item:disabled {
+.menu-item:disabled {
   color: var(--muted);
   cursor: default;
 }
 
 /* A rule above the entries that take something away. */
-.node-menu-divided {
+.menu-divided {
   margin-top: 4px;
   border-top: 1px solid var(--line);
   padding-top: 7px;
 }
 
-.node-menu-label {
+.menu-label {
   flex: 0 0 auto;
 }
 
-.node-menu-detail {
+.menu-detail {
   flex: 1 1 auto;
   color: var(--muted);
   font-size: 10px;

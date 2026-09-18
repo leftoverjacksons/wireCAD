@@ -59,7 +59,7 @@ console.log('the origin planes:');
 check('a fresh model has none    ', (await planeNodes()).length === 0, (await planeNodes()).join(',') || 'no plane nodes');
 
 // A corner of the XY square, out where the block is not.
-const onXY = await at(-15, -15, 0);
+const onXY = await at(-10, -10, 0);
 await page.mouse.click(onXY.x, onXY.y);
 await page.waitForTimeout(600);
 
@@ -142,7 +142,7 @@ await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog').waitFor({ state: 'visible', timeout: 5_000 });
 
 // The YZ square, on the far side of the origin from the block.
-const onYZ = await at(0, -15, 15);
+const onYZ = await at(0, -10, 10);
 await page.mouse.click(onYZ.x, onYZ.y);
 await page.waitForTimeout(600);
 

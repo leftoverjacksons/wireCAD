@@ -101,9 +101,9 @@ const check = (name, ok, detail) => {
 const openMenu = async (label) => {
   const id = await page.evaluate((name) => window.__idOf(name), label);
   await page.locator(`.node[data-node-id="${id}"] .node-header`).click({ button: 'right' });
-  await page.locator('.node-menu').waitFor({ state: 'visible' });
+  await page.locator('.menu').waitFor({ state: 'visible' });
 };
-const choose = (action) => page.locator(`.node-menu-item[data-action="${action}"]`).click();
+const choose = (action) => page.locator(`.menu-item[data-action="${action}"]`).click();
 
 // ------------------------------------------------------- what rolling back shows
 

@@ -235,6 +235,14 @@ stays cached, so it is cheap to adjust a radius and try again.
   header. Drag between ports to wire them; drag away from a connected input to
   detach it; click a wire to cut it. Unwired numeric inputs are editable in
   place. Delete removes the selected node, healing the chain over it.
+- **Right-clicking a body** — the view has the same menu the graph does, because
+  a body on screen and the node that made it are two views of one thing: *Edit*,
+  *Roll back to here*, *Rename*, *Hide*, *Suppress* and *Delete* all mean what
+  they mean in the graph, and are run by the same code. On top of them come the
+  things only a face can offer — *Sketch on this face* starts a drawing on the
+  face under the cursor, and says so rather than going quiet when that face is
+  not flat. Right-*dragging* still pans the view: a menu only opens where the
+  button went down and came back up in the same place.
 - **Right-clicking a node** — a menu of what can be done to it: *Edit*, *Rename*,
   *Hide* or *Show*, *Suppress*, *Delete* and *Delete branch*. Every entry says
   what it will cost before it is chosen, and an entry that would mean nothing for
@@ -319,6 +327,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:menu` | Checks a node's menu says what deleting it would cost, and that a suppressed feature is held back rather than removed |
 | `npm run verify:move` | Checks a move at the end of a chain shifts the whole body, and one in the middle leaves what was cut from it where it was |
 | `npm run verify:edit` | Checks a feature reopens on its own values, changes live, and is put back by Cancel |
+| `npm run verify:viewport-menu` | Checks a right-click on a body offers what the node offers, scoped to the face under the cursor, and that right-dragging still pans |
 | `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`

@@ -83,22 +83,22 @@ const check = (name, ok, detail) => {
 async function openMenu(label) {
   const id = await page.evaluate((name) => window.__idOf(name), label);
   await page.locator(`.node[data-node-id="${id}"] .node-header`).click({ button: 'right' });
-  await page.locator('.node-menu').waitFor({ state: 'visible' });
+  await page.locator('.menu').waitFor({ state: 'visible' });
   return page.evaluate(() => {
-    const menu = document.querySelector('.node-menu');
+    const menu = document.querySelector('.menu');
     return {
-      title: menu.querySelector('.node-menu-title')?.textContent ?? '',
-      items: [...menu.querySelectorAll('.node-menu-item')].map((item) => ({
+      title: menu.querySelector('.menu-title')?.textContent ?? '',
+      items: [...menu.querySelectorAll('.menu-item')].map((item) => ({
         action: item.dataset.action,
-        label: item.querySelector('.node-menu-label')?.textContent ?? '',
-        detail: item.querySelector('.node-menu-detail')?.textContent ?? null,
+        label: item.querySelector('.menu-label')?.textContent ?? '',
+        detail: item.querySelector('.menu-detail')?.textContent ?? null,
         disabled: item.disabled,
       })),
     };
   });
 }
 
-const choose = (action) => page.locator(`.node-menu-item[data-action="${action}"]`).click();
+const choose = (action) => page.locator(`.menu-item[data-action="${action}"]`).click();
 const entry = (menu, action) => menu.items.find((item) => item.action === action);
 
 // ------------------------------------------------- what the menu says it will do
@@ -268,7 +268,7 @@ check(
   entry(sketch, 'edit')?.disabled === false ? 'offered' : 'refused',
 );
 await page.keyboard.press('Escape');
-const closed = await page.locator('.node-menu').count();
+const closed = await page.locator('.menu').count();
 check('escape closes the menu    ', closed === 0, `${closed} menus open`);
 
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));

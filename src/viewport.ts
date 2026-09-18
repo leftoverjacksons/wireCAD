@@ -160,6 +160,9 @@ export class Viewport {
   private readonly raycaster = new THREE.Raycaster();
   private pickListener: ((hit: FaceHit | null) => void) | null = null;
   private datumListener: ((axis: DatumAxis) => void) | null = null;
+  private contextListener:
+    | ((hit: FaceHit | null, clientX: number, clientY: number) => void)
+    | null = null;
   /** The three origin planes, drawn faintly and pickable like anything else. */
   private readonly datums = new THREE.Group();
   private readonly datumFaces: THREE.Mesh[] = [];
@@ -482,29 +485,55 @@ export class Viewport {
         return;
       }
 
-      const hits = this.raycaster.intersectObjects([...this.meshes.values()], false);
-      const hit = hits[0];
-      if (hit === undefined) {
-        this.pickListener?.(null);
-        return;
-      }
-
-      const nodeId = hit.object.userData.nodeId;
-      if (typeof nodeId !== 'string') {
-        this.pickListener?.(null);
-        return;
-      }
-
-      // Three's faceIndex is the triangle index; map it back to the B-rep face.
-      const ids = this.faceIds.get(nodeId);
-      const triangle = hit.faceIndex;
-      const faceIndex =
-        triangle !== undefined && triangle !== null && ids !== undefined && triangle < ids.length
-          ? (ids[triangle] ?? null)
-          : null;
-
-      this.pickListener?.({ nodeId, faceIndex });
+      this.pickListener?.(this.faceAt(event.clientX, event.clientY));
     });
+
+    // Right-drag pans the view, so only a right-click that stayed where it was
+    // is asking for a menu — and that is not known until the button comes back
+    // up. Which is also why the menu is not opened from the contextmenu event:
+    // browsers disagree about whether that arrives on the way down or the way
+    // up, and on the way down the drag has not happened yet. That event's only
+    // job here is to keep the browser's own menu off the model.
+    let rightX = 0;
+    let rightY = 0;
+    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    canvas.addEventListener('pointerdown', (event) => {
+      if (event.button !== 2) return;
+      rightX = event.clientX;
+      rightY = event.clientY;
+    });
+    canvas.addEventListener('pointerup', (event) => {
+      if (event.button !== 2 || !this.pickingEnabled) return;
+      if (Math.hypot(event.clientX - rightX, event.clientY - rightY) > 4) return;
+      this.contextListener?.(this.faceAt(event.clientX, event.clientY), event.clientX, event.clientY);
+    });
+  }
+
+  /** The body and face under a point, without the click-versus-drag gate. */
+  faceAt(clientX: number, clientY: number): FaceHit | null {
+    this.syncCamera();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    const hit = this.raycaster.intersectObjects([...this.meshes.values()], false)[0];
+    if (hit === undefined) return null;
+
+    const nodeId = hit.object.userData.nodeId;
+    if (typeof nodeId !== 'string') return null;
+
+    // Three's faceIndex is the triangle index; map it back to the B-rep face.
+    const ids = this.faceIds.get(nodeId);
+    const triangle = hit.faceIndex;
+    const faceIndex =
+      triangle !== undefined && triangle !== null && ids !== undefined && triangle < ids.length
+        ? (ids[triangle] ?? null)
+        : null;
+
+    return { nodeId, faceIndex };
   }
 
   onPick(listener: (hit: FaceHit | null) => void): void {
@@ -529,6 +558,13 @@ export class Viewport {
   /** Told which origin plane was clicked, when one was. */
   onPickDatum(listener: (axis: DatumAxis) => void): void {
     this.datumListener = listener;
+  }
+
+  /** A right-click that stayed put, and what it landed on. */
+  onContextPick(
+    listener: (hit: FaceHit | null, clientX: number, clientY: number) => void,
+  ): void {
+    this.contextListener = listener;
   }
 
   // -------------------------------------------------------- origin planes

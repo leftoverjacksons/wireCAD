@@ -5,7 +5,8 @@ import type { Edge, EdgeId, NodeId, NodeSchema, PortRef, Value } from '../core/t
 import { isPlane } from '../core/types.js';
 import type { NodeReport } from '../worker/protocol.js';
 import { nodeKind } from './kind.js';
-import type { NodeMenuAction, NodeMenuItem } from './node-menu.js';
+import { showMenu } from './menu.js';
+import type { NodeMenuAction } from './node-menu.js';
 import { nodeMenu } from './node-menu.js';
 import {
   HEADER_HEIGHT,
@@ -89,7 +90,8 @@ export class NodeEditor {
   private readonly wires = new Map<EdgeId, { visible: SVGPathElement; hit: SVGPathElement }>();
 
   private ghost: SVGPathElement | null = null;
-  private menu: HTMLElement | null = null;
+  /** Takes the open menu away again, if one is open. */
+  private closeMenu: () => void = () => undefined;
   private drag: Drag | null = null;
   private selected: NodeId | null = null;
 
@@ -134,13 +136,6 @@ export class NodeEditor {
     this.container.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
     this.container.addEventListener('keydown', (event) => this.onKeyDown(event));
     this.container.addEventListener('contextmenu', (event) => this.onContextMenu(event));
-    // A menu left open over a document that has moved on is a menu about
-    // nothing, and the click outside it is how most menus are dismissed.
-    window.addEventListener('pointerdown', (event) => {
-      if (event.target instanceof Node && this.container.contains(event.target)) return;
-      this.closeMenu();
-    });
-    window.addEventListener('blur', () => this.closeMenu());
 
     graph.subscribe((change) => this.onGraphChange(change));
 
@@ -250,68 +245,27 @@ export class NodeEditor {
 
   private openMenu(nodeId: NodeId, clientX: number, clientY: number): void {
     this.closeMenu();
-
-    const menu = document.createElement('div');
-    menu.className = 'node-menu';
-    menu.dataset.nodeId = nodeId;
-
-    const heading = document.createElement('div');
-    heading.className = 'node-menu-title';
-    heading.textContent = this.graph.getNode(nodeId)?.label ?? this.graph.schemaOf(nodeId).label;
-    menu.append(heading);
-
-    const items = nodeMenu(this.graph, nodeId, {
-      editable: this.callbacks.canEdit(nodeId),
-      shown: this.shownNodes.has(nodeId),
-      rolledBackTo: this.marker,
+    this.closeMenu = showMenu(this.container, {
+      title: this.graph.getNode(nodeId)?.label ?? this.graph.schemaOf(nodeId).label,
+      items: nodeMenu(this.graph, nodeId, {
+        editable: this.callbacks.canEdit(nodeId),
+        shown: this.shownNodes.has(nodeId),
+        rolledBackTo: this.marker,
+      }),
+      clientX,
+      clientY,
+      onChoose: (action) => this.runMenuAction(nodeId, action as NodeMenuAction),
     });
-    for (const item of items) menu.append(this.menuEntry(nodeId, item));
-
-    this.container.append(menu);
-    this.menu = menu;
-
-    // Where the cursor is, pulled back inside when that would hang it off the
-    // edge: a menu you have to scroll to reach is a menu you cannot use.
-    const rect = this.container.getBoundingClientRect();
-    const x = Math.min(clientX - rect.left, rect.width - menu.offsetWidth - 6);
-    const y = Math.min(clientY - rect.top, rect.height - menu.offsetHeight - 6);
-    menu.style.left = `${Math.max(6, x)}px`;
-    menu.style.top = `${Math.max(6, y)}px`;
   }
 
-  private menuEntry(nodeId: NodeId, item: NodeMenuItem): HTMLElement {
-    const entry = document.createElement('button');
-    entry.type = 'button';
-    entry.className = 'node-menu-item';
-    entry.dataset.action = item.action;
-    if (item.divide === true) entry.classList.add('node-menu-divided');
-
-    const label = document.createElement('span');
-    label.className = 'node-menu-label';
-    label.textContent = item.label;
-    entry.append(label);
-
-    const note = item.refusal ?? item.detail;
-    if (note !== undefined) {
-      const detail = document.createElement('span');
-      detail.className = 'node-menu-detail';
-      detail.textContent = note;
-      entry.append(detail);
-    }
-
-    // An entry that would do nothing stays, saying why, rather than leaving a
-    // gap that reads as the menu not having thought of it.
-    if (item.refusal !== undefined) {
-      entry.disabled = true;
-      entry.title = item.refusal;
-      return entry;
-    }
-
-    entry.addEventListener('click', () => this.runMenu(nodeId, item.action));
-    return entry;
-  }
-
-  private runMenu(nodeId: NodeId, action: NodeMenuAction): void {
+  /**
+   * Does what a menu entry says, wherever the menu was opened.
+   *
+   * The viewport's menu offers the same things for the body under the cursor as
+   * this one does for the node that made it, so there is one implementation and
+   * two ways in.
+   */
+  runMenuAction(nodeId: NodeId, action: NodeMenuAction): void {
     this.closeMenu();
     if (this.graph.getNode(nodeId) === undefined) return;
 
@@ -326,6 +280,7 @@ export class NodeEditor {
         this.callbacks.onRollBack(null);
         return;
       case 'rename':
+        this.reveal(nodeId);
         this.beginRename(nodeId);
         return;
       case 'hide':
@@ -381,11 +336,6 @@ export class NodeEditor {
     if (this.selected !== null && going.has(this.selected)) this.select(null);
     this.callbacks.onDocumentChanged();
     this.notify(`${going.size} node${going.size === 1 ? '' : 's'} deleted`, false);
-  }
-
-  private closeMenu(): void {
-    this.menu?.remove();
-    this.menu = null;
   }
 
   // ---------------------------------------------------------------- rendering
@@ -646,7 +596,7 @@ export class NodeEditor {
 
   private onPointerDown(event: PointerEvent): void {
     const target = event.target as HTMLElement;
-    if (target.closest('.node-menu') !== null) return;
+    if (target.closest('.menu') !== null) return;
     this.closeMenu();
 
     // Only the primary button works the canvas. Right-clicking a node's header

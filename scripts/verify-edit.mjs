@@ -86,8 +86,8 @@ const check = (name, ok, detail) => {
 async function editViaMenu(label) {
   const id = await page.evaluate((name) => window.__idOf(name), label);
   await page.locator(`.node[data-node-id="${id}"] .node-header`).click({ button: 'right' });
-  await page.locator('.node-menu').waitFor({ state: 'visible' });
-  await page.locator('.node-menu-item[data-action="edit"]').click();
+  await page.locator('.menu').waitFor({ state: 'visible' });
+  await page.locator('.menu-item[data-action="edit"]').click();
   await page.locator('.feature-dialog').waitFor({ state: 'visible' });
   await page.waitForTimeout(300);
 }

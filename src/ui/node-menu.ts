@@ -2,6 +2,7 @@ import type { Graph } from '../core/graph.js';
 import { branchOf, passThroughOf } from '../core/rewire.js';
 import type { DataType, NodeId } from '../core/types.js';
 import { typeLabel } from './kind.js';
+import type { MenuItem } from './menu.js';
 
 /**
  * What a node's context menu offers, worked out from the graph alone.
@@ -28,15 +29,9 @@ export type NodeMenuAction =
   | 'delete'
   | 'delete-branch';
 
-export interface NodeMenuItem {
+/** A menu entry whose action is one this module knows about. */
+export interface NodeMenuItem extends MenuItem {
   action: NodeMenuAction;
-  label: string;
-  /** What it will do to the rest of the document, where that is worth saying. */
-  detail?: string;
-  /** Why it would do nothing here. Set means the entry is there but dead. */
-  refusal?: string;
-  /** Draw a rule above this entry. */
-  divide?: boolean;
 }
 
 export interface NodeMenuState {

@@ -25,7 +25,11 @@ import {
   timestampedName,
   writeAutosave,
 } from './ui/file-io.js';
+import type { MenuItem } from './ui/menu.js';
+import { showMenu } from './ui/menu.js';
 import { NodeEditor } from './ui/node-editor.js';
+import type { NodeMenuAction } from './ui/node-menu.js';
+import { nodeMenu } from './ui/node-menu.js';
 import { SketchSession } from './ui/sketch-session.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
@@ -214,28 +218,35 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     refreshDragHandle(nodeId);
     requestSolve();
   },
-  onSketch: (choice) => {
-    const plane = planeValueFor(choice);
-    if (plane === null) {
-      statusEl.textContent = 'That plane has not been solved yet — try again in a moment.';
-      return;
-    }
-
-    // A sketch starts as an empty node on the chosen plane, and drawing fills
-    // it in. There is nothing to commit at the end, because everything drawn
-    // has already been written to it.
-    history.capture();
-    try {
-      const nodeId = createSketchNode(graph, choice);
-      applySelection(nodeId, true);
-      editor.reveal(nodeId);
-      document.body.classList.add('sketching');
-      sketchSession.enter(nodeId, plane);
-    } catch (thrown) {
-      statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
-    }
-  },
+  onSketch: (choice) => startSketch(choice),
 });
+
+/**
+ * Starts drawing on a plane, however it was chosen — from the dialog, or from a
+ * face clicked in the view.
+ *
+ * A sketch starts as an empty node on that plane and drawing fills it in. There
+ * is nothing to commit at the end, because everything drawn has already been
+ * written to it.
+ */
+function startSketch(choice: PlaneChoice): void {
+  const plane = planeValueFor(choice);
+  if (plane === null) {
+    statusEl.textContent = 'That plane has not been solved yet — try again in a moment.';
+    return;
+  }
+
+  history.capture();
+  try {
+    const nodeId = createSketchNode(graph, choice);
+    applySelection(nodeId, true);
+    editor.reveal(nodeId);
+    document.body.classList.add('sketching');
+    sketchSession.enter(nodeId, plane);
+  } catch (thrown) {
+    statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
+  }
+}
 
 const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   onBeforeChange: () => history.capture(),
@@ -759,6 +770,67 @@ viewport.onPick((hit) => {
   applySelection(hit.nodeId, true, describePickedFace(hit));
 });
 
+/**
+ * The menu a right-click in the view opens.
+ *
+ * A body on screen and the node that made it are two views of one thing, so the
+ * menu offers the same things for one as for the other — the node menu's own
+ * entries, run by the same code — with what can only be said of a face on top.
+ */
+let closeViewportMenu: () => void = () => undefined;
+
+viewport.onContextPick((hit, clientX, clientY) => {
+  closeViewportMenu();
+  // A dialog waiting for an operand owns the clicks, including this one.
+  if (hit === null || dialog.isArmed) return;
+
+  const nodeId = hit.nodeId;
+  if (graph.getNode(nodeId) === undefined) return;
+  applySelection(nodeId, true);
+
+  const face = describePickedFace(hit);
+  const items: MenuItem[] = [];
+  if (hit.faceIndex !== null) {
+    items.push(
+      face === null
+        ? {
+            action: 'sketch-on-face',
+            label: 'Sketch on this face',
+            refusal: 'That face is not flat',
+          }
+        : {
+            action: 'sketch-on-face',
+            label: 'Sketch on this face',
+            detail: 'and draw on it now',
+          },
+    );
+  }
+
+  const onNode = nodeMenu(graph, nodeId, {
+    editable: SketchSession.editable(graph, nodeId) || specForNode(graph, nodeId) !== null,
+    shown: lastVisible.includes(nodeId),
+    rolledBackTo: rolledBackTo,
+  });
+  for (const [index, item] of onNode.entries()) {
+    items.push(index === 0 && items.length > 0 ? { ...item, divide: true } : item);
+  }
+
+  closeViewportMenu = showMenu(viewportEl, {
+    title: graph.getNode(nodeId)?.label ?? graph.schemaOf(nodeId).label,
+    items,
+    clientX,
+    clientY,
+    onChoose: (action) => {
+      if (action === 'sketch-on-face') {
+        if (face === null) return;
+        startSketch({ kind: 'face', nodeId, normal: face.normal, rank: face.rank });
+        return;
+      }
+      editor.runMenuAction(nodeId, action as NodeMenuAction);
+    },
+  });
+});
+
 // Clicking one of the origin squares means that plane, which in this program is
 // a node: the document gains one unless it already has that plane. Selecting it
 // is what feeds it to whatever is asking, exactly as clicking a face does.
@@ -1144,6 +1216,7 @@ if (import.meta.env.DEV) {
     autosaveProblem: () => autosaveProblem,
     select: (nodeId: NodeId) => applySelection(nodeId, true),
     dialog,
+    faceAt: (x: number, y: number) => viewport.faceAt(x, y),
     handleAt: () => viewport.handleScreenPosition(),
     handles: () => viewport.handleScreenPositions(),
     rolledBackTo: () => rolledBackTo,
