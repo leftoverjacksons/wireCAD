@@ -18,7 +18,10 @@ export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
   /** The last capture is no longer wanted: a preview was taken back out again. */
   onForget(): void;
-  onCommit(nodeId: NodeId): void;
+  /** `created` is false for an edit, which made no node. */
+  onCommit(nodeId: NodeId, created: boolean): void;
+  /** The dialog is no longer up, however it ended. */
+  onClosed(): void;
   onArmedChanged(armed: boolean): void;
   /** The preview node, or null when there is nothing to show yet. */
   onPreviewChanged(nodeId: NodeId | null): void;
@@ -73,6 +76,8 @@ export class FeatureDialog {
   /** The operand set the preview was built from; numbers change without a rebuild. */
   private previewSignature: string | null = null;
   private readonly numberFields = new Map<string, HTMLInputElement>();
+  /** The node a new feature goes in after, when the view is rolled back to one. */
+  private spliceAt: NodeId | null = null;
 
   constructor(
     container: HTMLElement,
@@ -106,6 +111,17 @@ export class FeatureDialog {
 
   onEdgesChanged(listener: (choice: EdgeChoice | null) => void): void {
     this.edgeListener = listener;
+  }
+
+  /**
+   * Where in the history a new feature belongs.
+   *
+   * Building while the view is rolled back to a node puts the feature in at
+   * that node rather than on the end of the chain — the same splice moving a
+   * body uses, and the reason rolling back is somewhere to work.
+   */
+  setSpliceAt(nodeId: NodeId | null): void {
+    this.spliceAt = nodeId;
   }
 
   open(spec: FeatureSpec, preselected: NodeId | null): void {
@@ -255,6 +271,7 @@ export class FeatureDialog {
     this.element.replaceChildren();
     this.callbacks.onArmedChanged(false);
     this.callbacks.onPreviewChanged(null);
+    this.callbacks.onClosed();
   }
 
   // ------------------------------------------------------------- preview
@@ -836,7 +853,10 @@ export class FeatureDialog {
         operands[operand.id] = this.resolveChoice(choice, operand, created);
       }
 
-      return { nodeId: buildFeature(this.graph, spec, operands, numbers), created };
+      return {
+        nodeId: buildFeature(this.graph, spec, operands, numbers, this.spliceAt),
+        created,
+      };
     } catch (thrown) {
       for (const nodeId of created.reverse()) this.graph.removeNode(nodeId);
       throw thrown;
@@ -854,7 +874,7 @@ export class FeatureDialog {
       this.editing = null;
       this.captured = false;
       this.finish();
-      this.callbacks.onCommit(editing.nodeId);
+      this.callbacks.onCommit(editing.nodeId, false);
       return;
     }
 
@@ -890,6 +910,6 @@ export class FeatureDialog {
     this.preview = null;
     this.captured = false;
     this.finish();
-    this.callbacks.onCommit(nodeId);
+    this.callbacks.onCommit(nodeId, true);
   }
 }

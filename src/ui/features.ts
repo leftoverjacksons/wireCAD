@@ -433,9 +433,19 @@ export function buildFeature(
   spec: FeatureSpec,
   operands: Record<string, PortRef>,
   numbers: Record<string, number | string>,
+  /**
+   * The point in the history being worked at, if the view is rolled back to
+   * one. A feature built on that node goes in *there* rather than on the end,
+   * which is what makes rolling back somewhere to work rather than to look.
+   */
+  spliceAt: NodeId | null = null,
 ): NodeId {
   const node = graph.addNode(spec.nodeType, { inputs: numbers });
-  const into = spec.splice === true ? spec.operands[0]?.id : undefined;
+
+  const first = spec.operands[0];
+  const source = first === undefined ? undefined : operands[first.id];
+  const atMarker = spliceAt !== null && source !== undefined && source.node === spliceAt;
+  const into = spec.splice === true || atMarker ? first?.id : undefined;
 
   try {
     for (const [portId, source] of Object.entries(operands)) {
@@ -446,7 +456,6 @@ export function buildFeature(
     }
 
     if (into !== undefined) {
-      const source = operands[into];
       if (source === undefined) throw new Error('There is nothing to splice this onto');
       spliceAfter(graph, source.node, node.id);
     }

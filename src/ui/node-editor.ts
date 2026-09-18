@@ -32,6 +32,13 @@ export interface NodeEditorCallbacks {
    */
   canEdit(nodeId: NodeId): boolean;
   onEdit(nodeId: NodeId): void;
+  /**
+   * Look at the model as it was at this node, or stop looking back.
+   *
+   * Which point the view is at belongs to whoever owns the viewport: the graph
+   * view only says which node was asked for.
+   */
+  onRollBack(nodeId: NodeId | null): void;
 }
 
 interface NodeView {
@@ -90,6 +97,9 @@ export class NodeEditor {
   private zoom = 1;
 
   private shownNodes = new Set<NodeId>();
+  /** The point the view is rolled back to, and what that treats as absent. */
+  private marker: NodeId | null = null;
+  private beyond = new Set<NodeId>();
 
   constructor(
     private readonly container: HTMLElement,
@@ -253,6 +263,7 @@ export class NodeEditor {
     const items = nodeMenu(this.graph, nodeId, {
       editable: this.callbacks.canEdit(nodeId),
       shown: this.shownNodes.has(nodeId),
+      rolledBackTo: this.marker,
     });
     for (const item of items) menu.append(this.menuEntry(nodeId, item));
 
@@ -307,6 +318,12 @@ export class NodeEditor {
     switch (action) {
       case 'edit':
         this.callbacks.onEdit(nodeId);
+        return;
+      case 'roll-back':
+        this.callbacks.onRollBack(nodeId);
+        return;
+      case 'return':
+        this.callbacks.onRollBack(null);
         return;
       case 'rename':
         this.beginRename(nodeId);
@@ -389,6 +406,7 @@ export class NodeEditor {
     for (const edge of this.graph.allEdges()) this.createWire(edge);
 
     this.applySelection();
+    this.applyRollback();
   }
 
   private createNodeView(nodeId: NodeId): void {
@@ -886,6 +904,23 @@ export class NodeEditor {
   private applySelection(): void {
     for (const [nodeId, view] of this.views) {
       view.element.classList.toggle('node-selected', nodeId === this.selected);
+    }
+  }
+
+  /**
+   * Where in the history the view is, so the graph shows it: the node being
+   * looked at is marked and everything treated as absent is dimmed.
+   */
+  setRolledBack(marker: NodeId | null, beyond: ReadonlySet<NodeId>): void {
+    this.marker = marker;
+    this.beyond = new Set(beyond);
+    this.applyRollback();
+  }
+
+  private applyRollback(): void {
+    for (const [nodeId, view] of this.views) {
+      view.element.classList.toggle('node-marker', nodeId === this.marker);
+      view.element.classList.toggle('node-beyond', this.beyond.has(nodeId));
     }
   }
 

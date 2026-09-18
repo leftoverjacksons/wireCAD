@@ -17,6 +17,8 @@ import { typeLabel } from './kind.js';
 
 export type NodeMenuAction =
   | 'edit'
+  | 'roll-back'
+  | 'return'
   | 'rename'
   | 'hide'
   | 'show'
@@ -42,6 +44,8 @@ export interface NodeMenuState {
   editable: boolean;
   /** Whether the node's result is on screen, as the last solve left it. */
   shown: boolean;
+  /** The point in the history the view is rolled back to, if it is. */
+  rolledBackTo?: NodeId | null;
 }
 
 function nameOf(graph: Graph, nodeId: NodeId): string {
@@ -106,11 +110,34 @@ export function nodeMenu(graph: Graph, nodeId: NodeId, state: NodeMenuState): No
       ? { action: 'edit', label: 'Edit' }
       : { action: 'edit', label: 'Edit', refusal: 'Nothing here reopens for editing' },
   );
-  items.push({ action: 'rename', label: 'Rename' });
 
   const drawable = schema.outputs.some(
     (port) => port.type === 'geometry' || port.type === 'sketch',
   );
+
+  // Looking at the model as it was when this feature was made. Not an edit: the
+  // whole history is present after a solve, so this only changes what is drawn.
+  const marker = state.rolledBackTo ?? null;
+  if (marker === nodeId) {
+    items.push({ action: 'return', label: 'Return to now', detail: 'stop looking back' });
+  } else if (!drawable) {
+    items.push({
+      action: 'roll-back',
+      label: 'Roll back to here',
+      refusal: 'This node makes nothing to look at',
+    });
+  } else {
+    items.push({
+      action: 'roll-back',
+      label: 'Roll back to here',
+      detail: 'the model as it was',
+    });
+  }
+  if (marker !== null && marker !== nodeId) {
+    items.push({ action: 'return', label: 'Return to now', detail: `from ${nameOf(graph, marker)}` });
+  }
+
+  items.push({ action: 'rename', label: 'Rename' });
   // What the document says, where it says anything; otherwise what is on
   // screen. The two part company all the time — a hidden node is drawn as a
   // ghost while it is selected — and the entry is about the setting, so

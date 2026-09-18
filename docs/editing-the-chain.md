@@ -110,13 +110,15 @@ really about the dialog:
 - The dialog gains an **edit mode**: open on a node, load its current values,
   change them live — the preview machinery already watches values change —
   and commit, or restore on cancel. No nodes are created, so there is no
-  cleanup to get wrong. *Built.* The other two below wait on piece 5, which is
-  where a marker in the history comes from.
+  cleanup to get wrong. *Built.*
 - Editing a node **rolls the view back** to it, so what is on screen is what
-  that feature made rather than what came after.
+  that feature made rather than what came after. *Built, in piece 5.*
 - Because the cone is a display question and not a rebuild, the nodes that
   depend on it can be drawn faintly at the same time. You see what you are
   changing *and* what it will disturb, which a timeline cannot show you.
+  *Built, as edges rather than faintly: a faint solid of nearly the same shape
+  sitting on the one being edited is a smear, where an outline is a second
+  reading of it.*
 
 ## The pieces
 
@@ -126,7 +128,7 @@ really about the dialog:
 | 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | **done** |
 | 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | **done** |
 | 4 | Editing an existing feature through its dialog | — | **done** |
-| 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | |
+| 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | **done** |
 | 6 | Viewport context menu, scoped to face and body | 2, 3 | |
 
 Piece 2's *Edit* was an entry and a pair of callbacks rather than a feature of
@@ -178,6 +180,37 @@ from the origin, with its own distance added to that. And the arrows stay
 anchored where the body was when the dialog opened, worked out once from the
 first mesh that arrives, because a gizmo that follows the body moves the thing
 you are holding while you hold it.
+
+Piece 5 went in as these notes describe — one addition to the rule about what
+to draw — and the rule itself came out of the worker to live in
+`src/core/display.ts`, where it can be tested without a kernel or a browser.
+`planDisplay` answers what is drawn as the model, what is drawn as an outline,
+and what is on screen only because somebody asked for it; the worker's loop is
+now only about turning that answer into triangles.
+
+One thing the cone framing did not anticipate. Rolling back to the block of a
+bored block left the *bore's circle* on screen: the circle is not downstream of
+the block — it is a branch of its own — so the cone did not contain it, and with
+the bore absent nothing was left consuming it, which by the ordinary rule is
+exactly what makes a profile visible. Truthful, and wrong: that circle exists
+only for the bore, and the state before the bore has no ring floating in space.
+So what a rolled-back view treats as absent is the cone *and* whatever is left
+with nothing present reading it — a fixed point, reached the way `branchOf`
+reaches its own, because a node is only left unused once everything reading it
+is.
+
+The marker is session state rather than part of the document, because a saved
+file should open on the model rather than in the middle of somebody's afternoon.
+Editing borrows it and gives it back: the dialog remembers what the marker was,
+sets it to the node being edited and restores it on close, so editing while
+already rolled back somewhere returns you there rather than to now.
+
+And "new features splice at the marker" turned out to need no new mechanism at
+all, only a second reason to use piece 3's: `buildFeature` already knew how to
+splice, and a feature built on the node being looked at now goes in there. That
+is the general answer to where a new feature belongs — at the marker, or at the
+end when there is no marker — which is why Move's own `splice` flag stays the
+narrow special case it is rather than growing into a mode.
 
 Piece 6 wants `BRepAlgoAPI_Defeaturing` for *delete face*, which is listed as
 supported in this build but has not been called yet. Several things that were

@@ -243,12 +243,31 @@ stays cached, so it is cheap to adjust a radius and try again.
 - **Editing a feature** — *Edit*, from a node's right-click menu, reopens
   whatever built it: a sketch goes back to its drawing session, and anything a
   toolbar dialog made reopens in that dialog holding the values it has now.
-  Changing a number changes the feature as you type — there is no preview,
-  because what is on screen is already the thing being changed — and *Done*
-  keeps it while *Cancel* puts the numbers back and leaves no undo step behind.
+  Opening one rolls the view back to it, so what is on screen is what that
+  feature made rather than what came after it, and closing the dialog gives the
+  model back. Changing a number changes the feature as you type — there is no
+  preview, because what is on screen is already the thing being changed — and
+  *Done* keeps it while *Cancel* puts the numbers back and leaves no undo step
+  behind.
   A reopened Move brings its arrows back with it. What the feature is built on
   is shown but not offered: pointing a fillet at another body means new nodes
   and moved wires, and the graph is where wires are moved.
+- **Looking at the model as it was** — *Roll back to here*, from a node's menu,
+  shows the model at that point in its history: that node's own result is on
+  screen again, and everything built on it is drawn as an outline, so you see
+  what you are working on and what it will disturb at the same time. Nothing is
+  recomputed to do it. Every node's output is a value that already exists after
+  a solve — the block before the bore did not stop existing when the bore was
+  cut — so rolling back only changes what is drawn, and *Return to now* is
+  immediate. Because this is a graph rather than a list, the state at a node is
+  exact and per-branch: a body built elsewhere is not affected by looking back
+  along this one, and a sketch that exists only for an absent feature stays away
+  with it rather than reappearing as a ring floating in space.
+- **Building at a point in the history** — a feature made while the view is
+  rolled back goes *in* at that point rather than onto the end of the chain, and
+  the view stays there so the next one follows it. This is the same splice that
+  moving a body uses, and it is the general answer to where a new feature
+  belongs: at the marker, or at the end when there is no marker.
 - **Deleting from the middle** — *Delete* takes the node out and joins what it
   was reading to what was reading it, so deleting a fillet leaves the body it was
   rounding and everything built on the fillet goes on being built on the body.
@@ -296,6 +315,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:menu` | Checks a node's menu says what deleting it would cost, and that a suppressed feature is held back rather than removed |
 | `npm run verify:move` | Checks a move at the end of a chain shifts the whole body, and one in the middle leaves what was cut from it where it was |
 | `npm run verify:edit` | Checks a feature reopens on its own values, changes live, and is put back by Cancel |
+| `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.

@@ -622,6 +622,16 @@ input[type='range'] {
   border-left: 3px solid var(--suppressed);
 }
 
+/* The point the view is rolled back to, and everything it treats as absent. */
+.node-marker {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 18px #000a;
+}
+
+.node-beyond {
+  opacity: 0.4;
+}
+
 /* Held back, not gone: still readable, plainly not acting. */
 .node[data-suppressed] {
   border-style: dashed;

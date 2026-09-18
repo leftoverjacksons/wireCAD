@@ -24,7 +24,8 @@
     "verify:ghost": "node scripts/verify-ghost.mjs",
     "verify:menu": "node scripts/verify-menu.mjs",
     "verify:move": "node scripts/verify-move.mjs",
-    "verify:edit": "node scripts/verify-edit.mjs"
+    "verify:edit": "node scripts/verify-edit.mjs",
+    "verify:rollback": "node scripts/verify-rollback.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",

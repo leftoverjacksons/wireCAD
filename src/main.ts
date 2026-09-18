@@ -78,6 +78,38 @@ const controls = document.getElementById('controls')!;
 let selected: NodeId | null = null;
 const history = new History(graph);
 
+/**
+ * The point in the history the view is looking at, if it is looking back.
+ *
+ * Not a document edit and not a rebuild: every node's output already exists
+ * after a solve, so this only says that everything downstream of that node is
+ * to be treated as absent. It is session state rather than part of the
+ * document, because a saved file should open on the model, not on the middle of
+ * somebody's afternoon.
+ */
+let rolledBackTo: NodeId | null = null;
+/**
+ * Where to go back to when the dialog that rolled the view back closes.
+ * `undefined` means no dialog is holding the view anywhere.
+ */
+let markerBeforeDialog: NodeId | null | undefined = undefined;
+
+/** Looks at the model as it was at a node, or stops. */
+function setRolledBack(nodeId: NodeId | null): void {
+  const marker = nodeId !== null && graph.getNode(nodeId) === undefined ? null : nodeId;
+  if (marker === rolledBackTo) return;
+
+  rolledBackTo = marker;
+  dialog.setSpliceAt(marker);
+  editor.setRolledBack(marker, marker === null ? new Set() : graph.downstreamOf(marker));
+  statusEl.textContent =
+    marker === null
+      ? 'looking at the model as it stands'
+      : `rolled back to ${graph.getNode(marker)?.label ?? graph.schemaOf(marker).label}` +
+        ' — what is built on it is drawn as an outline';
+  requestSolve();
+}
+
 const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onBeforeChange: () => history.capture(),
   onDocumentChanged: () => requestSolve(),
@@ -101,8 +133,15 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
     viewport.clearChosenEdges();
     if (!dialog.openOn(nodeId)) {
       statusEl.textContent = 'That node has no dialog to reopen.';
+      return;
     }
+
+    // Editing a feature is looking at the moment it was made: what came after
+    // it steps out of the way until the dialog is done.
+    markerBeforeDialog = rolledBackTo;
+    setRolledBack(nodeId);
   },
+  onRollBack: (nodeId) => setRolledBack(nodeId),
 });
 editor.frame();
 
@@ -141,10 +180,20 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     history.forget();
     refreshHistoryButtons();
   },
-  onCommit: (nodeId) => {
+  onCommit: (nodeId, created) => {
+    // A feature built at a point in the history leaves the view there, on what
+    // was just made, so the next one goes in after it.
+    if (created && rolledBackTo !== null) setRolledBack(nodeId);
     applySelection(nodeId, true);
     editor.reveal(nodeId);
     requestSolve();
+  },
+  onClosed: () => {
+    // Whatever the dialog was holding the view at, it is not holding it now.
+    if (markerBeforeDialog === undefined) return;
+    const restore = markerBeforeDialog;
+    markerBeforeDialog = undefined;
+    setRolledBack(restore);
   },
   onArmedChanged: (armed) => {
     document.body.classList.toggle('picking', armed);
@@ -816,6 +865,8 @@ graph.subscribe((change) => {
   refreshHistoryButtons();
   scheduleAutosave();
 
+  if (rolledBackTo !== null && graph.getNode(rolledBackTo) === undefined) setRolledBack(null);
+
   if (change.kind === 'document-replaced') {
     rebuildControls();
     if (selected !== null && graph.getNode(selected) === undefined) applySelection(null, true);
@@ -863,6 +914,7 @@ function requestSolve(): void {
     requestId: ++requestId,
     document: graph.toJSON(),
     pinned: pinnedNodes(),
+    ...(rolledBackTo === null ? {} : { rolledBackTo }),
   };
   worker.postMessage(message);
 }
@@ -923,6 +975,10 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       ghosts.set(nodeId, viewport.hasFeatureFaces(nodeId) ? 'faces' : 'faint');
     }
   }
+  // The model as it stands, over the earlier state being looked at: edges
+  // alone, because a faint solid of nearly the same shape is a smear rather
+  // than a second reading of it.
+  for (const nodeId of message.rolledBack) ghosts.set(nodeId, 'edges');
   viewport.setGhosts(ghosts);
 
   // When such a node's result is still the model, there is nothing to ghost;
@@ -1003,6 +1059,8 @@ if (import.meta.env.DEV) {
     dialog,
     handleAt: () => viewport.handleScreenPosition(),
     handles: () => viewport.handleScreenPositions(),
+    rolledBackTo: () => rolledBackTo,
+    rollBack: (nodeId: NodeId | null) => setRolledBack(nodeId),
     sketch: sketchSession,
     screenOfSketch: (u: number, v: number) => {
       const plane = lastPlanes[graph.incomingEdge(selected!, 'plane')?.from.node ?? ''] ?? WORLD_XY;

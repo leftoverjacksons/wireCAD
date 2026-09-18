@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { LruCache } from '../core/cache.js';
+import { planDisplay } from '../core/display.js';
 import { Evaluator } from '../core/evaluator.js';
 import { Graph } from '../core/graph.js';
 import { NodeRegistry } from '../core/registry.js';
@@ -67,52 +68,31 @@ function solve(request: SolveRequest): void {
 
   const visible: NodeId[] = [];
   const pinnedShown: NodeId[] = [];
+  const rolledBack: NodeId[] = [];
   const meshes: MeshPayload[] = [];
   const transfer: Transferable[] = [];
   let triangles = 0;
   const meshStart = performance.now();
 
-  const pinned = new Set(request.pinned ?? []);
+  // What to draw is decided away from here, where it can be tested without a
+  // kernel: this loop's business is turning that answer into triangles.
+  const plan = planDisplay(graph, {
+    pinned: new Set(request.pinned ?? []),
+    rolledBackTo: request.rolledBackTo ?? null,
+  });
 
-  for (const node of graph.allNodes()) {
-    const definition = registry.require(node.type);
-
-    // A solid is superseded only by something that produces geometry from it.
-    // A query node such as face.plane reads the solid without replacing it, so
-    // the body must stay on screen.
-    const supersededBy = (portId: string): boolean =>
-      graph
-        .outgoingEdges(node.id)
-        .filter((edge) => edge.from.port === portId)
-        .some((edge) =>
-          registry
-            .require(graph.requireNode(edge.to.node).type)
-            .outputs.some((port) => port.type === 'geometry'),
-        );
-
-    // A profile that has already been extruded is scaffolding, not a body, so
-    // the same superseding rule covers sketches. An explicit flag on the node
-    // overrides the guess in either direction.
-    const displayable = definition.outputs.find(
-      (port) => port.type === 'sketch' || port.type === 'geometry',
-    );
-    if (displayable === undefined) continue;
-
-    // What the model would show on its own, before anyone asked for more.
-    const ordinarily = node.visible !== false && (node.visible === true || !supersededBy(displayable.id));
-    const asked = pinned.has(node.id);
-    if (!ordinarily && !asked) continue;
-
-    const nodeResult = result.results.get(node.id);
+  for (const [nodeId, shown] of plan) {
+    const nodeResult = result.results.get(nodeId);
     if (nodeResult === undefined) continue;
     if (nodeResult.status === 'error' || nodeResult.status === 'skipped') continue;
 
-    const value = nodeResult.outputs[displayable.id];
+    const value = nodeResult.outputs[shown.portId];
     if (value === undefined || !isGeometry(value)) continue;
 
-    visible.push(node.id);
-    if (!ordinarily) pinnedShown.push(node.id);
-    if (sentHashes.get(node.id) === nodeResult.hash) continue;
+    visible.push(nodeId);
+    if (shown.mode === 'asked') pinnedShown.push(nodeId);
+    if (shown.mode === 'outline') rolledBack.push(nodeId);
+    if (sentHashes.get(nodeId) === nodeResult.hash) continue;
 
     const { mesh: buffers, faceHandles } = tessellate(oc, value.handle as Shape);
     triangles += buffers.indices.length / 3;
@@ -125,8 +105,8 @@ function solve(request: SolveRequest): void {
     }
 
     meshes.push({
-      nodeId: node.id,
-      kind: displayable.type === 'sketch' ? 'sketch' : 'solid',
+      nodeId,
+      kind: shown.kind,
       ...buffers,
       featureFaces,
     });
@@ -138,7 +118,7 @@ function solve(request: SolveRequest): void {
       buffers.edgePositions.buffer,
       buffers.edgeIds.buffer,
     );
-    sentHashes.set(node.id, nodeResult.hash);
+    sentHashes.set(nodeId, nodeResult.hash);
   }
 
   // A node that stops being visible must re-send when it returns, because the
@@ -155,6 +135,7 @@ function solve(request: SolveRequest): void {
       reports,
       visible,
       pinnedShown,
+      rolledBack,
       meshes,
       planes,
       stats: result.stats,
