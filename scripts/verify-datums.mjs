@@ -91,6 +91,50 @@ check(
 );
 
 console.log('');
+console.log('showing what a plane node is:');
+
+// A plane node makes no geometry. What it is responsible for is the plane, so
+// selecting one has to show it — one of the three lights up the square already
+// drawn for it, and anything else gets a square of its own where it actually is.
+await page.evaluate(() => {
+  const plane = window.wirecad.graph.allNodes().find((node) => node.type === 'plane.xy');
+  window.wirecad.select(plane.id);
+});
+await page.waitForTimeout(400);
+check(
+  'a datum lights its square',
+  (await page.evaluate(() => window.wirecad.viewport.selectedPlaneShown())) === 'xy',
+  await page.evaluate(() => String(window.wirecad.viewport.selectedPlaneShown())),
+);
+
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  const xy = graph.allNodes().find((node) => node.type === 'plane.xy');
+  const offset = graph.addNode('plane.offset', { inputs: { distance: 35 } });
+  graph.connect({ node: xy.id, port: 'plane' }, { node: offset.id, port: 'plane' });
+  window.wirecad.solve();
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  window.wirecad.select(offset.id);
+});
+await page.waitForTimeout(600);
+check(
+  'another gets one of its own',
+  (await page.evaluate(() => window.wirecad.viewport.selectedPlaneShown())) === 'ghost',
+  await page.evaluate(() => String(window.wirecad.viewport.selectedPlaneShown())),
+);
+
+await page.evaluate(() => {
+  const body = window.wirecad.graph.allNodes().find((node) => node.label === 'Body');
+  window.wirecad.select(body.id);
+});
+await page.waitForTimeout(400);
+check(
+  'and a body shows none     ',
+  (await page.evaluate(() => window.wirecad.viewport.selectedPlaneShown())) === null,
+  await page.evaluate(() => String(window.wirecad.viewport.selectedPlaneShown())),
+);
+
+console.log('');
 console.log('sketching on one:');
 
 await page.getByRole('button', { name: 'Sketch', exact: true }).click();

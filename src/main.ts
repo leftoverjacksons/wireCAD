@@ -495,6 +495,13 @@ function showWhatItMade(nodeId: NodeId | null): void {
   edgesPin = null;
 
   const node = nodeId === null ? null : (graph.getNode(nodeId) ?? null);
+
+  // A plane node makes no geometry — its whole content is a place in space — so
+  // what it is responsible for is the plane itself, drawn where it is.
+  const makesPlane =
+    node !== null && graph.schemaOf(node.id).outputs.some((port) => port.type === 'plane');
+  viewport.setSelectedPlane(makesPlane ? (lastPlanes[node!.id] ?? null) : null);
+
   if (node !== null) {
     const makes = graph
       .schemaOf(node.id)
@@ -515,6 +522,19 @@ function bodyBehindSelection(nodeId: NodeId): NodeId | null {
     if (source !== undefined) return source.from.node;
   }
   return null;
+}
+
+/**
+ * Shows the selected node's plane once the solve has worked out where it is. A
+ * plane made a moment ago has no position yet, and without this the square for
+ * it would appear only when something else happened to redraw.
+ */
+function refreshPlaneHighlight(): void {
+  if (selected === null || dialog.isOpen) return;
+  const node = graph.getNode(selected) ?? null;
+  if (node === null) return;
+  if (!graph.schemaOf(node.id).outputs.some((port) => port.type === 'plane')) return;
+  viewport.setSelectedPlane(lastPlanes[node.id] ?? null);
 }
 
 /** Lights up the edges a selected edge selection refers to, once they are drawn. */
@@ -822,6 +842,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       : null,
   );
   refreshEdgeHighlight();
+  refreshPlaneHighlight();
   viewport.frameOnce();
   editor.setStatuses(message.reports);
   editor.setShown(message.visible);

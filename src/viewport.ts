@@ -17,6 +17,20 @@ const HANDLE_GRAB = 16;
 /** Dragged distances land on this, in millimetres. */
 const HANDLE_STEP = 0.1;
 
+/** Which of the three origin planes this is, if it is one of them. */
+function datumMatching(plane: PlaneValue): DatumAxis | null {
+  const { origin, normal } = plane;
+  if (Math.hypot(origin.x, origin.y, origin.z) > 1e-6) return null;
+
+  const along = (x: number, y: number, z: number): boolean =>
+    Math.abs(Math.abs(normal.x * x + normal.y * y + normal.z * z) - 1) < 1e-6;
+
+  if (along(0, 0, 1)) return 'xy';
+  if (along(0, 1, 0)) return 'xz';
+  if (along(1, 0, 0)) return 'yz';
+  return null;
+}
+
 /** Snapped, and free of the trailing noise that dividing by a tenth leaves. */
 function round(value: number, step: number): number {
   return Number((Math.round(value / step) * step).toFixed(3));
@@ -139,6 +153,9 @@ export class Viewport {
   private readonly datums = new THREE.Group();
   private readonly datumFaces: THREE.Mesh[] = [];
   private hoveredDatum: DatumAxis | null = null;
+  private pickedDatum: DatumAxis | null = null;
+  /** A square standing in for a plane that is not one of the three. */
+  private planeGhost: THREE.Group | null = null;
   private readonly datumMaterial = new THREE.MeshBasicMaterial({
     color: 0xa78bfa,
     transparent: true,
@@ -479,6 +496,16 @@ export class Viewport {
     this.pickListener = listener;
   }
 
+  /**
+   * What the viewport is currently showing as the selected plane: one of the
+   * three by name, `ghost` for a square drawn for a plane of its own, or
+   * nothing.
+   */
+  selectedPlaneShown(): DatumAxis | 'ghost' | null {
+    if (this.pickedDatum !== null) return this.pickedDatum;
+    return this.planeGhost?.visible === true ? 'ghost' : null;
+  }
+
   /** Whether the origin squares are on screen: a sketch takes them away. */
   datumsShown(): boolean {
     return this.datums.visible;
@@ -580,19 +607,80 @@ export class Viewport {
   private setHoveredDatum(axis: DatumAxis | null): void {
     if (this.hoveredDatum === axis) return;
     this.hoveredDatum = axis;
+    this.applyDatumMaterials();
+  }
+
+  /** The pointer wins over the selection: hovering is about to change it. */
+  private applyDatumMaterials(): void {
+    const lit = this.hoveredDatum ?? this.pickedDatum;
 
     for (const holder of this.datums.children) {
       for (const part of holder.children) {
-        const lit = part.userData.datum === axis;
+        const on = part.userData.datum === lit;
         if ((part as THREE.Mesh).isMesh === true) {
-          (part as THREE.Mesh).material = lit ? this.datumHoverMaterial : this.datumMaterial;
+          (part as THREE.Mesh).material = on ? this.datumHoverMaterial : this.datumMaterial;
         } else {
-          (part as THREE.Line).material = lit
-            ? this.datumEdgeHoverMaterial
-            : this.datumEdgeMaterial;
+          (part as THREE.Line).material = on ? this.datumEdgeHoverMaterial : this.datumEdgeMaterial;
         }
       }
     }
+  }
+
+  /**
+   * Shows the plane a selected node stands for.
+   *
+   * A plane node makes no geometry, so selecting one used to change nothing on
+   * screen — the one kind of node whose whole purpose is a place in space, and
+   * the only one that said nothing about where. One of the three at the origin
+   * lights up the square already drawn for it; anything else — an offset plane,
+   * a face's plane — gets a square of its own, drawn where it actually is.
+   */
+  setSelectedPlane(plane: PlaneValue | null): void {
+    const axis = plane === null ? null : datumMatching(plane);
+    if (axis !== this.pickedDatum) {
+      this.pickedDatum = axis;
+      this.applyDatumMaterials();
+    }
+
+    if (plane === null || axis !== null) {
+      if (this.planeGhost !== null) this.planeGhost.visible = false;
+      return;
+    }
+
+    if (this.planeGhost === null) {
+      const holder = new THREE.Group();
+      const face = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.datumHoverMaterial);
+      face.renderOrder = 1;
+      const border = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(-0.5, -0.5, 0),
+          new THREE.Vector3(0.5, -0.5, 0),
+          new THREE.Vector3(0.5, 0.5, 0),
+          new THREE.Vector3(-0.5, 0.5, 0),
+          new THREE.Vector3(-0.5, -0.5, 0),
+        ]),
+        this.datumEdgeHoverMaterial,
+      );
+      border.renderOrder = 2;
+      holder.add(face, border);
+      this.planeGhost = holder;
+      this.scene.add(holder);
+    }
+
+    const xAxis = new THREE.Vector3(plane.xAxis.x, plane.xAxis.y, plane.xAxis.z).normalize();
+    const normal = new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z).normalize();
+    const yAxis = planeYAxis(plane);
+
+    this.planeGhost.visible = true;
+    this.planeGhost.position.set(plane.origin.x, plane.origin.y, plane.origin.z);
+    this.planeGhost.setRotationFromMatrix(
+      new THREE.Matrix4().makeBasis(
+        xAxis,
+        new THREE.Vector3(yAxis.x, yAxis.y, yAxis.z).normalize(),
+        normal,
+      ),
+    );
+    this.planeGhost.scale.setScalar(this.datums.scale.x);
   }
 
   onEdgePick(listener: (hit: EdgeHit | null) => void): void {
@@ -1161,6 +1249,7 @@ export class Viewport {
     // Not while drawing: the sketch is on a plane of its own, and three more
     // through the middle of it are in the way rather than of use.
     this.datums.visible = !dimmed;
+    if (this.planeGhost !== null) this.planeGhost.visible = this.planeGhost.visible && !dimmed;
     if (dimmed) this.setHoveredDatum(null);
 
     for (const material of [this.material, this.highlightMaterial]) {

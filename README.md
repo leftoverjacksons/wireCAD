@@ -39,6 +39,10 @@ is ready, typically around two seconds.
   squares go away while a sketch has the view. They scale with what is in the
   scene, because a square fixed in millimetres is either lost inside a large
   model or swamps a small one.
+- **Selecting a plane shows it.** A plane node makes no geometry — its whole
+  content is a place in space — so selecting one draws that place: one of the
+  three lights up the square already there, and any other plane, an offset or a
+  face's, gets a square of its own drawn where it actually is.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
@@ -565,8 +569,8 @@ discarded.
 
 ## Known gaps
 
-- A node that makes neither geometry nor a reference to some — a parameter, a
-  datum plane — has nothing to show when clicked.
+- A node that makes neither geometry nor a reference to some — a parameter — has
+  nothing to show when clicked.
 - The origin squares carry no labels, and there is no way to turn them off. Which
   one is which has to be read from how it lies.
 - A relation's mark is placed automatically and cannot be dragged. A dimension
