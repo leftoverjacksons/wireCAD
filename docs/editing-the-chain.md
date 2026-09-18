@@ -129,7 +129,7 @@ really about the dialog:
 | 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | **done** |
 | 4 | Editing an existing feature through its dialog | — | **done** |
 | 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | **done** |
-| 6 | Viewport context menu, scoped to face and body | 2, 3 | |
+| 6 | Viewport context menu, scoped to face and body | 2, 3 | **done** |
 
 Piece 2's *Edit* was an entry and a pair of callbacks rather than a feature of
 its own, and piece 4 filled it in from behind exactly as expected: `canEdit`
@@ -229,9 +229,32 @@ is the general answer to where a new feature belongs — at the marker, or at th
 end when there is no marker — which is why Move's own `splice` flag stays the
 narrow special case it is rather than growing into a mode.
 
-Piece 6 wants `BRepAlgoAPI_Defeaturing` for *delete face*, which is listed as
-supported in this build but has not been called yet. Several things that were
-listed turned out to be unbound or differently shaped, so it gets probed before
-anything is promised on top of it. *Delete face* means defeature — remove the
-face and heal its neighbours together, leaving a solid — not punching a hole,
-which would leave an open shell that cannot be booleaned or exported as a body.
+Piece 6 wanted `BRepAlgoAPI_Defeaturing` for *delete face*, which was listed as
+supported in this build but had never been called. It was probed first, as these
+notes ask, and it works: a bore's wall comes off a block and the gap heals into
+a solid, a rounding comes off and the corner is sharp again, and several faces
+can go at once. *Delete face* means that defeature — not punching a hole, which
+would leave an open shell that cannot be booleaned or exported as a body.
+
+The probe was worth running for one thing it found. Asked to remove a face it
+cannot — an outside face of a plain block — the kernel reports `IsDone()` true
+and hands back the body **unchanged**. `HasErrors` is not bound at all in this
+build. So success is not something the call can be asked about; the node counts
+faces before and after, and a result with no fewer faces than it started with is
+the kernel having done nothing while saying otherwise. This is the same shape of
+problem as Shell's silently-empty offset, and it is handled the same way: check
+the result, and refuse with a reason.
+
+Naming the face was the larger half of the work. `face.plane` names a face by
+its normal and rank, which cannot name a bore or a rounding, so a face is now
+named the way an edge is — centroid as a fraction of the body's bounding box,
+plus area to separate two faces sharing a place. `matchFaceRef` is the whole of
+it, and it is tested without a kernel.
+
+The menu itself needed no new thinking, only one less duplicate: a body on
+screen and the node that made it are two views of one thing, so the viewport's
+menu is the node menu's own entries run by the node editor's own code, with the
+face-scoped entries on top. The popup came out into `src/ui/menu.ts` so there is
+one of it. And it opens on pointer*up*, because right-dragging pans the view and
+browsers disagree about whether the contextmenu event arrives on the way down or
+the way up — on the way down, the drag has not happened yet.

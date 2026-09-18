@@ -1,6 +1,7 @@
 import './styles.css';
 import { documentToText, parseDocument } from './core/document.js';
 import { Graph } from './core/graph.js';
+import { spliceAfter } from './core/rewire.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
 import type { GraphNode, NodeId, NodeSchema, PlaneValue, Vec3 } from './core/types.js';
@@ -15,7 +16,13 @@ import { geometrySchemas } from './nodes/solid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { FeatureSpec, PlaneChoice } from './ui/features.js';
-import { createSketchNode, originPlaneNode, specForNode, tabs } from './ui/features.js';
+import {
+  createSketchNode,
+  originPlaneNode,
+  placeDownstream,
+  specForNode,
+  tabs,
+} from './ui/features.js';
 import {
   download,
   keepRejected,
@@ -804,6 +811,11 @@ viewport.onContextPick((hit, clientX, clientY) => {
             detail: 'and draw on it now',
           },
     );
+    items.push({
+      action: 'delete-face',
+      label: 'Delete face',
+      detail: 'and heal the gap over',
+    });
   }
 
   const onNode = nodeMenu(graph, nodeId, {
@@ -826,10 +838,55 @@ viewport.onContextPick((hit, clientX, clientY) => {
         startSketch({ kind: 'face', nodeId, normal: face.normal, rank: face.rank });
         return;
       }
+      if (action === 'delete-face') {
+        deleteFace(hit);
+        return;
+      }
       editor.runMenuAction(nodeId, action as NodeMenuAction);
     },
   });
 });
+
+/**
+ * Takes a face off a body: a `Delete Face` node, spliced in where the body is.
+ *
+ * Spliced rather than appended, so deleting a face from a body other features
+ * are built on leaves them built on the healed body rather than on the one with
+ * the hole still in it. At the end of a chain that is an ordinary append.
+ */
+function deleteFace(hit: FaceHit): void {
+  const faces = viewport.facesOf(hit.nodeId);
+  const face = hit.faceIndex === null ? undefined : faces?.[hit.faceIndex];
+  if (face === undefined) {
+    statusEl.textContent = 'That face has not been solved yet — try again in a moment.';
+    return;
+  }
+
+  history.capture();
+  const node = graph.addNode('solid.defeature', {
+    inputs: {
+      fx: face.fraction.x,
+      fy: face.fraction.y,
+      fz: face.fraction.z,
+      area: face.area,
+    },
+  });
+
+  try {
+    spliceAfter(graph, hit.nodeId, node.id);
+  } catch (thrown) {
+    graph.removeNode(node.id);
+    history.forget();
+    refreshHistoryButtons();
+    statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
+    return;
+  }
+
+  placeDownstream(graph, node.id);
+  applySelection(node.id, true);
+  editor.reveal(node.id);
+  requestSolve();
+}
 
 // Clicking one of the origin squares means that plane, which in this program is
 // a node: the document gains one unless it already has that plane. Selecting it

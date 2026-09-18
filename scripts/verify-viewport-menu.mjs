@@ -58,9 +58,14 @@ await page.evaluate(() => {
    * the viewport what each point actually hits.
    */
   window.__pointOnFace = (wantPlanar) => {
-    const bore = window.__idOf('Bore');
-    const mesh = window.wirecad.meshes().find((m) => m.nodeId === bore);
+    // Whatever solid is on screen now, which is not always the node the model
+    // started with: deleting a face puts a new node at the end of the chain.
+    const ghosts = window.wirecad.viewport.ghosts ?? new Map();
+    const mesh = window.wirecad
+      .meshes()
+      .find((m) => m.kind === 'solid' && !ghosts.has(m.nodeId));
     if (mesh === undefined) return null;
+    const bore = mesh.nodeId;
 
     const rect = window.wirecad.viewport.canvas.getBoundingClientRect();
     for (let y = rect.top + 20; y < rect.bottom - 20; y += 7) {
@@ -193,6 +198,88 @@ check(
   'a right-drag pans instead ',
   afterDrag === null,
   afterDrag === null ? 'no menu' : 'a menu opened',
+);
+
+// --------------------------------------------------------------- delete face
+
+await page.evaluate(() => window.__reset());
+const bored = await page.evaluate(async () => {
+  await window.__settle();
+  let total = 0;
+  for (const mesh of window.wirecad.meshes()) {
+    if (mesh.kind !== 'solid') continue;
+    const p = mesh.positions;
+    const ix = mesh.indices;
+    let signed = 0;
+    for (let i = 0; i < ix.length; i += 3) {
+      const a = ix[i] * 3;
+      const b = ix[i + 1] * 3;
+      const c = ix[i + 2] * 3;
+      signed +=
+        p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) -
+        p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c]) +
+        p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+    }
+    total += Math.abs(signed) / 6;
+  }
+  return total;
+});
+
+const wall = await page.evaluate(() => window.__pointOnFace(false));
+await rightClickAt(wall);
+await page.locator('.menu-item[data-action="delete-face"]').click();
+await page.waitForTimeout(900);
+
+const healed = await page.evaluate(async () => {
+  window.wirecad.select(null);
+  await window.__settle();
+  const ghosts = window.wirecad.viewport.ghosts ?? new Map();
+  let total = 0;
+  for (const mesh of window.wirecad.meshes()) {
+    if (mesh.kind !== 'solid' || ghosts.has(mesh.nodeId)) continue;
+    const p = mesh.positions;
+    const ix = mesh.indices;
+    let signed = 0;
+    for (let i = 0; i < ix.length; i += 3) {
+      const a = ix[i] * 3;
+      const b = ix[i + 1] * 3;
+      const c = ix[i + 2] * 3;
+      signed +=
+        p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) -
+        p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c]) +
+        p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+    }
+    total += Math.abs(signed) / 6;
+  }
+  return {
+    volume: total,
+    node: window.wirecad.graph.allNodes().some((n) => n.type === 'solid.defeature'),
+    error: window.wirecad.reports().find((r) => r.error)?.error ?? null,
+  };
+});
+// The bore's wall taken off and the gap healed over: a solid block again.
+check(
+  'deleting a face heals it  ',
+  healed.node && Math.abs(healed.volume - 48000) < 5,
+  healed.error ?? `${healed.volume.toFixed(0)} mm3, was ${bored.toFixed(0)}`,
+);
+
+// A face that cannot go says so rather than quietly doing nothing.
+const flat = await page.evaluate(() => window.__pointOnFace(true));
+await rightClickAt(flat);
+await page.locator('.menu-item[data-action="delete-face"]').click();
+await page.waitForTimeout(900);
+const refused = await page.evaluate(async () => {
+  await window.__settle();
+  const report = window.wirecad
+    .reports()
+    .find((r) => r.error !== undefined);
+  return report?.error ?? null;
+});
+check(
+  'and an outer face refuses ',
+  refused !== null && refused.includes('nothing to heal the gap with'),
+  refused ?? 'no complaint',
 );
 
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));

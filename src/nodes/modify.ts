@@ -4,6 +4,7 @@ import { geometry, kernelCall, shapeOf, tessellate } from '../geometry/kernel.js
 import { length } from '../geometry/plane.js';
 import { asNumber, asPositive } from './coerce.js';
 import { echoDimensions } from './echo.js';
+import { matchFaceRef } from './faceref.js';
 import { readEdgeRefs, resolveEdgeRefs } from './edges.js';
 import { matchingFaces } from './face.js';
 
@@ -68,11 +69,38 @@ export const moveSchema: NodeSchema = echoDimensions({
   outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
 });
 
+/**
+ * Taking a face off a body and healing what is left into a solid again.
+ *
+ * Not punching a hole: that would leave an open shell, which cannot be
+ * booleaned or exported as a body. The kernel's own defeaturing removes the
+ * face and joins its neighbours over the gap, which is what "delete this bore"
+ * or "delete this rounding" actually means.
+ *
+ * The face is named by where it sits rather than by which way it points,
+ * because the faces most worth deleting — a bore, a rounding — have no single
+ * normal to be named by.
+ */
+export const defeatureSchema: NodeSchema = echoDimensions({
+  type: 'solid.defeature',
+  label: 'Delete Face',
+  category: 'Modify',
+  inputs: [
+    { id: 'solid', label: 'Solid', type: 'geometry' },
+    { id: 'fx', label: 'Face X', type: 'number', default: 0.5 },
+    { id: 'fy', label: 'Face Y', type: 'number', default: 0.5 },
+    { id: 'fz', label: 'Face Z', type: 'number', default: 0.5 },
+    { id: 'area', label: 'Area', type: 'number', default: 0 },
+  ],
+  outputs: [{ id: 'result', label: 'Result', type: 'geometry' }],
+});
+
 export const modifySchemas: readonly NodeSchema[] = [
   filletSchema,
   chamferSchema,
   shellSchema,
   moveSchema,
+  defeatureSchema,
 ];
 
 export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
@@ -396,5 +424,45 @@ export function createModifyNodes(oc: OpenCascadeInstance): NodeDefinition[] {
     },
   };
 
-  return [fillet, chamfer, shell, move];
+  const defeature: NodeDefinition = {
+    ...defeatureSchema,
+    evaluate: (inputs) => {
+      const shape = shapeOf(inputs.solid ?? null, 'solid');
+      const ref = {
+        fx: asNumber(inputs.fx ?? null, 'fx'),
+        fy: asNumber(inputs.fy ?? null, 'fy'),
+        fz: asNumber(inputs.fz ?? null, 'fz'),
+        area: asNumber(inputs.area ?? null, 'area'),
+      };
+
+      const { mesh, faceHandles } = tessellate(oc, shape, 1.0, 0.6);
+      const index = matchFaceRef(mesh.faces, ref);
+      const face = index < 0 ? undefined : faceHandles[index];
+      if (face === undefined) {
+        throw new Error('That face is not on this body any more');
+      }
+
+      const before = countSubShapes(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE);
+      const maker = new oc.BRepAlgoAPI_Defeaturing();
+      maker.SetShape(shape);
+      maker.AddFaceToRemove(face);
+      kernelCall('Delete Face', 'that face cannot be removed on its own', () => maker.Build());
+      if (!maker.IsDone()) throw new Error('Delete Face failed — the kernel gave up on it');
+
+      const result = maker.Shape();
+      // It reports success either way: a face it cannot remove comes back as
+      // the body unchanged rather than as an error. Counting faces is how the
+      // difference between "removed it" and "did nothing" is actually known.
+      if (countSubShapes(result, oc.TopAbs_ShapeEnum.TopAbs_FACE) >= before) {
+        throw new Error(
+          'That face cannot be removed on its own — there is nothing to heal the gap with',
+        );
+      }
+
+      maker.delete?.();
+      return { result: geometry(result) };
+    },
+  };
+
+  return [fillet, chamfer, shell, move, defeature];
 }

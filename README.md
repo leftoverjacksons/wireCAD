@@ -241,8 +241,17 @@ stays cached, so it is cheap to adjust a radius and try again.
   they mean in the graph, and are run by the same code. On top of them come the
   things only a face can offer — *Sketch on this face* starts a drawing on the
   face under the cursor, and says so rather than going quiet when that face is
-  not flat. Right-*dragging* still pans the view: a menu only opens where the
-  button went down and came back up in the same place.
+  not flat; *Delete face* takes the face off. Right-*dragging* still pans the
+  view: a menu only opens where the button went down and came back up in the
+  same place.
+- **Deleting a face** — *Delete face* removes the face and heals its neighbours
+  together over the gap, leaving a solid: deleting the wall of a bore fills the
+  bore in, deleting a rounding makes the corner sharp again. It is not punching
+  a hole, which would leave an open shell that cannot be booleaned or exported
+  as a body, so a face that cannot go without leaving one — the outside of a
+  block, say — is refused with a reason rather than quietly doing nothing. Like
+  a move, it goes in where the body is rather than on the end of the chain, so
+  what is built on that body stays built on the healed one.
 - **Right-clicking a node** — a menu of what can be done to it: *Edit*, *Rename*,
   *Hide* or *Show*, *Suppress*, *Delete* and *Delete branch*. Every entry says
   what it will cost before it is chosen, and an entry that would mean nothing for
@@ -420,6 +429,27 @@ single closed shell of positive volume and refuses with a reason instead.
 case, measures the hollowed volume from the triangulation and checks it against
 the solid it came from, so a path that quietly returns the unhollowed body or an
 empty shape fails the run.
+
+## Referring to a face that has no normal
+
+`Face Plane` names a face by the way it points and its rank among the faces
+pointing that way, which is exact for a plane and useless for anything else. The
+two faces most worth pointing at — the wall of a bore, a rounding — are curved,
+and have no single normal to be named by.
+
+So *Delete face* names a face the way a selection names an edge: by where its
+area-weighted centroid sits **as a fraction of the body's bounding box**, which
+does not move when the body is resized, together with its area. The fraction is
+what survives editing; the area is what tells two faces apart when they share a
+place, as a small boss and the large face it sits on do. Matching takes the
+nearest candidate in that fractional space, after discarding any whose area has
+changed by more than a generous factor, and refuses rather than guessing when
+the nearest is still too far — the same discipline the edges keep.
+
+The area tolerance is deliberately loose. The face being named is usually the
+one being changed, and a bore whose radius doubles is still that bore; the area
+is there to separate faces that share a place, not to insist a face keeps its
+size.
 
 ## Referring to an edge
 
