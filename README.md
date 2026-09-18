@@ -567,6 +567,13 @@ affected anything. Loading is lenient about such a literal for the same reason,
 because a file that will not open is a worse answer than a number quietly
 discarded.
 
+## Where this is going
+
+`docs/editing-the-chain.md` holds the plan for right-click menus, moving a body,
+editing a feature after the fact, and looking at the model as it stood at an
+earlier node — why those are one piece of work rather than four, and which parts
+of it are built.
+
 ## Known gaps
 
 - A node that makes neither geometry nor a reference to some — a parameter — has
