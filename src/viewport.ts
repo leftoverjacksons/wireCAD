@@ -571,7 +571,7 @@ export class Viewport {
 
   /** Keeps the squares in proportion with whatever the scene holds. */
   private sizeDatums(): void {
-    const size = Math.max(this.sceneRadius() * 0.8, 40);
+    const size = Math.max(this.sceneRadius() * 0.4, 20);
     this.datums.scale.setScalar(size);
   }
 
