@@ -980,3 +980,18 @@ input[type='range'] {
 .sketch-label {
   cursor: move;
 }
+
+/* A dimension picked out wears the same colour as anything else picked. */
+.sketch-label-field.is-picked {
+  border-color: var(--highlight);
+  color: var(--highlight);
+}
+
+.sketch-row.is-picked {
+  background: #ff61c61f;
+  border-radius: 3px;
+}
+
+.sketch-row-label {
+  cursor: pointer;
+}

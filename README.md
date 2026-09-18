@@ -103,6 +103,21 @@ is ready, typically around two seconds.
   Dimensions move the same way: drag one by its number or by its line, and where
   it sits is kept with the sketch, measured against what it measures rather than
   in the plane, so it stays put as the geometry moves under it.
+- **Relation marks** — every relation the sketch holds is drawn on it: a bar for
+  a horizontal edge, a stroke for a vertical one, `∥` and `⊥` and `=` between two
+  of them, a diamond where two points are the same, a ring for concentric
+  circles, a triangle at a midpoint. A relation between two edges marks both.
+  Marks sit just outside the edge they belong to and step aside when they would
+  land on one another. No standard specifies them: ISO 1101 fixes `∥`, `⊥` and
+  `◎` as geometric-tolerance symbols and every CAD program has borrowed those,
+  and the rest are a shared convention rather than a rule.
+- **Picking a rule** — a mark, a dimension's line and a dimension's number are
+  all pickable, and *Delete* or the Delete key takes what is picked out of the
+  sketch. Picking a rule highlights it in the list as well, and clicking its row
+  in the list picks it on the drawing: the same rule seen twice. One click on a
+  number picks the dimension, two clicks is how you get at the number itself —
+  which is what keeps Delete meaning the dimension rather than the character to
+  the right of the caret.
 - **Constraining** — with Select, click points and edges in the 3D view, then
   apply a relation: Horizontal, Vertical, Parallel, Perpendicular, Equal,
   Coincident, Concentric, On line, Midpoint. *Delete* removes what is picked,
@@ -203,6 +218,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 | `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
+| `npm run verify:glyphs` | Checks relations are drawn on the sketch, and that picking one and pressing Delete takes it back |
 | `npm run verify:drag` | Checks a sketch can be pushed around by hand, and that where a dimension is put decides what it measures |
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
 | `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
@@ -361,7 +377,10 @@ dimensions are the handles: every dimension the sketch names becomes a port,
 editable in place or driven from elsewhere, and the solver decides where the
 geometry lands.
 
-Constraints come in two kinds. Dimensions carry a number — distance, horizontal
+Constraints come in two kinds, and they are drawn differently because they are
+different: a dimension shows itself, since it has a number on it, and a relation
+needs a mark or it is invisible — which leaves a sketch moving in ways nothing on
+screen explains. Dimensions carry a number — distance, horizontal
 or vertical distance, radius, angle, and locking a point's U or V. Relations
 carry none — coincident, horizontal, vertical, parallel, perpendicular, equal,
 concentric, point-on-line and midpoint.
@@ -530,8 +549,10 @@ discarded.
 
 - A node that makes neither geometry nor a reference to some — a parameter, a
   datum plane — has nothing to show when clicked.
-- Relations are listed in the panel but not drawn on the sketch: a dimension
-  shows itself, a perpendicular does not.
+- A relation's mark is placed automatically and cannot be dragged. A dimension
+  can be, because it has a name to remember the placement against; a relation is
+  known only by its position in the constraint list, which shifts as rules come
+  and go.
 - Two dimensions on the same edge start out on top of each other. They can be
   dragged apart, but nothing spaces them out on its own.
 - A dragged dimension is placed where it was dropped and stays there: nothing

@@ -160,6 +160,11 @@ export class Viewport {
     color: 0x5cecff,
     depthTest: false,
   });
+  /** A dimension or relation picked out, in the colour everything picked wears. */
+  private readonly annotationPickedMaterial = new THREE.LineBasicMaterial({
+    color: 0xff61c6,
+    depthTest: false,
+  });
   // The sketch being edited sits on the face it defines, so it is drawn without
   // depth testing: what you are editing is never hidden by what it produces.
   private readonly overlayMaterial = new THREE.LineBasicMaterial({
@@ -867,22 +872,31 @@ export class Viewport {
    * editing the sketch, because a number you can type into beats one baked into
    * the scene.
    */
-  setSketchAnnotations(lines: ReadonlyArray<readonly [Vec3, Vec3]>): void {
+  setSketchAnnotations(
+    lines: ReadonlyArray<readonly [Vec3, Vec3]>,
+    picked: ReadonlyArray<readonly [Vec3, Vec3]> = [],
+  ): void {
     this.clearSketchAnnotations();
-    if (lines.length === 0) return;
 
-    const flat = new Float32Array(lines.length * 6);
-    lines.forEach(([from, to], index) => {
-      flat.set([from.x, from.y, from.z, to.x, to.y, to.z], index * 6);
-    });
+    for (const group of [
+      { lines, material: this.annotationMaterial },
+      { lines: picked, material: this.annotationPickedMaterial },
+    ]) {
+      if (group.lines.length === 0) continue;
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+      const flat = new Float32Array(group.lines.length * 6);
+      group.lines.forEach(([from, to], index) => {
+        flat.set([from.x, from.y, from.z, to.x, to.y, to.z], index * 6);
+      });
 
-    const object = new THREE.LineSegments(geometry, this.annotationMaterial);
-    object.renderOrder = 8;
-    this.annotations.push(object);
-    this.scene.add(object);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+
+      const object = new THREE.LineSegments(geometry, group.material);
+      object.renderOrder = 8;
+      this.annotations.push(object);
+      this.scene.add(object);
+    }
   }
 
   private clearSketchAnnotations(): void {
@@ -1191,7 +1205,12 @@ export class Viewport {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
-    this.renderer.setSize(width, height, false);
+    // The style is updated along with the drawing buffer. Left out, the canvas
+    // element takes its layout size from the buffer, which on a display with
+    // two device pixels to the pixel is twice the container: the view is drawn
+    // at double size with its right and bottom halves clipped away, and every
+    // conversion between the screen and the model is out by the same factor.
+    this.renderer.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.cameraChanged();

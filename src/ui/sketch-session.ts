@@ -14,6 +14,8 @@ import {
   placeOf,
   placeOfSpan,
 } from '../sketch/annotate.js';
+import type { Glyph } from '../sketch/glyphs.js';
+import { glyphReach, glyphsFor } from '../sketch/glyphs.js';
 import type { Draft } from '../sketch/draw.js';
 import { addCircle, addLine, addPoint, addRectangle, removeParts, uniqueName } from '../sketch/draw.js';
 import type { Constraint, Point, Sketch } from '../sketch/model.js';
@@ -28,7 +30,12 @@ export interface SketchSessionCallbacks {
   onExit(): void;
 }
 
-type Selection = { kind: 'point' | 'entity'; index: number };
+/**
+ * Something the sketch is made of, picked out. A constraint is as pickable as a
+ * point is: its glyph or its dimension is drawn on the sketch, so clicking that
+ * and pressing Delete is how a rule is taken back.
+ */
+type Selection = { kind: 'point' | 'entity' | 'constraint'; index: number };
 type ToolId = 'select' | 'line' | 'rectangle' | 'circle' | 'point' | 'dimension';
 
 /** The name a dimension goes by while it is still being placed. */
@@ -96,7 +103,7 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'select',
     label: 'Select',
-    hint: 'Click what you want to constrain or dimension. Drag it to move it, as far as its rules allow.',
+    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too.',
   },
   {
     id: 'line',
@@ -252,6 +259,7 @@ export class SketchSession {
   /** The number of the dimension being placed, which has no field of its own yet. */
   private readonly previewLabel: HTMLElement;
   private annotations: Annotation[] = [];
+  private glyphs: Glyph[] = [];
   private preview: Annotation | null = null;
   private releaseCamera: (() => void) | null = null;
   /** A dimension just made, whose number should be waiting to be typed over. */
@@ -426,6 +434,16 @@ export class SketchSession {
     return this.result?.points ?? [];
   }
 
+  /**
+   * The relation marks currently on the drawing and where each one sits. Like
+   * the solved points, this is here because nothing else can say it: the marks
+   * are placed from the geometry as it stands, so anything checking that they
+   * can be clicked has to be told where they ended up.
+   */
+  drawnRules(): ReadonlyArray<{ constraint: number; kind: string; at: Point }> {
+    return this.glyphs.map(({ constraint, kind, at }) => ({ constraint, kind, at }));
+  }
+
   /** True when this node is one the session can open. */
   static editable(graph: Graph, nodeId: NodeId | null): boolean {
     if (nodeId === null) return false;
@@ -505,6 +523,7 @@ export class SketchSession {
     this.labels.clear();
     this.previewLabel.hidden = true;
     this.annotations = [];
+    this.glyphs = [];
     this.preview = null;
 
     this.panel.hidden = true;
@@ -853,6 +872,13 @@ export class SketchSession {
       return;
     }
 
+    // Rules go first and from the back, so removing one does not move the index
+    // of the next one along.
+    const rules = this.picked
+      .filter((entry) => entry.kind === 'constraint')
+      .map((entry) => entry.index)
+      .sort((a, b) => b - a);
+
     const entities = lines(this.picked);
     const loose = new Set(points(this.picked));
     // The ends of a deleted edge go with it, unless something else still holds
@@ -868,7 +894,8 @@ export class SketchSession {
 
     this.callbacks.onBeforeChange();
     this.sync();
-    removeParts(draft, entities, [...loose]);
+    for (const index of rules) this.forget(index);
+    if (entities.length > 0 || loose.size > 0) removeParts(draft, entities, [...loose]);
     for (const name of this.places.keys()) {
       if (!draft.dimensions.has(name)) this.places.delete(name);
     }
@@ -879,20 +906,33 @@ export class SketchSession {
     this.hintEl.textContent = 'Deleted.';
   }
 
-  private removeConstraint(index: number): void {
+  /**
+   * Takes one rule out of the sketch, and the number it drove with it if no
+   * other rule still uses that number. Everything around it is left alone: the
+   * caller decides when to solve and write back.
+   */
+  private forget(index: number): void {
     const draft = this.draft;
     if (draft === null) return;
 
     const [removed] = draft.sketch.constraints.splice(index, 1);
-    if (removed !== undefined && 'dimension' in removed) {
-      const stillUsed = draft.sketch.constraints.some(
-        (other) => 'dimension' in other && other.dimension === removed.dimension,
-      );
-      if (!stillUsed) {
-        draft.dimensions.delete(removed.dimension);
-        this.places.delete(removed.dimension);
-      }
+    if (removed === undefined || !('dimension' in removed)) return;
+
+    const stillUsed = draft.sketch.constraints.some(
+      (other) => 'dimension' in other && other.dimension === removed.dimension,
+    );
+    if (!stillUsed) {
+      draft.dimensions.delete(removed.dimension);
+      this.places.delete(removed.dimension);
     }
+  }
+
+  private removeConstraint(index: number): void {
+    const draft = this.draft;
+    if (draft === null) return;
+
+    this.forget(index);
+    this.picked = this.picked.filter((entry) => entry.kind !== 'constraint');
 
     this.callbacks.onBeforeChange();
     this.resolve();
@@ -1019,12 +1059,19 @@ export class SketchSession {
 
     // Held still, a press picks what is under it. Moved, it drags it: geometry
     // as far as its rules allow, a dimension to wherever reads best.
-    const hit = this.nearest(at, this.slack());
-    const annotation = hit === null ? this.annotationAt(at, this.slack()) : null;
+    const found = this.nearest(at, this.slack());
+    const rule = found === null ? this.constraintAt(at, this.slack()) : null;
+    const hit: Selection | null =
+      found ?? (rule === null ? null : { kind: 'constraint', index: rule.index });
     this.startGrab(
       {
         hit,
-        dimension: annotation,
+        // Only a dimension can be dragged: a relation's glyph is placed by what
+        // it belongs to, which has nowhere of its own to be put.
+        dimension:
+          rule === null || rule.name === null
+            ? null
+            : { name: rule.name, constraint: rule.constraint },
         screen: { x: event.clientX, y: event.clientY },
         at,
         moved: false,
@@ -1166,13 +1213,21 @@ export class SketchSession {
     this.render();
   }
 
-  /** The dimension under a point on the drawing, by its lines or its number. */
-  private annotationAt(at: Point, slack: number): { name: string; constraint: Constraint } | null {
+  /**
+   * The rule under a point on the drawing: a dimension by its lines or its
+   * number, a relation by its glyph. Dimensions carry a name, which is what
+   * says whether the thing can also be dragged.
+   */
+  private constraintAt(
+    at: Point,
+    slack: number,
+  ): { index: number; name: string | null; constraint: Constraint } | null {
     const draft = this.draft;
     if (draft === null) return null;
 
-    let best: Annotation | null = null;
+    let best: { index: number; name: string | null } | null = null;
     let bestDistance = slack;
+
     for (const entry of this.annotations) {
       let distance = Math.hypot(entry.label.u - at.u, entry.label.v - at.v);
       for (const [from, to] of entry.lines) {
@@ -1180,14 +1235,26 @@ export class SketchSession {
       }
       if (distance < bestDistance) {
         bestDistance = distance;
-        best = entry;
+        best = { index: entry.constraint, name: entry.dimension };
+      }
+    }
+
+    // A glyph is a small solid thing rather than a line to be near, so the whole
+    // box it is drawn in counts as a hit.
+    const reach = this.plane === null ? slack : glyphReach(this.viewport.pickTolerance(this.plane, 1));
+    for (const glyph of this.glyphs) {
+      const distance = Math.hypot(glyph.at.u - at.u, glyph.at.v - at.v);
+      if (distance > reach) continue;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { index: glyph.constraint, name: null };
       }
     }
 
     if (best === null) return null;
-    const constraint = draft.sketch.constraints[best.constraint];
+    const constraint = draft.sketch.constraints[best.index];
     if (constraint === undefined) return null;
-    return { name: best.dimension, constraint };
+    return { ...best, constraint };
   }
 
   /** Points win over entities, because a point is the harder thing to hit. */
@@ -1227,6 +1294,20 @@ export class SketchSession {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    const target = event.target as HTMLElement | null;
+    const typing =
+      target !== null &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+    // Delete takes away what is picked, rules included: click a dimension or a
+    // relation's glyph and press it. Not while a number is being typed, where
+    // the same key means the character to the right.
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !typing) {
+      event.preventDefault();
+      this.deletePicked();
+      return;
+    }
+
     if (event.key === 'Enter') {
       event.preventDefault();
       this.chain = [];
@@ -1345,15 +1426,26 @@ export class SketchSession {
             { u: 0, v: 0 },
           );
 
-    const drawing = this.preview === null ? this.annotations : [...this.annotations, this.preview];
-    this.viewport.setSketchAnnotations(
-      drawing.flatMap(({ lines: drawn }) =>
-        drawn.map(
-          ([from, to]) =>
-            [pointOnPlane(plane, from.u, from.v), pointOnPlane(plane, to.u, to.v)] as [Vec3, Vec3],
-        ),
-      ),
-    );
+    // The relations, which have no number to show themselves with.
+    this.glyphs = glyphsFor(draft.sketch, solved.points, scale);
+
+    const isPicked = (constraint: number): boolean =>
+      this.picked.some((entry) => entry.kind === 'constraint' && entry.index === constraint);
+
+    const flat: Array<[Vec3, Vec3]> = [];
+    const picked: Array<[Vec3, Vec3]> = [];
+    const add = (constraint: number, drawn: ReadonlyArray<readonly [Point, Point]>): void => {
+      const into = isPicked(constraint) ? picked : flat;
+      for (const [from, to] of drawn) {
+        into.push([pointOnPlane(plane, from.u, from.v), pointOnPlane(plane, to.u, to.v)]);
+      }
+    };
+
+    for (const entry of this.annotations) add(entry.constraint, entry.lines);
+    for (const glyph of this.glyphs) add(glyph.constraint, glyph.lines);
+    if (this.preview !== null) add(-1, this.preview.lines);
+
+    this.viewport.setSketchAnnotations(flat, picked);
 
     this.syncLabels();
     this.placeLabels();
@@ -1400,6 +1492,13 @@ export class SketchSession {
         // or does not, so the press starts as neither.
         const name = entry.dimension;
         holder.addEventListener('pointerdown', (event) => this.grabLabel(event, name));
+        // One click picks the dimension, which is what makes Delete mean the
+        // dimension rather than the character to the right of the caret. Two
+        // clicks is how you get at the number itself.
+        holder.addEventListener('dblclick', () => {
+          field!.focus();
+          field!.select();
+        });
         // A number just placed is focused with its text selected, and dragging
         // selected text is a drag of the text as far as the browser is
         // concerned: it swallows the pointer and never lets go of it. Refusing
@@ -1414,6 +1513,10 @@ export class SketchSession {
       // Not while it is being typed into: that is the person's text, not ours.
       if (document.activeElement !== field) field.value = entry.text;
       field.size = Math.max(entry.text.length, 2);
+      field.classList.toggle(
+        'is-picked',
+        this.picked.some((pick) => pick.kind === 'constraint' && pick.index === entry.constraint),
+      );
     }
 
     const pending = this.pendingLabel;
@@ -1470,17 +1573,21 @@ export class SketchSession {
     const at = this.snapped(event.clientX, event.clientY);
     if (at === null) return;
 
-    // Not prevented: a press that never moves is a click into the field, and
-    // taking that away would make the number untypable.
+    // A press on a number that is not already being typed into does not put the
+    // caret there: it picks the dimension, and a second click asks for the
+    // number. A press on one that is being typed into is left alone.
+    const field = this.labels.get(name) ?? null;
+    if (document.activeElement !== field) event.preventDefault();
+
     this.startGrab(
       {
-        hit: null,
+        hit: { kind: 'constraint', index },
         dimension: { name, constraint },
         screen: { x: event.clientX, y: event.clientY },
         at,
         moved: false,
         pulls: [],
-        field: this.labels.get(name) ?? null,
+        field,
       },
       null,
     );
@@ -1591,9 +1698,17 @@ export class SketchSession {
       const row = document.createElement('div');
       row.className = 'sketch-row';
 
+      const picked = this.picked.some(
+        (entry) => entry.kind === 'constraint' && entry.index === index,
+      );
+      row.classList.toggle('is-picked', picked);
+
       const label = document.createElement('span');
       label.className = 'sketch-row-label';
       label.textContent = describe(constraint);
+      // The row and the mark on the drawing are the same rule seen twice, so
+      // picking it in one place picks it in the other.
+      label.addEventListener('click', () => this.pick({ kind: 'constraint', index }));
       row.append(label);
 
       if ('dimension' in constraint) {

@@ -42,8 +42,13 @@ export type SpanKind = 'distance' | 'horizontalDistance' | 'verticalDistance';
 const OFFSET = 26;
 /** How far a witness line runs past the dimension line, in pixels. */
 const OVERSHOOT = 4;
-const ARROW = 5;
-const ARROW_SPREAD = 0.36;
+/**
+ * Arrowheads, in pixels. ISO 129-1 and ASME Y14.5 both want one about three
+ * times as long as it is wide; ours is drawn open rather than filled, which is
+ * the usual concession on screen.
+ */
+const ARROW = 7;
+const ARROW_SPREAD = 1 / 6;
 /** Radius of the arc an angle is drawn on, in pixels. */
 const ARC = 34;
 /** Within this, in millimetres, a span is straight enough to have no components. */

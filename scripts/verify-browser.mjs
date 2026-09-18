@@ -67,5 +67,34 @@ const rendered = await page.evaluate(() => {
 console.log('canvas      :', rendered ?? 'MISSING');
 console.log('console     :', errors.length === 0 ? 'no errors' : errors.slice(0, 5));
 
+// On a display with two device pixels to the pixel, the drawing buffer is
+// twice the canvas — but the canvas itself must still be the size of what
+// holds it. Left to take its layout size from the buffer it is twice that, and
+// the view is drawn at double size with half of it clipped away, which is
+// invisible on a test machine with one pixel to the pixel.
+const dense = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+await dense.goto(url, { waitUntil: 'domcontentloaded' });
+await dense.locator('#kernel-status').filter({ hasText: 'kernel ready' }).waitFor({ timeout: 180_000 });
+const dpr = await dense.evaluate(() => {
+  const canvas = document.querySelector('#viewport canvas');
+  const host = document.querySelector('#viewport');
+  if (canvas === null || host === null) return null;
+  const box = canvas.getBoundingClientRect();
+  return {
+    ratio: window.devicePixelRatio,
+    fits: Math.abs(box.width - host.clientWidth) < 1 && Math.abs(box.height - host.clientHeight) < 1,
+    canvas: [Math.round(box.width), Math.round(box.height)],
+    container: [host.clientWidth, host.clientHeight],
+    buffer: [canvas.width, canvas.height],
+  };
+});
+const fitted = dpr !== null && dpr.fits;
+console.log(
+  'dense screen:',
+  fitted
+    ? `canvas ${dpr.canvas.join('x')} in ${dpr.container.join('x')}, buffer ${dpr.buffer.join('x')} at ${dpr.ratio}x`
+    : `WRONG — ${JSON.stringify(dpr)}`,
+);
+
 await browser.close();
-if (errors.length > 0 || rendered === null) process.exitCode = 1;
+if (errors.length > 0 || rendered === null || !fitted) process.exitCode = 1;
