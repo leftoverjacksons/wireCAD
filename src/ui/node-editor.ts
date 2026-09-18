@@ -1,9 +1,12 @@
 import type { NodeStatus } from '../core/evaluator.js';
 import type { Graph, GraphChange } from '../core/graph.js';
+import { branchOf, removeAndHeal } from '../core/rewire.js';
 import type { Edge, EdgeId, NodeId, NodeSchema, PortRef, Value } from '../core/types.js';
 import { isPlane } from '../core/types.js';
 import type { NodeReport } from '../worker/protocol.js';
 import { nodeKind } from './kind.js';
+import type { NodeMenuAction, NodeMenuItem } from './node-menu.js';
+import { nodeMenu } from './node-menu.js';
 import {
   HEADER_HEIGHT,
   NODE_WIDTH,
@@ -20,6 +23,15 @@ export interface NodeEditorCallbacks {
   onBeforeChange(): void;
   onDocumentChanged(): void;
   onSelectionChanged(nodeId: NodeId | null): void;
+  /**
+   * Whether this node can be reopened, and doing so.
+   *
+   * What editing a feature means belongs to whoever owns the dialogs, not to
+   * the graph view: today a sketch reopens its drawing session, and a feature
+   * dialog that can load its own node will arrive behind the same two calls.
+   */
+  canEdit(nodeId: NodeId): boolean;
+  onEdit(nodeId: NodeId): void;
 }
 
 interface NodeView {
@@ -70,6 +82,7 @@ export class NodeEditor {
   private readonly wires = new Map<EdgeId, { visible: SVGPathElement; hit: SVGPathElement }>();
 
   private ghost: SVGPathElement | null = null;
+  private menu: HTMLElement | null = null;
   private drag: Drag | null = null;
   private selected: NodeId | null = null;
 
@@ -110,6 +123,14 @@ export class NodeEditor {
     this.container.addEventListener('pointercancel', () => this.endDrag());
     this.container.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
     this.container.addEventListener('keydown', (event) => this.onKeyDown(event));
+    this.container.addEventListener('contextmenu', (event) => this.onContextMenu(event));
+    // A menu left open over a document that has moved on is a menu about
+    // nothing, and the click outside it is how most menus are dismissed.
+    window.addEventListener('pointerdown', (event) => {
+      if (event.target instanceof Node && this.container.contains(event.target)) return;
+      this.closeMenu();
+    });
+    window.addEventListener('blur', () => this.closeMenu());
 
     graph.subscribe((change) => this.onGraphChange(change));
 
@@ -193,9 +214,169 @@ export class NodeEditor {
     field.select();
   }
 
+  // --------------------------------------------------------------------- menu
+
+  /**
+   * The menu a right-click on a node opens.
+   *
+   * Everything in it is something the graph can already do; what the menu adds
+   * is saying what each one will cost before it is done. Deleting a fillet from
+   * the middle of a chain and deleting the extrude the whole chain hangs on are
+   * the same gesture on two nodes, and only the menu can tell them apart.
+   */
+  private onContextMenu(event: MouseEvent): void {
+    const nodeEl = (event.target as HTMLElement).closest<HTMLElement>('.node');
+    const nodeId = nodeEl?.dataset.nodeId;
+    if (nodeId === undefined || this.graph.getNode(nodeId) === undefined) {
+      this.closeMenu();
+      return;
+    }
+
+    event.preventDefault();
+    this.container.focus();
+    this.select(nodeId);
+    this.openMenu(nodeId, event.clientX, event.clientY);
+  }
+
+  private openMenu(nodeId: NodeId, clientX: number, clientY: number): void {
+    this.closeMenu();
+
+    const menu = document.createElement('div');
+    menu.className = 'node-menu';
+    menu.dataset.nodeId = nodeId;
+
+    const heading = document.createElement('div');
+    heading.className = 'node-menu-title';
+    heading.textContent = this.graph.getNode(nodeId)?.label ?? this.graph.schemaOf(nodeId).label;
+    menu.append(heading);
+
+    const items = nodeMenu(this.graph, nodeId, {
+      editable: this.callbacks.canEdit(nodeId),
+      shown: this.shownNodes.has(nodeId),
+    });
+    for (const item of items) menu.append(this.menuEntry(nodeId, item));
+
+    this.container.append(menu);
+    this.menu = menu;
+
+    // Where the cursor is, pulled back inside when that would hang it off the
+    // edge: a menu you have to scroll to reach is a menu you cannot use.
+    const rect = this.container.getBoundingClientRect();
+    const x = Math.min(clientX - rect.left, rect.width - menu.offsetWidth - 6);
+    const y = Math.min(clientY - rect.top, rect.height - menu.offsetHeight - 6);
+    menu.style.left = `${Math.max(6, x)}px`;
+    menu.style.top = `${Math.max(6, y)}px`;
+  }
+
+  private menuEntry(nodeId: NodeId, item: NodeMenuItem): HTMLElement {
+    const entry = document.createElement('button');
+    entry.type = 'button';
+    entry.className = 'node-menu-item';
+    entry.dataset.action = item.action;
+    if (item.divide === true) entry.classList.add('node-menu-divided');
+
+    const label = document.createElement('span');
+    label.className = 'node-menu-label';
+    label.textContent = item.label;
+    entry.append(label);
+
+    const note = item.refusal ?? item.detail;
+    if (note !== undefined) {
+      const detail = document.createElement('span');
+      detail.className = 'node-menu-detail';
+      detail.textContent = note;
+      entry.append(detail);
+    }
+
+    // An entry that would do nothing stays, saying why, rather than leaving a
+    // gap that reads as the menu not having thought of it.
+    if (item.refusal !== undefined) {
+      entry.disabled = true;
+      entry.title = item.refusal;
+      return entry;
+    }
+
+    entry.addEventListener('click', () => this.runMenu(nodeId, item.action));
+    return entry;
+  }
+
+  private runMenu(nodeId: NodeId, action: NodeMenuAction): void {
+    this.closeMenu();
+    if (this.graph.getNode(nodeId) === undefined) return;
+
+    switch (action) {
+      case 'edit':
+        this.callbacks.onEdit(nodeId);
+        return;
+      case 'rename':
+        this.beginRename(nodeId);
+        return;
+      case 'hide':
+      case 'show':
+        this.callbacks.onBeforeChange();
+        this.graph.setVisibility(nodeId, action === 'show');
+        this.callbacks.onDocumentChanged();
+        return;
+      case 'auto':
+        this.callbacks.onBeforeChange();
+        this.graph.setVisibility(nodeId, undefined);
+        this.callbacks.onDocumentChanged();
+        return;
+      case 'suppress':
+      case 'unsuppress':
+        this.callbacks.onBeforeChange();
+        this.graph.setSuppressed(nodeId, action === 'suppress');
+        this.callbacks.onDocumentChanged();
+        return;
+      case 'delete':
+        this.deleteNode(nodeId);
+        return;
+      case 'delete-branch':
+        this.deleteBranch(nodeId);
+        return;
+    }
+  }
+
+  /**
+   * Takes a node out and joins what it was reading to what was reading it.
+   *
+   * What became of the wires is the part of a deletion nobody can see — the
+   * node it happened to has gone — so it is said out loud.
+   */
+  private deleteNode(nodeId: NodeId): void {
+    this.callbacks.onBeforeChange();
+    const { healed, stranded } = removeAndHeal(this.graph, nodeId);
+    if (this.selected === nodeId) this.select(null);
+    this.callbacks.onDocumentChanged();
+
+    const said: string[] = [];
+    if (healed > 0) said.push(`${healed} rewired`);
+    if (stranded > 0) said.push(`${stranded} left without an input`);
+    if (said.length > 0) this.notify(said.join(' · '), stranded > 0);
+  }
+
+  /** The node and everything that would have nothing left to read without it. */
+  private deleteBranch(nodeId: NodeId): void {
+    const going = branchOf(this.graph, nodeId);
+
+    this.callbacks.onBeforeChange();
+    for (const id of going) this.graph.removeNode(id);
+    if (this.selected !== null && going.has(this.selected)) this.select(null);
+    this.callbacks.onDocumentChanged();
+    this.notify(`${going.size} node${going.size === 1 ? '' : 's'} deleted`, false);
+  }
+
+  private closeMenu(): void {
+    this.menu?.remove();
+    this.menu = null;
+  }
+
   // ---------------------------------------------------------------- rendering
 
   rebuild(): void {
+    // The menu is about a node in the document as it was a moment ago.
+    this.closeMenu();
+
     for (const view of this.views.values()) view.element.remove();
     this.views.clear();
     for (const wire of this.wires.values()) {
@@ -217,6 +398,8 @@ export class NodeEditor {
     const element = document.createElement('div');
     element.className = 'node';
     element.dataset.nodeId = nodeId;
+    // Greyed, and still there: a suppressed feature is held back, not removed.
+    if (node.suppressed === true) element.dataset.suppressed = 'true';
     element.style.width = `${NODE_WIDTH}px`;
     element.style.height = `${nodeHeight(schema)}px`;
 
@@ -445,6 +628,12 @@ export class NodeEditor {
 
   private onPointerDown(event: PointerEvent): void {
     const target = event.target as HTMLElement;
+    if (target.closest('.node-menu') !== null) return;
+    this.closeMenu();
+
+    // Only the primary button works the canvas. Right-clicking a node's header
+    // would otherwise start dragging it out from under its own menu.
+    if (event.button !== 0) return;
     this.container.focus();
 
     const port = target.closest<HTMLElement>('.port');
@@ -633,6 +822,7 @@ export class NodeEditor {
 
   private onWheel(event: WheelEvent): void {
     event.preventDefault();
+    this.closeMenu();
     const rect = this.container.getBoundingClientRect();
     const cursorX = event.clientX - rect.left;
     const cursorY = event.clientY - rect.top;
@@ -648,25 +838,34 @@ export class NodeEditor {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      this.closeMenu();
+      return;
+    }
+
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
     if (this.selected === null) return;
     const target = event.target as HTMLElement;
     if (target.tagName === 'INPUT') return;
 
+    // The same deletion the menu offers, so the key and the entry mean one
+    // thing: a fillet leaves the body it was rounding behind it.
     event.preventDefault();
-    this.callbacks.onBeforeChange();
-    this.graph.removeNode(this.selected);
-    this.select(null);
-    this.callbacks.onDocumentChanged();
+    this.deleteNode(this.selected);
   }
 
-  private flash(message: string): void {
+  /** A line in the corner, where the zoom readout usually sits. */
+  private notify(message: string, wrong: boolean): void {
     this.hud.textContent = message;
-    this.hud.classList.add('editor-hud-error');
+    this.hud.classList.toggle('editor-hud-error', wrong);
     window.setTimeout(() => {
       this.hud.classList.remove('editor-hud-error');
       this.applyTransform();
     }, 2200);
+  }
+
+  private flash(message: string): void {
+    this.notify(message, true);
   }
 
   // ------------------------------------------------------------------ outward

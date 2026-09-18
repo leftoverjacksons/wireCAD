@@ -217,7 +217,32 @@ stays cached, so it is cheap to adjust a radius and try again.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
   header. Drag between ports to wire them; drag away from a connected input to
   detach it; click a wire to cut it. Unwired numeric inputs are editable in
-  place. Delete removes the selected node.
+  place. Delete removes the selected node, healing the chain over it.
+- **Right-clicking a node** — a menu of what can be done to it: *Edit*, *Rename*,
+  *Hide* or *Show*, *Suppress*, *Delete* and *Delete branch*. Every entry says
+  what it will cost before it is chosen, and an entry that would mean nothing for
+  that node stays where it is, greyed, saying why — a gap reads as the menu not
+  having thought of it. *Edit* reopens a sketch in its drawing session; the
+  feature dialogs do not reopen yet, and the entry says so rather than doing
+  nothing.
+- **Deleting from the middle** — *Delete* takes the node out and joins what it
+  was reading to what was reading it, so deleting a fillet leaves the body it was
+  rounding and everything built on the fillet goes on being built on the body.
+  Where nothing can stand in — an extrude turns a sketch into a solid, and a
+  sketch is no substitute — the menu says how many nodes will be left wanting an
+  input rather than refusing the delete, because that is the truth about what
+  happened. *Delete branch* takes the node and everything that would have nothing
+  left to read, counted before it is chosen; a bore its own profile still feeds is
+  not counted, because losing the body it was cut from does not take it with it.
+- **Suppressing a feature** — *Suppress* holds a feature back without losing it.
+  The node stays where it is, greyed and dashed, keeping its wires and its
+  numbers, and hands its input on untouched, so the model becomes what it would
+  be without that feature and *Unsuppress* brings it back. A suppressed node
+  still publishes its dimensions, so a radius driving something else goes on
+  driving it. Only a node something passes through can be suppressed; an extrude
+  has nothing to hand on but the solid it was asked not to make, and the menu
+  says so. The setting is part of the document, so it saves and undoes with
+  everything else.
 - **Sidebar sliders** — drive the same ports the node editor exposes, so moving
   one updates the other.
 
@@ -244,6 +269,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:drag` | Checks a sketch can be pushed around by hand, and that where a dimension is put decides what it measures |
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
 | `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
+| `npm run verify:menu` | Checks a node's menu says what deleting it would cost, and that a suppressed feature is held back rather than removed |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.

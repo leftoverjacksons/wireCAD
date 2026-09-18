@@ -21,7 +21,8 @@
     "verify:glyphs": "node scripts/verify-glyphs.mjs",
     "verify:datums": "node scripts/verify-datums.mjs",
     "verify:preview": "node scripts/verify-preview.mjs",
-    "verify:ghost": "node scripts/verify-ghost.mjs"
+    "verify:ghost": "node scripts/verify-ghost.mjs",
+    "verify:menu": "node scripts/verify-menu.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",

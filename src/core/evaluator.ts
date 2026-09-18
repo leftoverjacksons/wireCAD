@@ -2,9 +2,10 @@ import { LruCache } from './cache.js';
 import type { Graph } from './graph.js';
 import { hash64, stableStringify } from './hash.js';
 import type { NodeRegistry } from './registry.js';
+import { passThroughOf } from './rewire.js';
 import type { NodeDefinition, NodeId, PortId, Value } from './types.js';
 
-export type NodeStatus = 'evaluated' | 'cached' | 'error' | 'skipped';
+export type NodeStatus = 'evaluated' | 'cached' | 'error' | 'skipped' | 'suppressed';
 
 export interface NodeResult {
   readonly status: NodeStatus;
@@ -18,6 +19,8 @@ export interface EvalStats {
   cached: number;
   errored: number;
   skipped: number;
+  /** Held back, and so handed on rather than computed. */
+  suppressed: number;
 }
 
 export interface EvalResult {
@@ -36,7 +39,7 @@ export class Evaluator {
     this.cache.beginGeneration();
     const order = graph.topologicalOrder();
     const results = new Map<NodeId, NodeResult>();
-    const stats: EvalStats = { evaluated: 0, cached: 0, errored: 0, skipped: 0 };
+    const stats: EvalStats = { evaluated: 0, cached: 0, errored: 0, skipped: 0, suppressed: 0 };
 
     for (const nodeId of order) {
       const node = graph.requireNode(nodeId);
@@ -73,6 +76,36 @@ export class Evaluator {
       if (blocked) {
         results.set(nodeId, { status: 'skipped', hash: '', outputs: {} });
         stats.skipped++;
+        continue;
+      }
+
+      // A suppressed feature does not happen. What went into it comes out of
+      // it, so everything built on it goes on standing — on the body as it was
+      // before this feature touched it. Nothing is computed and nothing is
+      // cached: the value handed on is the one upstream already owns, and
+      // giving it a second owner is how a shape gets disposed of twice.
+      if (node.suppressed === true) {
+        const through = passThroughOf(graph, nodeId);
+        if (through === null) {
+          // Nothing of the kind it makes goes in, so there is nothing to hand
+          // on: an extrude held back produces no solid at all.
+          results.set(nodeId, { status: 'skipped', hash: '', outputs: {} });
+          stats.skipped++;
+          continue;
+        }
+
+        const outputs: Record<PortId, Value> = { [through.output]: inputs[through.input] ?? null };
+        // Its dimensions are still worth reading — a held-back fillet still
+        // says what radius it would round at.
+        for (const port of echoed) outputs[port.id] = inputs[port.echoes!] ?? null;
+
+        // Distinct from the same node unsuppressed, so downstream keys apart.
+        results.set(nodeId, {
+          status: 'suppressed',
+          hash: hash64(`${hashParts.join('|')}|suppressed`),
+          outputs,
+        });
+        stats.suppressed++;
         continue;
       }
 

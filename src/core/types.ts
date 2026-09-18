@@ -110,6 +110,14 @@ export interface GraphNode {
    * and setting it pins the answer either way.
    */
   visible?: boolean;
+  /**
+   * Whether the feature is held back. A suppressed node stays where it is,
+   * keeps its wires and its numbers, and hands its input on untouched — the
+   * model as it would be without this feature, without losing the feature.
+   * Only a node something passes through can be suppressed; there is nothing
+   * for an extrude to hand on but the solid it was asked not to make.
+   */
+  suppressed?: boolean;
 }
 
 export interface PortRef {

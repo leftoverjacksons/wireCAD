@@ -83,6 +83,14 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onDocumentChanged: () => requestSolve(),
   // The editor already holds this selection; only the viewport needs telling.
   onSelectionChanged: (nodeId) => applySelection(nodeId, false),
+  // Reopening a feature is the dialogs' business, and so far only a sketch has
+  // somewhere to be reopened into. A feature dialog that can load its own node
+  // arrives behind these same two calls.
+  canEdit: (nodeId) => SketchSession.editable(graph, nodeId),
+  onEdit: (nodeId) => {
+    applySelection(nodeId, true);
+    editSketch(nodeId);
+  },
 });
 editor.frame();
 
@@ -170,14 +178,14 @@ const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   },
 });
 
-/** Reopen the selected sketch, on whatever plane it is actually sitting on. */
-function editSketch(): void {
-  if (!SketchSession.editable(graph, selected)) {
+/** Reopen a sketch, on whatever plane it is actually sitting on. */
+function editSketch(nodeId: NodeId | null = selected): void {
+  if (!SketchSession.editable(graph, nodeId)) {
     statusEl.textContent = 'Select a Sketch node first.';
     return;
   }
 
-  const source = graph.incomingEdge(selected!, 'plane');
+  const source = graph.incomingEdge(nodeId!, 'plane');
   const plane = source === undefined ? WORLD_XY : (lastPlanes[source.from.node] ?? null);
   if (plane === null) {
     statusEl.textContent = 'That sketch plane has not been solved yet — try again in a moment.';
@@ -185,7 +193,7 @@ function editSketch(): void {
   }
 
   document.body.classList.add('sketching');
-  sketchSession.enter(selected!, plane);
+  sketchSession.enter(nodeId!, plane);
 }
 
 /** The middle of a mesh's bounding box, in model units. */
@@ -850,7 +858,9 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   const errors = message.reports.filter((report) => report.error !== undefined);
   statsEl.textContent =
     `${message.stats.evaluated} evaluated · ${message.stats.cached} cached · ` +
-    `${message.stats.errored} errored\nsolve ${message.solveMs.toFixed(1)} ms · ` +
+    `${message.stats.errored} errored` +
+    (message.stats.suppressed > 0 ? ` · ${message.stats.suppressed} suppressed` : '') +
+    `\nsolve ${message.solveMs.toFixed(1)} ms · ` +
     `mesh ${message.meshMs.toFixed(1)} ms · ${message.triangles} triangles sent` +
     (errors.length > 0 ? `\n${errors[0]!.error}` : '');
 

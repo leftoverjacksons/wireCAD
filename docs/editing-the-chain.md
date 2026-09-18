@@ -65,7 +65,11 @@ own thinking.
 1. **Delete the node** — the feature never happened. A document edit.
 2. **Hide the result** — a view state. `Graph.setVisibility` and the eye.
 3. **Suppress the feature** — it stays, greyed, passing its input through
-   untouched. Not built yet; nearly free once the pass-through above exists.
+   untouched. Built on the pass-through above: the flag lives on the node, and
+   the evaluator hands the input on instead of computing, so a held-back feature
+   costs less than one that acts. It hands on a value its upstream already owns
+   and caches nothing of its own, since a second owner of one shape is how a
+   shape gets disposed of twice.
 4. **Subtract material** — a cut, a defeature. Not a deletion at all: a new node
    that happens to take material away.
 
@@ -115,11 +119,25 @@ really about the dialog:
 | # | Piece | Needs | Status |
 |---|-------|-------|--------|
 | 1 | `spliceAfter`, `removeAndHeal`, `branchOf` — pure graph operations | — | **done** |
-| 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | |
+| 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | **done** |
 | 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | |
 | 4 | Editing an existing feature through its dialog | — | |
 | 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | |
 | 6 | Viewport context menu, scoped to face and body | 2, 3 | |
+
+Piece 2's *Edit* is an entry and a pair of callbacks rather than a feature of
+its own: today it reopens a sketch in its drawing session, which already
+existed, and for everything else it says that nothing here reopens rather than
+sitting there doing nothing. Piece 4 fills it in from behind, by teaching the
+dialogs to load a node; the menu does not change when it does.
+
+What the menu says before it acts is the part worth keeping. `deleteOutcome` in
+`src/ui/node-menu.ts` predicts what `removeAndHeal` will do — how many wires
+find what the node was reading in its place, and how many are left wanting an
+input — and the prediction is exact rather than a guess: a wire off the
+pass-through output always reconnects, because the input it lands on is freed
+by the removal itself. A test holds the two together, so a change to the healing
+rule that the menu did not hear about fails rather than lies.
 
 Piece 6 wants `BRepAlgoAPI_Defeaturing` for *delete face*, which is listed as
 supported in this build but has not been called yet. Several things that were

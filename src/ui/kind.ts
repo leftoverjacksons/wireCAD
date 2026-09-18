@@ -23,6 +23,11 @@ const KIND_LABELS: ReadonlyArray<{ type: DataType; label: string }> = [
   { type: 'string', label: 'Text' },
 ];
 
+/** What one kind of thing is called, for a sentence about a wire. */
+export function typeLabel(type: DataType): string | null {
+  return KIND_LABELS.find((candidate) => candidate.type === type)?.label ?? null;
+}
+
 /** The node's first output that names something recognisable. */
 export function nodeKind(schema: NodeSchema): NodeKind | null {
   for (const candidate of KIND_LABELS) {
