@@ -4,3 +4,5 @@ coverage/
 .vite/
 *.local
 .DS_Store
+# Screenshots a verification run leaves behind.
+*.png

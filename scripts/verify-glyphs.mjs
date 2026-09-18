@@ -203,8 +203,6 @@ check(
   typed.join(','),
 );
 
-await page.screenshot({ path: 'glyphs.png', clip: { x: 290, y: 0, width: 990, height: 474 } });
-
 if (pageErrors.length > 0) {
   failures += pageErrors.length;
   console.log('');

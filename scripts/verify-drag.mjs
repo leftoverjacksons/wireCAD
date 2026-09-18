@@ -308,8 +308,6 @@ check(
   reopened.join(','),
 );
 
-await page.screenshot({ path: 'drag.png' });
-
 if (pageErrors.length > 0) {
   failures += pageErrors.length;
   console.log('');
