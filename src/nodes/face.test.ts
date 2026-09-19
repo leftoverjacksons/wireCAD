@@ -6,6 +6,7 @@ import { matchingFaces } from './face.js';
 function face(normal: Vec3, origin: Vec3, options: Partial<FaceInfo> = {}): FaceInfo {
   return {
     origin,
+    fraction: { x: 0.5, y: 0.5, z: 0.5 },
     normal,
     area: 100,
     planar: true,

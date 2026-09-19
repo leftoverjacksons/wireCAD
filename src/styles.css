@@ -15,6 +15,7 @@
   --cached: #4a7fa8;
   --error: #ff6b8a;
   --skipped: #375971;
+  --suppressed: #5b628f;
 
   /* One colour per kind of thing, used by ports, badges and the viewport. */
   --type-number: #5cecff;
@@ -617,6 +618,30 @@ input[type='range'] {
   border-left: 3px solid var(--skipped);
 }
 
+.node[data-status='suppressed'] .node-header {
+  border-left: 3px solid var(--suppressed);
+}
+
+/* The point the view is rolled back to, and everything it treats as absent. */
+.node-marker {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 18px #000a;
+}
+
+.node-beyond {
+  opacity: 0.4;
+}
+
+/* Held back, not gone: still readable, plainly not acting. */
+.node[data-suppressed] {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.node[data-suppressed] .node-title {
+  font-style: italic;
+}
+
 .node-header {
   display: flex;
   align-items: center;
@@ -994,4 +1019,69 @@ input[type='range'] {
 
 .sketch-row-label {
   cursor: pointer;
+}
+
+/* The menu a right-click opens, on a node or on a body. It sits above whatever
+   it is about rather than inside it, so zooming does not zoom the words. */
+.menu {
+  position: absolute;
+  z-index: 20;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px #000a;
+  font-size: 12px;
+}
+
+.menu-title {
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--panel-raised);
+}
+
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* A rule above the entries that take something away. */
+.menu-divided {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
+}
+
+.menu-label {
+  flex: 0 0 auto;
+}
+
+.menu-detail {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
 }

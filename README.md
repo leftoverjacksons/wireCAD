@@ -46,7 +46,7 @@ is ready, typically around two seconds.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
-  (Fillet, Chamfer, Shell) and *Construct* (XY/XZ/YZ datum planes, Offset
+  (Fillet, Chamfer, Shell, Move) and *Construct* (XY/XZ/YZ datum planes, Offset
   Plane). Each button opens a dialog.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
@@ -200,6 +200,23 @@ is ready, typically around two seconds.
   out as the outer radius minus the wall. The one rule is that every fillet
   radius has to be larger than the wall thickness, since an inner radius of zero
   or less has nowhere to go. Shell says so rather than guessing when it cannot.
+- **Moving a body** — *Move* shifts a body along X, Y and Z, and where the move
+  lands in the chain decides what that means. Moving the last body picks the
+  whole thing up, bores and fillets and all, as if you had lifted it. Moving a
+  body that other features are built on puts the move *before* them, so the
+  block shifts and the bore stays where its sketch puts it: the block has moved
+  relative to its own features. Both are the same operation — a move goes into
+  the chain at the body it is given, taking everything that was reading that
+  body with it, and at the end of a chain, where nothing is reading it, that is
+  an ordinary append.
+- **The move gizmo** — three arrows, one per axis, standing where the body was
+  when you started rather than following it as you pull. Drag one and that
+  number follows in tenths of a millimetre, or type the numbers instead.
+  Translation is the only transform offered, because it is the one that leaves
+  the way this program names faces and edges untouched: an edge is matched by
+  its fraction of the body's bounding box and a face by its normal and rank, and
+  moving a body changes neither. Rotation changes both, and wants its own
+  thinking before it is offered.
 - **Export** — *STL* writes a binary mesh for printing, *STEP* writes the actual
   B-rep for other CAD tools, both in millimetres. Exports cover the selected
   body, or every visible body when nothing is selected; sketches are excluded.
@@ -211,13 +228,91 @@ stays cached, so it is cheap to adjust a radius and try again.
   the same place cannot swallow a click meant for the body underneath it.
 - **Showing and hiding** — a result that something downstream consumes steps out
   of the way, so extruding a profile takes the profile off screen and leaves the
-  body. The ◉ on a node's header overrides that either way, and the glyph shows
-  what is actually being drawn rather than what was asked for. The setting is
-  part of the document, so it saves and undoes with everything else.
+  body. The ◉ on a node's header overrides that, and the glyph shows what is
+  actually being drawn rather than what was asked for. Pressing it again hands
+  the node back to the automatic rule rather than pinning it to the opposite, so
+  two presses leave the node as they found it: a node pinned *hidden* while the
+  model was hiding it anyway looks like nothing has happened, and would only
+  show up later, as the one thing missing when you go looking at it. The setting
+  is part of the document, so it saves and undoes with everything else — and it
+  never applies to the node you have rolled the view back to, because asking to
+  look at a feature is not the same question as asking whether it is in the way.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
   header. Drag between ports to wire them; drag away from a connected input to
   detach it; click a wire to cut it. Unwired numeric inputs are editable in
-  place. Delete removes the selected node.
+  place. Delete removes the selected node, healing the chain over it.
+- **Right-clicking a body** — the view has the same menu the graph does, because
+  a body on screen and the node that made it are two views of one thing: *Edit*,
+  *Roll back to here*, *Rename*, *Hide*, *Suppress* and *Delete* all mean what
+  they mean in the graph, and are run by the same code. On top of them come the
+  things only a face can offer — *Sketch on this face* starts a drawing on the
+  face under the cursor, and says so rather than going quiet when that face is
+  not flat; *Delete face* takes the face off. Right-*dragging* still pans the
+  view: a menu only opens where the button went down and came back up in the
+  same place.
+- **Deleting a face** — *Delete face* removes the face and heals its neighbours
+  together over the gap, leaving a solid: deleting the wall of a bore fills the
+  bore in, deleting a rounding makes the corner sharp again. It is not punching
+  a hole, which would leave an open shell that cannot be booleaned or exported
+  as a body, so a face that cannot go without leaving one — the outside of a
+  block, say — is refused with a reason rather than quietly doing nothing. Like
+  a move, it goes in where the body is rather than on the end of the chain, so
+  what is built on that body stays built on the healed one.
+- **Right-clicking a node** — a menu of what can be done to it: *Edit*, *Rename*,
+  *Hide* or *Show*, *Suppress*, *Delete* and *Delete branch*. Every entry says
+  what it will cost before it is chosen, and an entry that would mean nothing for
+  that node stays where it is, greyed, saying why — a gap reads as the menu not
+  having thought of it.
+- **Editing a feature** — *Edit*, from a node's right-click menu, reopens
+  whatever built it: a sketch goes back to its drawing session, and anything a
+  toolbar dialog made reopens in that dialog holding the values it has now.
+  Opening one rolls the view back to it, so what is on screen is what that
+  feature made rather than what came after it — with what it was made *from*
+  put back beside it, as an outline: the body the edges were picked off, the
+  profile that was extruded. A reopened fillet shows the edges it holds, lit on
+  that body, with its radius arrow on the last of them; a shell gets its arrow
+  back on the face it opens. Reopening a feature looks like making it did.
+  Closing the dialog gives the model back. Changing a number changes the feature as you type — there is no
+  preview, because what is on screen is already the thing being changed — and
+  *Done* keeps it while *Cancel* puts the numbers back and leaves no undo step
+  behind.
+  A reopened Move brings its arrows back with it. What the feature is built on
+  is shown but not offered: pointing a fillet at another body means new nodes
+  and moved wires, and the graph is where wires are moved.
+- **Looking at the model as it was** — *Roll back to here*, from a node's menu,
+  shows the model at that point in its history: that node's own result is on
+  screen again, and everything built on it is drawn as an outline, so you see
+  what you are working on and what it will disturb at the same time. Nothing is
+  recomputed to do it. Every node's output is a value that already exists after
+  a solve — the block before the bore did not stop existing when the bore was
+  cut — so rolling back only changes what is drawn, and *Return to now* is
+  immediate. Because this is a graph rather than a list, the state at a node is
+  exact and per-branch: a body built elsewhere is not affected by looking back
+  along this one, and a sketch that exists only for an absent feature stays away
+  with it rather than reappearing as a ring floating in space.
+- **Building at a point in the history** — a feature made while the view is
+  rolled back goes *in* at that point rather than onto the end of the chain, and
+  the view stays there so the next one follows it. This is the same splice that
+  moving a body uses, and it is the general answer to where a new feature
+  belongs: at the marker, or at the end when there is no marker.
+- **Deleting from the middle** — *Delete* takes the node out and joins what it
+  was reading to what was reading it, so deleting a fillet leaves the body it was
+  rounding and everything built on the fillet goes on being built on the body.
+  Where nothing can stand in — an extrude turns a sketch into a solid, and a
+  sketch is no substitute — the menu says how many nodes will be left wanting an
+  input rather than refusing the delete, because that is the truth about what
+  happened. *Delete branch* takes the node and everything that would have nothing
+  left to read, counted before it is chosen; a bore its own profile still feeds is
+  not counted, because losing the body it was cut from does not take it with it.
+- **Suppressing a feature** — *Suppress* holds a feature back without losing it.
+  The node stays where it is, greyed and dashed, keeping its wires and its
+  numbers, and hands its input on untouched, so the model becomes what it would
+  be without that feature and *Unsuppress* brings it back. A suppressed node
+  still publishes its dimensions, so a radius driving something else goes on
+  driving it. Only a node something passes through can be suppressed; an extrude
+  has nothing to hand on but the solid it was asked not to make, and the menu
+  says so. The setting is part of the document, so it saves and undoes with
+  everything else.
 - **Sidebar sliders** — drive the same ports the node editor exposes, so moving
   one updates the other.
 
@@ -244,6 +339,11 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:drag` | Checks a sketch can be pushed around by hand, and that where a dimension is put decides what it measures |
 | `npm run verify:preview` | Checks a feature dialog shows what it is about to make, and leaves nothing behind when cancelled |
 | `npm run verify:ghost` | Checks a selected node shows what it is responsible for, and lets go of it again |
+| `npm run verify:menu` | Checks a node's menu says what deleting it would cost, and that a suppressed feature is held back rather than removed |
+| `npm run verify:move` | Checks a move at the end of a chain shifts the whole body, and one in the middle leaves what was cut from it where it was |
+| `npm run verify:edit` | Checks a feature reopens on its own values, changes live, and is put back by Cancel |
+| `npm run verify:viewport-menu` | Checks a right-click on a body offers what the node offers, scoped to the face under the cursor, and that right-dragging still pans |
+| `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
 if Playwright's bundled browser is not available.
@@ -335,6 +435,27 @@ single closed shell of positive volume and refuses with a reason instead.
 case, measures the hollowed volume from the triangulation and checks it against
 the solid it came from, so a path that quietly returns the unhollowed body or an
 empty shape fails the run.
+
+## Referring to a face that has no normal
+
+`Face Plane` names a face by the way it points and its rank among the faces
+pointing that way, which is exact for a plane and useless for anything else. The
+two faces most worth pointing at — the wall of a bore, a rounding — are curved,
+and have no single normal to be named by.
+
+So *Delete face* names a face the way a selection names an edge: by where its
+area-weighted centroid sits **as a fraction of the body's bounding box**, which
+does not move when the body is resized, together with its area. The fraction is
+what survives editing; the area is what tells two faces apart when they share a
+place, as a small boss and the large face it sits on do. Matching takes the
+nearest candidate in that fractional space, after discarding any whose area has
+changed by more than a generous factor, and refuses rather than guessing when
+the nearest is still too far — the same discipline the edges keep.
+
+The area tolerance is deliberately loose. The face being named is usually the
+one being changed, and a bore whose radius doubles is still that bore; the area
+is there to separate faces that share a place, not to insist a face keeps its
+size.
 
 ## Referring to an edge
 

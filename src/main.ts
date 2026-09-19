@@ -1,6 +1,7 @@
 import './styles.css';
 import { documentToText, parseDocument } from './core/document.js';
 import { Graph } from './core/graph.js';
+import { spliceAfter } from './core/rewire.js';
 import { History } from './core/history.js';
 import { NodeRegistry } from './core/registry.js';
 import type { GraphNode, NodeId, NodeSchema, PlaneValue, Vec3 } from './core/types.js';
@@ -15,7 +16,13 @@ import { geometrySchemas } from './nodes/solid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { FeatureSpec, PlaneChoice } from './ui/features.js';
-import { createSketchNode, originPlaneNode, tabs } from './ui/features.js';
+import {
+  createSketchNode,
+  originPlaneNode,
+  placeDownstream,
+  specForNode,
+  tabs,
+} from './ui/features.js';
 import {
   download,
   keepRejected,
@@ -25,7 +32,11 @@ import {
   timestampedName,
   writeAutosave,
 } from './ui/file-io.js';
+import type { MenuItem } from './ui/menu.js';
+import { showMenu } from './ui/menu.js';
 import { NodeEditor } from './ui/node-editor.js';
+import type { NodeMenuAction } from './ui/node-menu.js';
+import { nodeMenu } from './ui/node-menu.js';
 import { SketchSession } from './ui/sketch-session.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
@@ -78,11 +89,72 @@ const controls = document.getElementById('controls')!;
 let selected: NodeId | null = null;
 const history = new History(graph);
 
+/**
+ * The point in the history the view is looking at, if it is looking back.
+ *
+ * Not a document edit and not a rebuild: every node's output already exists
+ * after a solve, so this only says that everything downstream of that node is
+ * to be treated as absent. It is session state rather than part of the
+ * document, because a saved file should open on the model, not on the middle of
+ * somebody's afternoon.
+ */
+let rolledBackTo: NodeId | null = null;
+/**
+ * Where to go back to when the dialog that rolled the view back closes.
+ * `undefined` means no dialog is holding the view anywhere.
+ */
+let markerBeforeDialog: NodeId | null | undefined = undefined;
+
+/** Looks at the model as it was at a node, or stops. */
+function setRolledBack(nodeId: NodeId | null): void {
+  const marker = nodeId !== null && graph.getNode(nodeId) === undefined ? null : nodeId;
+  if (marker === rolledBackTo) return;
+
+  rolledBackTo = marker;
+  dialog.setSpliceAt(marker);
+  editor.setRolledBack(marker, marker === null ? new Set() : graph.downstreamOf(marker));
+  statusEl.textContent =
+    marker === null
+      ? 'looking at the model as it stands'
+      : `rolled back to ${graph.getNode(marker)?.label ?? graph.schemaOf(marker).label}` +
+        ' — what is built on it is drawn as an outline';
+  requestSolve();
+}
+
 const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onBeforeChange: () => history.capture(),
   onDocumentChanged: () => requestSolve(),
   // The editor already holds this selection; only the viewport needs telling.
   onSelectionChanged: (nodeId) => applySelection(nodeId, false),
+  // Reopening a feature is the dialogs' business: a sketch goes back to its
+  // drawing session, and anything a toolbar dialog built reopens in that dialog
+  // on the node itself.
+  canEdit: (nodeId) =>
+    SketchSession.editable(graph, nodeId) || specForNode(graph, nodeId) !== null,
+  onEdit: (nodeId) => {
+    applySelection(nodeId, true);
+    if (SketchSession.editable(graph, nodeId)) {
+      editSketch(nodeId);
+      return;
+    }
+
+    // The dialog takes the view from here, as it does when a feature is built.
+    ghostPin = null;
+    edgesPin = null;
+    viewport.clearChosenEdges();
+    if (!dialog.openOn(nodeId)) {
+      statusEl.textContent = 'That node has no dialog to reopen.';
+      return;
+    }
+
+    // Editing a feature is looking at the moment it was made: what came after
+    // it steps out of the way, and what it was made from comes back.
+    editPins = dialogOperandNodes();
+    markerBeforeDialog = rolledBackTo;
+    setRolledBack(nodeId);
+    requestSolve();
+  },
+  onRollBack: (nodeId) => setRolledBack(nodeId),
 });
 editor.frame();
 
@@ -121,9 +193,27 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     history.forget();
     refreshHistoryButtons();
   },
-  onCommit: (nodeId) => {
+  onCommit: (nodeId, created) => {
+    // A feature built at a point in the history leaves the view there, on what
+    // was just made, so the next one goes in after it.
+    if (created && rolledBackTo !== null) setRolledBack(nodeId);
     applySelection(nodeId, true);
     editor.reveal(nodeId);
+    requestSolve();
+  },
+  onClosed: () => {
+    editPins = [];
+    pickedEdges = null;
+    viewport.clearChosenEdges();
+
+    // Whatever the dialog was holding the view at, it is not holding it now.
+    if (markerBeforeDialog === undefined) {
+      requestSolve();
+      return;
+    }
+    const restore = markerBeforeDialog;
+    markerBeforeDialog = undefined;
+    setRolledBack(restore);
     requestSolve();
   },
   onArmedChanged: (armed) => {
@@ -135,28 +225,35 @@ const dialog = new FeatureDialog(viewportEl, graph, {
     refreshDragHandle(nodeId);
     requestSolve();
   },
-  onSketch: (choice) => {
-    const plane = planeValueFor(choice);
-    if (plane === null) {
-      statusEl.textContent = 'That plane has not been solved yet — try again in a moment.';
-      return;
-    }
-
-    // A sketch starts as an empty node on the chosen plane, and drawing fills
-    // it in. There is nothing to commit at the end, because everything drawn
-    // has already been written to it.
-    history.capture();
-    try {
-      const nodeId = createSketchNode(graph, choice);
-      applySelection(nodeId, true);
-      editor.reveal(nodeId);
-      document.body.classList.add('sketching');
-      sketchSession.enter(nodeId, plane);
-    } catch (thrown) {
-      statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
-    }
-  },
+  onSketch: (choice) => startSketch(choice),
 });
+
+/**
+ * Starts drawing on a plane, however it was chosen — from the dialog, or from a
+ * face clicked in the view.
+ *
+ * A sketch starts as an empty node on that plane and drawing fills it in. There
+ * is nothing to commit at the end, because everything drawn has already been
+ * written to it.
+ */
+function startSketch(choice: PlaneChoice): void {
+  const plane = planeValueFor(choice);
+  if (plane === null) {
+    statusEl.textContent = 'That plane has not been solved yet — try again in a moment.';
+    return;
+  }
+
+  history.capture();
+  try {
+    const nodeId = createSketchNode(graph, choice);
+    applySelection(nodeId, true);
+    editor.reveal(nodeId);
+    document.body.classList.add('sketching');
+    sketchSession.enter(nodeId, plane);
+  } catch (thrown) {
+    statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
+  }
+}
 
 const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   onBeforeChange: () => history.capture(),
@@ -170,14 +267,14 @@ const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   },
 });
 
-/** Reopen the selected sketch, on whatever plane it is actually sitting on. */
-function editSketch(): void {
-  if (!SketchSession.editable(graph, selected)) {
+/** Reopen a sketch, on whatever plane it is actually sitting on. */
+function editSketch(nodeId: NodeId | null = selected): void {
+  if (!SketchSession.editable(graph, nodeId)) {
     statusEl.textContent = 'Select a Sketch node first.';
     return;
   }
 
-  const source = graph.incomingEdge(selected!, 'plane');
+  const source = graph.incomingEdge(nodeId!, 'plane');
   const plane = source === undefined ? WORLD_XY : (lastPlanes[source.from.node] ?? null);
   if (plane === null) {
     statusEl.textContent = 'That sketch plane has not been solved yet — try again in a moment.';
@@ -185,7 +282,7 @@ function editSketch(): void {
   }
 
   document.body.classList.add('sketching');
-  sketchSession.enter(selected!, plane);
+  sketchSession.enter(nodeId!, plane);
 }
 
 /** The middle of a mesh's bounding box, in model units. */
@@ -228,17 +325,80 @@ function unit(vector: Vec3): Vec3 {
 }
 
 /**
- * Where a feature's number runs, and from where.
+ * One arrow per axis of the move gizmo, in colours from the palette the rest of
+ * the interface uses.
+ *
+ * Not the red-green-blue triad other CAD programs draw: there is nothing red or
+ * green anywhere else here, and an arrow in a colour this program uses for
+ * nothing would be asking to be read as a warning. Which arrow is which is said
+ * by where it points, in a view where the three axes are 120° apart, and by the
+ * X, Y and Z fields sitting in the dialog beside them.
+ */
+const MOVE_AXES: ReadonlyArray<{ port: string; direction: Vec3; colour: number }> = [
+  { port: 'dx', direction: { x: 1, y: 0, z: 0 }, colour: 0xff61c6 },
+  { port: 'dy', direction: { x: 0, y: 1, z: 0 }, colour: 0xf4ff61 },
+  { port: 'dz', direction: { x: 0, y: 0, z: 1 }, colour: 0x5cecff },
+];
+
+/**
+ * Where the body being moved sat before the move started.
+ *
+ * The arrows stay anchored there for the life of the dialog and their heads
+ * carry the numbers out from it, the way the fillet's one arrow grows with its
+ * radius. Following the body instead would move the thing you are holding as
+ * you hold it.
+ */
+let movePivot: Vec3 | null = null;
+
+interface HandleAxis {
+  origin: Vec3;
+  direction: Vec3;
+  port: string;
+  minimum?: number;
+  stalk?: boolean;
+  colour?: number;
+}
+
+/**
+ * Where a feature's numbers run, and from where.
  *
  * Every number a dialog can drag is a length along some direction the model
  * already has: an extrude travels along its profile's normal, a fillet or
  * chamfer grows outward from the edge it rounds, a shell thickens inward from
- * the face it opens. A number with no such direction — there are none left, but
- * there could be — gets no arrow rather than an arbitrary one.
+ * the face it opens, and a move runs along all three world axes at once. A
+ * number with no such direction — there are none left, but there could be —
+ * gets no arrow rather than an arbitrary one.
  */
-function handleAxis(
-  spec: FeatureSpec,
-): { origin: Vec3; direction: Vec3; port: string; minimum?: number } | null {
+function handleAxes(spec: FeatureSpec, previewNodeId: NodeId): HandleAxis[] {
+  if (spec.nodeType === 'solid.move') {
+    if (movePivot === null) {
+      // The preview *is* the moved body, so where it sat before the move is
+      // its centre less however far it has been moved so far. Worked out once,
+      // from the first mesh that arrives, and kept.
+      const centre = lastCentres.get(previewNodeId);
+      if (centre === undefined) return [];
+      movePivot = {
+        x: centre.x - (dialog.numberOf('dx') ?? 0),
+        y: centre.y - (dialog.numberOf('dy') ?? 0),
+        z: centre.z - (dialog.numberOf('dz') ?? 0),
+      };
+    }
+
+    const pivot = movePivot;
+    return MOVE_AXES.map((axis) => ({
+      origin: pivot,
+      direction: axis.direction,
+      port: axis.port,
+      stalk: true,
+      colour: axis.colour,
+    }));
+  }
+
+  const single = handleAxis(spec);
+  return single === null ? [] : [single];
+}
+
+function handleAxis(spec: FeatureSpec): HandleAxis | null {
   if (spec.nodeType === 'solid.extrude') {
     const profile = dialog.operandNode('profile');
     if (profile === null) return null;
@@ -303,23 +463,31 @@ function handleAxis(
   return null;
 }
 
-/** An arrow on the model for the number the open dialog is about to commit. */
+/** Arrows on the model for the numbers the open dialog is about to commit. */
 function refreshDragHandle(previewNodeId: NodeId | null): void {
   const spec = dialog.feature;
-  const axis = spec === null ? null : handleAxis(spec);
 
-  if (previewNodeId === null || axis === null) {
-    viewport.setDragHandle(null);
+  // The pivot belongs to one move, and only while it is being set up.
+  if (spec === null || spec.nodeType !== 'solid.move' || previewNodeId === null) {
+    movePivot = null;
+  }
+
+  if (spec === null || previewNodeId === null) {
+    viewport.setDragHandles([]);
     return;
   }
 
-  viewport.setDragHandle({
-    origin: axis.origin,
-    direction: axis.direction,
-    distance: dialog.numberOf(axis.port) ?? 0,
-    ...(axis.minimum === undefined ? {} : { minimum: axis.minimum }),
-    onDrag: (distance) => dialog.setNumber(axis.port, distance),
-  });
+  viewport.setDragHandles(
+    handleAxes(spec, previewNodeId).map((axis) => ({
+      origin: axis.origin,
+      direction: axis.direction,
+      distance: dialog.numberOf(axis.port) ?? 0,
+      ...(axis.minimum === undefined ? {} : { minimum: axis.minimum }),
+      ...(axis.stalk === true ? { stalk: true } : {}),
+      ...(axis.colour === undefined ? {} : { colour: axis.colour }),
+      onDrag: (distance) => dialog.setNumber(axis.port, distance),
+    })),
+  );
 }
 
 const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
@@ -609,6 +777,117 @@ viewport.onPick((hit) => {
   applySelection(hit.nodeId, true, describePickedFace(hit));
 });
 
+/**
+ * The menu a right-click in the view opens.
+ *
+ * A body on screen and the node that made it are two views of one thing, so the
+ * menu offers the same things for one as for the other — the node menu's own
+ * entries, run by the same code — with what can only be said of a face on top.
+ */
+let closeViewportMenu: () => void = () => undefined;
+
+viewport.onContextPick((hit, clientX, clientY) => {
+  closeViewportMenu();
+  // A dialog waiting for an operand owns the clicks, including this one.
+  if (hit === null || dialog.isArmed) return;
+
+  const nodeId = hit.nodeId;
+  if (graph.getNode(nodeId) === undefined) return;
+  applySelection(nodeId, true);
+
+  const face = describePickedFace(hit);
+  const items: MenuItem[] = [];
+  if (hit.faceIndex !== null) {
+    items.push(
+      face === null
+        ? {
+            action: 'sketch-on-face',
+            label: 'Sketch on this face',
+            refusal: 'That face is not flat',
+          }
+        : {
+            action: 'sketch-on-face',
+            label: 'Sketch on this face',
+            detail: 'and draw on it now',
+          },
+    );
+    items.push({
+      action: 'delete-face',
+      label: 'Delete face',
+      detail: 'and heal the gap over',
+    });
+  }
+
+  const onNode = nodeMenu(graph, nodeId, {
+    editable: SketchSession.editable(graph, nodeId) || specForNode(graph, nodeId) !== null,
+    shown: lastVisible.includes(nodeId),
+    rolledBackTo: rolledBackTo,
+  });
+  for (const [index, item] of onNode.entries()) {
+    items.push(index === 0 && items.length > 0 ? { ...item, divide: true } : item);
+  }
+
+  closeViewportMenu = showMenu(viewportEl, {
+    title: graph.getNode(nodeId)?.label ?? graph.schemaOf(nodeId).label,
+    items,
+    clientX,
+    clientY,
+    onChoose: (action) => {
+      if (action === 'sketch-on-face') {
+        if (face === null) return;
+        startSketch({ kind: 'face', nodeId, normal: face.normal, rank: face.rank });
+        return;
+      }
+      if (action === 'delete-face') {
+        deleteFace(hit);
+        return;
+      }
+      editor.runMenuAction(nodeId, action as NodeMenuAction);
+    },
+  });
+});
+
+/**
+ * Takes a face off a body: a `Delete Face` node, spliced in where the body is.
+ *
+ * Spliced rather than appended, so deleting a face from a body other features
+ * are built on leaves them built on the healed body rather than on the one with
+ * the hole still in it. At the end of a chain that is an ordinary append.
+ */
+function deleteFace(hit: FaceHit): void {
+  const faces = viewport.facesOf(hit.nodeId);
+  const face = hit.faceIndex === null ? undefined : faces?.[hit.faceIndex];
+  if (face === undefined) {
+    statusEl.textContent = 'That face has not been solved yet — try again in a moment.';
+    return;
+  }
+
+  history.capture();
+  const node = graph.addNode('solid.defeature', {
+    inputs: {
+      fx: face.fraction.x,
+      fy: face.fraction.y,
+      fz: face.fraction.z,
+      area: face.area,
+    },
+  });
+
+  try {
+    spliceAfter(graph, hit.nodeId, node.id);
+  } catch (thrown) {
+    graph.removeNode(node.id);
+    history.forget();
+    refreshHistoryButtons();
+    statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
+    return;
+  }
+
+  placeDownstream(graph, node.id);
+  applySelection(node.id, true);
+  editor.reveal(node.id);
+  requestSolve();
+}
+
 // Clicking one of the origin squares means that plane, which in this program is
 // a node: the document gains one unless it already has that plane. Selecting it
 // is what feeds it to whatever is asking, exactly as clicking a face does.
@@ -725,6 +1004,8 @@ graph.subscribe((change) => {
   refreshHistoryButtons();
   scheduleAutosave();
 
+  if (rolledBackTo !== null && graph.getNode(rolledBackTo) === undefined) setRolledBack(null);
+
   if (change.kind === 'document-replaced') {
     rebuildControls();
     if (selected !== null && graph.getNode(selected) === undefined) applySelection(null, true);
@@ -754,11 +1035,65 @@ let ghostPin: NodeId | null = null;
 let edgesPin: NodeId | null = null;
 /** The edges the open dialog has been given, for the handle to sit on. */
 let pickedEdges: { nodeId: NodeId; indices: number[] } | null = null;
+/**
+ * What a feature being reopened is built on, kept on screen while it is.
+ *
+ * Rolling back to a node shows what that feature *made*. Editing it wants what
+ * it was made *from* as well — the body the edges were picked off, the profile
+ * that was extruded — because that is what was on screen while it was being
+ * made, and because a fillet's arrow sits on an edge of that body and a shell's
+ * on a face of it. Neither can be found on a body nothing has drawn.
+ */
+let editPins: NodeId[] = [];
 
 /** Everything the view is being asked to show beyond the model itself. */
 function pinnedNodes(): NodeId[] {
-  const pins = [pickPin, ghostPin, edgesPin].filter((id): id is NodeId => id !== null);
+  const pins = [pickPin, ghostPin, edgesPin, ...editPins].filter(
+    (id): id is NodeId => id !== null,
+  );
   return [...new Set(pins)];
+}
+
+/** Every node the open dialog's feature reads, by the operands it was given. */
+function dialogOperandNodes(): NodeId[] {
+  const spec = dialog.feature;
+  if (spec === null) return [];
+
+  const nodes: NodeId[] = [];
+  for (const operand of spec.operands) {
+    const node = dialog.operandNode(operand.id);
+    if (node !== null && graph.getNode(node) !== undefined) nodes.push(node);
+  }
+  return [...new Set(nodes)];
+}
+
+/**
+ * The edges a reopened fillet or chamfer was given, found again on the body
+ * they were taken from.
+ *
+ * At the time they were picked this came from the picking itself. Reopened, it
+ * has to be read back out of the graph and matched against the body as it
+ * stands now — the same matching a solve does, so the set shown is the set the
+ * feature will actually round.
+ */
+function editedEdgeSelection(): { nodeId: NodeId; indices: number[] } | null {
+  const spec = dialog.feature;
+  const nodeId = dialog.previewNodeId;
+  if (!dialog.isEditing || spec === null || nodeId === null) return null;
+
+  const operand = spec.operands.find((candidate) => candidate.type === 'edges');
+  if (operand === undefined) return null;
+
+  const body = dialog.operandNode(operand.id);
+  const selection = graph.incomingEdge(nodeId, 'edges');
+  if (body === null || selection === undefined) return null;
+
+  const stored = graph.inputValue(selection.from.node, 'refs');
+  const edges = viewport.edgesOf(body);
+  if (!Array.isArray(stored) || edges === undefined) return null;
+
+  const refs = unpackEdgeRefs(stored.filter((value): value is number => typeof value === 'number'));
+  return { nodeId: body, indices: matchEdgeRefs(edges, refs).filter((index) => index >= 0) };
 }
 
 function requestSolve(): void {
@@ -772,6 +1107,7 @@ function requestSolve(): void {
     requestId: ++requestId,
     document: graph.toJSON(),
     pinned: pinnedNodes(),
+    ...(rolledBackTo === null ? {} : { rolledBackTo }),
   };
   worker.postMessage(message);
 }
@@ -822,7 +1158,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   // selected node made. One that would be on screen anyway is left alone.
   const forced = new Set(message.pinnedShown);
   const ghosts = new Map<NodeId, GhostMode>();
-  for (const nodeId of [pickPin, edgesPin]) {
+  for (const nodeId of [pickPin, edgesPin, ...editPins]) {
     if (nodeId !== null && forced.has(nodeId)) ghosts.set(nodeId, 'edges');
   }
   for (const nodeId of message.pinnedShown) {
@@ -832,6 +1168,10 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
       ghosts.set(nodeId, viewport.hasFeatureFaces(nodeId) ? 'faces' : 'faint');
     }
   }
+  // The model as it stands, over the earlier state being looked at: edges
+  // alone, because a faint solid of nearly the same shape is a smear rather
+  // than a second reading of it.
+  for (const nodeId of message.rolledBack) ghosts.set(nodeId, 'edges');
   viewport.setGhosts(ghosts);
 
   // When such a node's result is still the model, there is nothing to ghost;
@@ -843,14 +1183,42 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   );
   refreshEdgeHighlight();
   refreshPlaneHighlight();
+
+  // A reopened fillet shows the edges it holds, on the body they came off,
+  // which is also where its arrow sits. Both need that body meshed, so this
+  // waits for the solve that pinned it rather than happening as the dialog
+  // opens.
+  const editedEdges = editedEdgeSelection();
+  if (editedEdges !== null) {
+    pickedEdges = editedEdges;
+    viewport.setChosenEdges(editedEdges.nodeId, editedEdges.indices);
+  }
+
+  // A handle placed against the model needs the model: the first mesh for a
+  // preview arrives after the preview itself, and the arrows wait for it.
+  if (dialog.isOpen) refreshDragHandle(dialog.previewNodeId);
   viewport.frameOnce();
   editor.setStatuses(message.reports);
   editor.setShown(message.visible);
 
+  // Rolled back to a feature that is failing, there is nothing of it to draw —
+  // and an empty view with no reason given is the worst way to be told.
+  if (rolledBackTo !== null) {
+    const report = message.reports.find((entry) => entry.nodeId === rolledBackTo);
+    const name = graph.getNode(rolledBackTo)?.label ?? graph.schemaOf(rolledBackTo).label;
+    if (report?.error !== undefined) {
+      statusEl.textContent = `${name} is failing, so there is nothing of it to show — ${report.error}`;
+    } else if (report?.status === 'skipped') {
+      statusEl.textContent = `${name} has nothing to work on, so there is nothing of it to show`;
+    }
+  }
+
   const errors = message.reports.filter((report) => report.error !== undefined);
   statsEl.textContent =
     `${message.stats.evaluated} evaluated · ${message.stats.cached} cached · ` +
-    `${message.stats.errored} errored\nsolve ${message.solveMs.toFixed(1)} ms · ` +
+    `${message.stats.errored} errored` +
+    (message.stats.suppressed > 0 ? ` · ${message.stats.suppressed} suppressed` : '') +
+    `\nsolve ${message.solveMs.toFixed(1)} ms · ` +
     `mesh ${message.meshMs.toFixed(1)} ms · ${message.triangles} triangles sent` +
     (errors.length > 0 ? `\n${errors[0]!.error}` : '');
 
@@ -905,7 +1273,11 @@ if (import.meta.env.DEV) {
     autosaveProblem: () => autosaveProblem,
     select: (nodeId: NodeId) => applySelection(nodeId, true),
     dialog,
+    faceAt: (x: number, y: number) => viewport.faceAt(x, y),
     handleAt: () => viewport.handleScreenPosition(),
+    handles: () => viewport.handleScreenPositions(),
+    rolledBackTo: () => rolledBackTo,
+    rollBack: (nodeId: NodeId | null) => setRolledBack(nodeId),
     sketch: sketchSession,
     screenOfSketch: (u: number, v: number) => {
       const plane = lastPlanes[graph.incomingEdge(selected!, 'plane')?.from.node ?? ''] ?? WORLD_XY;

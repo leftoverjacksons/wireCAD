@@ -57,6 +57,17 @@ export interface DragHandle {
   distance: number;
   /** Smallest distance the drag may report, for a number that cannot be zero. */
   minimum?: number;
+  /**
+   * Draw the arrow a fixed length out from the origin and add the distance to
+   * that, rather than letting the distance be the whole of its length.
+   *
+   * A number that starts at zero, and may go either way from it, has no length
+   * to draw and nothing to take hold of — and three of them at once would put
+   * all three heads on the same point. A stalk gives each one somewhere to be.
+   */
+  stalk?: boolean;
+  /** The arrow's colour, for a set of them that have to be told apart. */
+  colour?: number;
   onDrag(distance: number): void;
 }
 
@@ -149,6 +160,9 @@ export class Viewport {
   private readonly raycaster = new THREE.Raycaster();
   private pickListener: ((hit: FaceHit | null) => void) | null = null;
   private datumListener: ((axis: DatumAxis) => void) | null = null;
+  private contextListener:
+    | ((hit: FaceHit | null, clientX: number, clientY: number) => void)
+    | null = null;
   /** The three origin planes, drawn faintly and pickable like anything else. */
   private readonly datums = new THREE.Group();
   private readonly datumFaces: THREE.Mesh[] = [];
@@ -200,10 +214,14 @@ export class Viewport {
   private edgeSource: NodeId | null = null;
   private framed = false;
   private pickingEnabled = true;
-  private handle: DragHandle | null = null;
+  /** Every arrow currently offered. Three of them, along X, Y and Z, is a gizmo. */
+  private handles: DragHandle[] = [];
   private handleObjects: Array<THREE.Line | THREE.Mesh> = [];
+  /** Materials made for a coloured arrow, which are this object's to free. */
+  private handleMaterials: THREE.Material[] = [];
   /** What a drag in progress started from, in screen terms. */
   private drag: {
+    handle: DragHandle;
     x: number;
     y: number;
     distance: number;
@@ -392,8 +410,9 @@ export class Viewport {
 
       // The handle takes the gesture before the camera does, or dragging it
       // would orbit the view instead.
-      if (event.button === 0 && this.handleTaken(event.clientX, event.clientY)) {
-        const started = this.beginHandleDrag(event.clientX, event.clientY);
+      const taken = event.button === 0 ? this.handleAt(event.clientX, event.clientY) : null;
+      if (taken !== null) {
+        const started = this.beginHandleDrag(taken, event.clientX, event.clientY);
         if (started) {
           armed = false;
           this.controls.enabled = false;
@@ -408,13 +427,12 @@ export class Viewport {
       if (drag !== null) {
         const along =
           ((event.clientX - drag.x) * drag.dirX + (event.clientY - drag.y) * drag.dirY) / drag.scale;
-        const minimum = this.handle?.minimum;
-        const distance = Math.max(drag.distance + along, minimum ?? -Infinity);
-        this.handle?.onDrag(round(distance, HANDLE_STEP));
+        const distance = Math.max(drag.distance + along, drag.handle.minimum ?? -Infinity);
+        drag.handle.onDrag(round(distance, HANDLE_STEP));
         return;
       }
 
-      if (this.handleTaken(event.clientX, event.clientY)) {
+      if (this.handleAt(event.clientX, event.clientY) !== null) {
         canvas.style.cursor = 'ns-resize';
         this.setHoveredDatum(null);
         return;
@@ -467,29 +485,55 @@ export class Viewport {
         return;
       }
 
-      const hits = this.raycaster.intersectObjects([...this.meshes.values()], false);
-      const hit = hits[0];
-      if (hit === undefined) {
-        this.pickListener?.(null);
-        return;
-      }
-
-      const nodeId = hit.object.userData.nodeId;
-      if (typeof nodeId !== 'string') {
-        this.pickListener?.(null);
-        return;
-      }
-
-      // Three's faceIndex is the triangle index; map it back to the B-rep face.
-      const ids = this.faceIds.get(nodeId);
-      const triangle = hit.faceIndex;
-      const faceIndex =
-        triangle !== undefined && triangle !== null && ids !== undefined && triangle < ids.length
-          ? (ids[triangle] ?? null)
-          : null;
-
-      this.pickListener?.({ nodeId, faceIndex });
+      this.pickListener?.(this.faceAt(event.clientX, event.clientY));
     });
+
+    // Right-drag pans the view, so only a right-click that stayed where it was
+    // is asking for a menu — and that is not known until the button comes back
+    // up. Which is also why the menu is not opened from the contextmenu event:
+    // browsers disagree about whether that arrives on the way down or the way
+    // up, and on the way down the drag has not happened yet. That event's only
+    // job here is to keep the browser's own menu off the model.
+    let rightX = 0;
+    let rightY = 0;
+    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    canvas.addEventListener('pointerdown', (event) => {
+      if (event.button !== 2) return;
+      rightX = event.clientX;
+      rightY = event.clientY;
+    });
+    canvas.addEventListener('pointerup', (event) => {
+      if (event.button !== 2 || !this.pickingEnabled) return;
+      if (Math.hypot(event.clientX - rightX, event.clientY - rightY) > 4) return;
+      this.contextListener?.(this.faceAt(event.clientX, event.clientY), event.clientX, event.clientY);
+    });
+  }
+
+  /** The body and face under a point, without the click-versus-drag gate. */
+  faceAt(clientX: number, clientY: number): FaceHit | null {
+    this.syncCamera();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    const hit = this.raycaster.intersectObjects([...this.meshes.values()], false)[0];
+    if (hit === undefined) return null;
+
+    const nodeId = hit.object.userData.nodeId;
+    if (typeof nodeId !== 'string') return null;
+
+    // Three's faceIndex is the triangle index; map it back to the B-rep face.
+    const ids = this.faceIds.get(nodeId);
+    const triangle = hit.faceIndex;
+    const faceIndex =
+      triangle !== undefined && triangle !== null && ids !== undefined && triangle < ids.length
+        ? (ids[triangle] ?? null)
+        : null;
+
+    return { nodeId, faceIndex };
   }
 
   onPick(listener: (hit: FaceHit | null) => void): void {
@@ -514,6 +558,13 @@ export class Viewport {
   /** Told which origin plane was clicked, when one was. */
   onPickDatum(listener: (axis: DatumAxis) => void): void {
     this.datumListener = listener;
+  }
+
+  /** A right-click that stayed put, and what it landed on. */
+  onContextPick(
+    listener: (hit: FaceHit | null, clientX: number, clientY: number) => void,
+  ): void {
+    this.contextListener = listener;
   }
 
   // -------------------------------------------------------- origin planes
@@ -852,49 +903,98 @@ export class Viewport {
    * the thing it sets the size of is usually sitting on top of it.
    */
   setDragHandle(handle: DragHandle | null): void {
-    this.handle = handle;
-    this.redrawHandle();
+    this.setDragHandles(handle === null ? [] : [handle]);
   }
 
-  private redrawHandle(): void {
+  /**
+   * Several at once: three along X, Y and Z is a move gizmo, and it is the same
+   * arrow drawn three times rather than a thing of its own.
+   */
+  setDragHandles(handles: readonly DragHandle[]): void {
+    this.handles = [...handles];
+    this.redrawHandles();
+  }
+
+  /** How far out a stalked arrow starts, before its own distance is added. */
+  private stalkLength(): number {
+    return Math.max(this.sceneRadius() * 0.5, 5);
+  }
+
+  /** Where an arrow's head sits in the world. */
+  private headOf(handle: DragHandle): THREE.Vector3 {
+    const from = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
+    const axis = new THREE.Vector3(
+      handle.direction.x,
+      handle.direction.y,
+      handle.direction.z,
+    ).normalize();
+    const reach = (handle.stalk === true ? this.stalkLength() : 0) + handle.distance;
+    return from.add(axis.multiplyScalar(reach));
+  }
+
+  private redrawHandles(): void {
     for (const object of this.handleObjects) {
       this.scene.remove(object);
       object.geometry.dispose();
     }
     this.handleObjects = [];
-
-    const handle = this.handle;
-    if (handle === null) return;
-
-    const from = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
-    const along = new THREE.Vector3(handle.direction.x, handle.direction.y, handle.direction.z)
-      .normalize()
-      .multiplyScalar(handle.distance);
-    const to = from.clone().add(along);
-
-    const shaft = new THREE.BufferGeometry().setFromPoints([from, to]);
-    const line = new THREE.Line(shaft, this.handleLineMaterial);
-    line.renderOrder = 8;
-    this.scene.add(line);
-    this.handleObjects.push(line);
+    for (const material of this.handleMaterials) material.dispose();
+    this.handleMaterials = [];
 
     // The head is sized against the model, so it stays grabbable at any zoom.
     const size = Math.max(this.sceneRadius() * 0.1, 1);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(size * 0.5, size * 1.6, 16), this.handleMaterial);
-    head.position.copy(to);
-    head.quaternion.setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      along.lengthSq() === 0 ? new THREE.Vector3(0, 0, 1) : along.clone().normalize(),
-    );
-    head.renderOrder = 9;
-    this.scene.add(head);
-    this.handleObjects.push(head);
+
+    for (const handle of this.handles) {
+      const from = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z);
+      const to = this.headOf(handle);
+      const along = to.clone().sub(from);
+
+      let lineMaterial: THREE.Material = this.handleLineMaterial;
+      let headMaterial: THREE.Material = this.handleMaterial;
+      if (handle.colour !== undefined) {
+        lineMaterial = new THREE.LineBasicMaterial({ color: handle.colour, depthTest: false });
+        headMaterial = new THREE.MeshBasicMaterial({ color: handle.colour, depthTest: false });
+        this.handleMaterials.push(lineMaterial, headMaterial);
+      }
+
+      const shaft = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const line = new THREE.Line(shaft, lineMaterial);
+      line.renderOrder = 8;
+      this.scene.add(line);
+      this.handleObjects.push(line);
+
+      const head = new THREE.Mesh(new THREE.ConeGeometry(size * 0.5, size * 1.6, 16), headMaterial);
+      head.position.copy(to);
+      head.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        along.lengthSq() === 0
+          ? new THREE.Vector3(
+              handle.direction.x,
+              handle.direction.y,
+              handle.direction.z,
+            ).normalize()
+          : along.clone().normalize(),
+      );
+      head.renderOrder = 9;
+      this.scene.add(head);
+      this.handleObjects.push(head);
+    }
   }
 
-  /** True when a pointer at this position is on the handle's head. */
-  private handleTaken(clientX: number, clientY: number): boolean {
-    const at = this.handleScreenPosition();
-    return at !== null && Math.hypot(at.x - clientX, at.y - clientY) <= HANDLE_GRAB;
+  /** The arrow a pointer at this position has hold of: the nearest head in reach. */
+  private handleAt(clientX: number, clientY: number): DragHandle | null {
+    let nearest: DragHandle | null = null;
+    let best = HANDLE_GRAB;
+
+    for (const handle of this.handles) {
+      const head = this.headOf(handle);
+      const at = this.screenPositionOf({ x: head.x, y: head.y, z: head.z });
+      const away = Math.hypot(at.x - clientX, at.y - clientY);
+      if (away > best) continue;
+      best = away;
+      nearest = handle;
+    }
+    return nearest;
   }
 
   private sceneRadius(): number {
@@ -905,15 +1005,16 @@ export class Viewport {
 
   /** Where the handle's head is on screen, for deciding whether a click took it. */
   handleScreenPosition(): { x: number; y: number } | null {
-    const handle = this.handle;
-    if (handle === null) return null;
+    const positions = this.handleScreenPositions();
+    return positions[0] ?? null;
+  }
 
-    const at = new THREE.Vector3(handle.origin.x, handle.origin.y, handle.origin.z).add(
-      new THREE.Vector3(handle.direction.x, handle.direction.y, handle.direction.z)
-        .normalize()
-        .multiplyScalar(handle.distance),
-    );
-    return this.screenPositionOf({ x: at.x, y: at.y, z: at.z });
+  /** Where every arrow's head is on screen, in the order they were given. */
+  handleScreenPositions(): Array<{ x: number; y: number }> {
+    return this.handles.map((handle) => {
+      const head = this.headOf(handle);
+      return this.screenPositionOf({ x: head.x, y: head.y, z: head.z });
+    });
   }
 
   /**
@@ -926,10 +1027,7 @@ export class Viewport {
    * On screen, an axis pointing at the camera is simply short, so it barely
    * moves, which is the right answer and a stable one.
    */
-  private beginHandleDrag(clientX: number, clientY: number): boolean {
-    const handle = this.handle;
-    if (handle === null) return false;
-
+  private beginHandleDrag(handle: DragHandle, clientX: number, clientY: number): boolean {
     const axis = new THREE.Vector3(
       handle.direction.x,
       handle.direction.y,
@@ -961,6 +1059,7 @@ export class Viewport {
     const scale = Math.max(pixels, reference) / probe;
 
     this.drag = {
+      handle,
       x: clientX,
       y: clientY,
       distance: handle.distance,

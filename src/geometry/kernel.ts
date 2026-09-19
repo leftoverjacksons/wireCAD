@@ -15,6 +15,15 @@ export interface Shape {
 export interface FaceInfo {
   /** Centroid of the tessellated face, area-weighted. */
   origin: Vec3;
+  /**
+   * The centroid as a fraction of the body's bounding box.
+   *
+   * The same trick the edges use, and for the same reason: absolute positions
+   * move when a parameter changes, but a face keeps its place in the box. It is
+   * what lets a face be named without a normal, which a bore or a rounding has
+   * no single one of.
+   */
+  fraction: Vec3;
   /** Outward normal, area-weighted; meaningful when `planar`. */
   normal: Vec3;
   area: number;
@@ -207,10 +216,23 @@ export function tessellate(
   explorer.delete();
   mesher.delete?.();
 
+  // Known only once every face has been tessellated, and needed by both.
+  const bounds = boundsOf(positions);
+  for (const [index, face] of faces.entries()) {
+    faces[index] = {
+      ...face,
+      fraction: {
+        x: (face.origin.x - bounds.min.x) / bounds.size.x,
+        y: (face.origin.y - bounds.min.y) / bounds.size.y,
+        z: (face.origin.z - bounds.min.z) / bounds.size.z,
+      },
+    };
+  }
+
   const { edgePositions, edgeIds, edges, edgeHandles } = tessellateEdges(
     oc,
     shape,
-    boundsOf(positions),
+    bounds,
     angular,
     deflection,
   );
@@ -476,6 +498,8 @@ function summariseFace(
 
   return {
     origin,
+    // Filled in once every face is meshed and the body's extent is known.
+    fraction: { x: 0, y: 0, z: 0 },
     normal,
     area: totalArea,
     planar: isPlanar(positions, indices, triangleStart, triangleCount, normal),

@@ -1,4 +1,5 @@
 import type { Graph } from '../core/graph.js';
+import { spliceAfter } from '../core/rewire.js';
 import type { DataType, NodeId, PortRef, Vec3 } from '../core/types.js';
 import { EDGE_STRIDE } from '../nodes/edges.js';
 import { EXTRUDE_OPERATIONS } from '../nodes/solid.js';
@@ -53,6 +54,17 @@ export interface FeatureSpec {
    * 'edit' reopens the sketch already selected rather than making anything.
    */
   kind?: 'node' | 'sketch' | 'edit';
+  /**
+   * Whether this feature goes *into* the chain at its first operand rather than
+   * onto the end of it — taking everything that was reading that operand with
+   * it, so what comes after is built on the result instead of on the operand.
+   *
+   * Moving a body needs this and nothing else does yet: a move appended after a
+   * bored block is a second body sitting beside the first, where what was meant
+   * was the block moving and the bore going with it. At the end of a chain,
+   * where nothing is reading the operand, it is an ordinary connect.
+   */
+  splice?: boolean;
 }
 
 export interface FeatureGroup {
@@ -193,6 +205,18 @@ export const tabs: readonly FeatureTab[] = [
             operands: [{ id: 'solid', label: 'Open face', type: 'face' }],
             numbers: [{ id: 'thickness', label: 'Thickness', value: 2 }],
           },
+          {
+            id: 'move',
+            label: 'Move',
+            nodeType: 'solid.move',
+            operands: [{ id: 'solid', label: 'Body', type: 'geometry' }],
+            numbers: [
+              { id: 'dx', label: 'X', value: 0 },
+              { id: 'dy', label: 'Y', value: 0 },
+              { id: 'dz', label: 'Z', value: 0 },
+            ],
+            splice: true,
+          },
         ],
       },
       {
@@ -221,6 +245,19 @@ export const tabs: readonly FeatureTab[] = [
 export const features: readonly FeatureSpec[] = tabs.flatMap((tab) =>
   tab.groups.flatMap((group) => group.features),
 );
+
+/**
+ * The dialog a node of this type was built by, where there is one.
+ *
+ * What makes a node reopenable is that a dialog knows how to say what it is:
+ * its numbers, its choices and what it is built on. A sketch has a dialog of
+ * its own kind — the drawing session — and is deliberately not offered here.
+ */
+export function specForNode(graph: Graph, nodeId: NodeId): FeatureSpec | null {
+  const node = graph.getNode(nodeId);
+  if (node === undefined) return null;
+  return features.find((spec) => spec.nodeType === node.type && spec.kind === undefined) ?? null;
+}
 
 /** Where a plane came from: an existing node, or a face that needs a reference node. */
 export type PlaneChoice =
@@ -396,12 +433,31 @@ export function buildFeature(
   spec: FeatureSpec,
   operands: Record<string, PortRef>,
   numbers: Record<string, number | string>,
+  /**
+   * The point in the history being worked at, if the view is rolled back to
+   * one. A feature built on that node goes in *there* rather than on the end,
+   * which is what makes rolling back somewhere to work rather than to look.
+   */
+  spliceAt: NodeId | null = null,
 ): NodeId {
   const node = graph.addNode(spec.nodeType, { inputs: numbers });
 
+  const first = spec.operands[0];
+  const source = first === undefined ? undefined : operands[first.id];
+  const atMarker = spliceAt !== null && source !== undefined && source.node === spliceAt;
+  const into = spec.splice === true || atMarker ? first?.id : undefined;
+
   try {
     for (const [portId, source] of Object.entries(operands)) {
+      // The spliced operand is not connected here: `spliceAfter` wires it, and
+      // it refuses a node whose input is already spoken for.
+      if (portId === into) continue;
       graph.connect(source, { node: node.id, port: portId });
+    }
+
+    if (into !== undefined) {
+      if (source === undefined) throw new Error('There is nothing to splice this onto');
+      spliceAfter(graph, source.node, node.id);
     }
   } catch (thrown) {
     graph.removeNode(node.id);

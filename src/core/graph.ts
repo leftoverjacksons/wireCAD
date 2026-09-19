@@ -18,6 +18,7 @@ export type GraphChange =
   | { kind: 'node-moved'; nodeId: NodeId }
   | { kind: 'node-renamed'; nodeId: NodeId }
   | { kind: 'node-visibility'; nodeId: NodeId }
+  | { kind: 'node-suppressed'; nodeId: NodeId }
   | { kind: 'input-changed'; nodeId: NodeId; portId: PortId }
   | { kind: 'edge-added'; edgeId: EdgeId }
   | { kind: 'edge-removed'; edgeId: EdgeId }
@@ -37,6 +38,7 @@ export interface AddNodeOptions {
   position?: { x: number; y: number };
   inputs?: Record<PortId, Value>;
   visible?: boolean;
+  suppressed?: boolean;
   /**
    * Drop literals for ports this node does not have, instead of refusing.
    *
@@ -59,7 +61,8 @@ export class Graph {
   private incoming = new Map<NodeId, Set<EdgeId>>();
   private listeners = new Set<GraphListener>();
   private counter = 0;
-  private suppressed = false;
+  /** While set, changes are made without telling anybody: loading a document. */
+  private quiet = false;
 
   constructor(readonly registry: PortLookup) {}
 
@@ -68,7 +71,7 @@ export class Graph {
   }
 
   private emit(change: GraphChange): void {
-    if (this.suppressed) return;
+    if (this.quiet) return;
     for (const listener of this.listeners) listener(change);
   }
 
@@ -106,6 +109,7 @@ export class Graph {
     };
     if (options.label !== undefined) node.label = options.label;
     if (options.visible !== undefined) node.visible = options.visible;
+    if (options.suppressed !== undefined) node.suppressed = options.suppressed;
 
     this.nodes.set(id, node);
     this.outgoing.set(id, new Set());
@@ -230,6 +234,20 @@ export class Graph {
     if (visible === undefined) delete node.visible;
     else node.visible = visible;
     this.emit({ kind: 'node-visibility', nodeId });
+  }
+
+  /**
+   * Holds the feature back, or lets it act again.
+   *
+   * The graph only records the answer. What a suppressed node hands on is the
+   * evaluator's business, and whether there is anything for it to hand on is a
+   * question about ports that `passThroughOf` answers.
+   */
+  setSuppressed(nodeId: NodeId, suppressed: boolean | undefined): void {
+    const node = this.requireNode(nodeId);
+    if (suppressed === undefined || !suppressed) delete node.suppressed;
+    else node.suppressed = true;
+    this.emit({ kind: 'node-suppressed', nodeId });
   }
 
   /** The reason this connection would be refused, or null if it is allowed. */
@@ -386,8 +404,8 @@ export class Graph {
 
   /** Fills a graph from a document, leaving it part filled if it cannot finish. */
   private absorb(data: SerializedGraph): void {
-    const previous = this.suppressed;
-    this.suppressed = true;
+    const previous = this.quiet;
+    this.quiet = true;
     try {
       for (const node of data.nodes) {
         this.addNode(node.type, {
@@ -397,11 +415,12 @@ export class Graph {
           inputs: node.inputs,
           ...(node.label !== undefined ? { label: node.label } : {}),
           ...(node.visible !== undefined ? { visible: node.visible } : {}),
+          ...(node.suppressed !== undefined ? { suppressed: node.suppressed } : {}),
         });
       }
       for (const edge of data.edges) this.connect(edge.from, edge.to, edge.id);
     } finally {
-      this.suppressed = previous;
+      this.quiet = previous;
     }
 
     let highest = 0;

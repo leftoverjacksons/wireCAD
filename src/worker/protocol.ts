@@ -15,6 +15,15 @@ export interface SolveRequest {
    * — out of the view mid-gesture.
    */
   pinned?: NodeId[];
+  /**
+   * The point in the history to look at, if the view is rolled back.
+   *
+   * Everything downstream of it is treated as absent, which is what puts that
+   * node's own result back on screen. It is a question about what to draw: no
+   * node is recomputed differently, because every node's output is a value that
+   * already exists after a solve.
+   */
+  rolledBackTo?: NodeId;
 }
 
 export type ExportFormat = 'stl' | 'step';
@@ -72,6 +81,11 @@ export interface SolvedMessage {
   visible: NodeId[];
   /** Of those, the ones only on screen because the main thread pinned them. */
   pinnedShown: NodeId[];
+  /**
+   * Of those, the ones drawn as an outline: the model as it stands, over the
+   * earlier state the view is rolled back to.
+   */
+  rolledBack: NodeId[];
   meshes: MeshPayload[];
   /** Resolved planes, so the interface can sketch on whatever a node produced. */
   planes: Record<NodeId, PlaneValue>;

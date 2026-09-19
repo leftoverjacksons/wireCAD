@@ -56,7 +56,10 @@ Both are wanted. The first is far commoner and needs none of this machinery.
 Translation is the one transform that leaves our topological naming alone:
 edges are matched by bounding-box fraction and faces by normal and rank, and a
 rigid translation preserves both. Rotation would not be so kind, and wants its
-own thinking.
+own thinking. `solid.move` is translation only for that reason, and the node
+copies the shape it is given rather than transforming it in place: handing the
+input's own handle back would give one shape two owners, and the second cache
+entry to be evicted would free it twice.
 
 ## There is no terminator node
 
@@ -65,7 +68,11 @@ own thinking.
 1. **Delete the node** — the feature never happened. A document edit.
 2. **Hide the result** — a view state. `Graph.setVisibility` and the eye.
 3. **Suppress the feature** — it stays, greyed, passing its input through
-   untouched. Not built yet; nearly free once the pass-through above exists.
+   untouched. Built on the pass-through above: the flag lives on the node, and
+   the evaluator hands the input on instead of computing, so a held-back feature
+   costs less than one that acts. It hands on a value its upstream already owns
+   and caches nothing of its own, since a second owner of one shape is how a
+   shape gets disposed of twice.
 4. **Subtract material** — a cut, a defeature. Not a deletion at all: a new node
    that happens to take material away.
 
@@ -103,27 +110,161 @@ really about the dialog:
 - The dialog gains an **edit mode**: open on a node, load its current values,
   change them live — the preview machinery already watches values change —
   and commit, or restore on cancel. No nodes are created, so there is no
-  cleanup to get wrong.
+  cleanup to get wrong. *Built.*
 - Editing a node **rolls the view back** to it, so what is on screen is what
-  that feature made rather than what came after.
+  that feature made rather than what came after. *Built, in piece 5.*
 - Because the cone is a display question and not a rebuild, the nodes that
   depend on it can be drawn faintly at the same time. You see what you are
   changing *and* what it will disturb, which a timeline cannot show you.
+  *Built, as edges rather than faintly: a faint solid of nearly the same shape
+  sitting on the one being edited is a smear, where an outline is a second
+  reading of it.*
 
 ## The pieces
 
 | # | Piece | Needs | Status |
 |---|-------|-------|--------|
 | 1 | `spliceAfter`, `removeAndHeal`, `branchOf` — pure graph operations | — | **done** |
-| 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | |
-| 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | |
-| 4 | Editing an existing feature through its dialog | — | |
-| 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | |
-| 6 | Viewport context menu, scoped to face and body | 2, 3 | |
+| 2 | Node editor context menu: delete (heal or branch), rename, hide, suppress, edit | 1 | **done** |
+| 3 | `solid.move` node and a three-axis drag gizmo | 1 for the mid-chain case | **done** |
+| 4 | Editing an existing feature through its dialog | — | **done** |
+| 5 | Rolling the view back to a node; new features splice at the marker | 1, 4 | **done** |
+| 6 | Viewport context menu, scoped to face and body | 2, 3 | **done** |
 
-Piece 6 wants `BRepAlgoAPI_Defeaturing` for *delete face*, which is listed as
-supported in this build but has not been called yet. Several things that were
-listed turned out to be unbound or differently shaped, so it gets probed before
-anything is promised on top of it. *Delete face* means defeature — remove the
-face and heal its neighbours together, leaving a solid — not punching a hole,
-which would leave an open shell that cannot be booleaned or exported as a body.
+Piece 2's *Edit* was an entry and a pair of callbacks rather than a feature of
+its own, and piece 4 filled it in from behind exactly as expected: `canEdit`
+learned a second answer and the menu did not change at all.
+
+Piece 4 itself needed no new machinery in the dialog, only a second way in.
+`openOn` loads the node's own values — its literal where it has one, the port's
+default where it does not — which is also why Cancel needs no way to unset a
+port: writing a default back as a literal says the same thing and hashes the
+same. Changes go straight to the node, so there is no preview to build and
+nothing to clean up, and the capture taken before the first change is forgotten
+on Cancel, so an abandoned edit leaves no undo step.
+
+What editing deliberately does not do is rewire. The operand rows show what the
+feature is built on and offer nothing else: pointing a fillet at another body
+means a new edge selection and moved wires, and the graph is where wires are
+moved. Keeping "nothing is created" true is what makes cancelling exact.
+
+What the menu says before it acts is the part worth keeping. `deleteOutcome` in
+`src/ui/node-menu.ts` predicts what `removeAndHeal` will do — how many wires
+find what the node was reading in its place, and how many are left wanting an
+input — and the prediction is exact rather than a guess: a wire off the
+pass-through output always reconnects, because the input it lands on is freed
+by the removal itself. A test holds the two together, so a change to the healing
+rule that the menu did not hear about fails rather than lies.
+
+Piece 3 turned out to need no decision about which of the two moves was meant.
+A feature spec can now say that it goes *into* the chain at its first operand
+rather than onto the end of it — `splice` in `src/ui/features.ts`, which only
+Move sets — and `buildFeature` calls `spliceAfter` instead of `connect` for that
+one operand. Selecting the last body and selecting a body three features back
+are then the same gesture, and the difference between picking the whole thing up
+and shifting a block out from under its own bore is which body was pointed at.
+
+The preview made the cancel path worth noticing. A preview is the real thing
+standing in the graph already, so a move being set up has already taken the
+bore off the block; removing that node on Cancel would leave the bore wanting a
+target. Withdrawing a preview now heals rather than removes, which puts the
+consumers back where they were, and for every other feature — appended, so with
+no consumers of its own — healing is a plain removal.
+
+The gizmo is three of the arrow the viewport already drew, not a thing of its
+own: `setDragHandles` takes a list, and hit-testing picks the nearest head. Two
+details are new. A number that starts at zero and may go either way has no
+length to draw and nothing to grab, and three of them at once would put all
+three heads on one point, so a handle can ask for a stalk — a fixed length out
+from the origin, with its own distance added to that. And the arrows stay
+anchored where the body was when the dialog opened, worked out once from the
+first mesh that arrives, because a gizmo that follows the body moves the thing
+you are holding while you hold it.
+
+Piece 5 went in as these notes describe — one addition to the rule about what
+to draw — and the rule itself came out of the worker to live in
+`src/core/display.ts`, where it can be tested without a kernel or a browser.
+`planDisplay` answers what is drawn as the model, what is drawn as an outline,
+and what is on screen only because somebody asked for it; the worker's loop is
+now only about turning that answer into triangles.
+
+One thing the cone framing did not anticipate. Rolling back to the block of a
+bored block left the *bore's circle* on screen: the circle is not downstream of
+the block — it is a branch of its own — so the cone did not contain it, and with
+the bore absent nothing was left consuming it, which by the ordinary rule is
+exactly what makes a profile visible. Truthful, and wrong: that circle exists
+only for the bore, and the state before the bore has no ring floating in space.
+So what a rolled-back view treats as absent is the cone *and* whatever is left
+with nothing present reading it — a fixed point, reached the way `branchOf`
+reaches its own, because a node is only left unused once everything reading it
+is.
+
+Rolling back to a node shows what that feature *made*, and that turned out to
+be half of what editing wants. The other half is what it was made *from*: at the
+time a fillet is created, the body its edges are being picked off is on screen
+as edges, the picked ones lit, and the radius arrow sits on the last of them.
+Reopened, none of that was there — the body is superseded by the fillet, so
+nothing had drawn it, and an arrow that sits on an edge of a body nobody drew
+cannot be placed at all. That is why a reopened fillet or chamfer had no arrow
+and a shell had none either: both look for geometry on a body that was not on
+screen. So editing pins what the feature reads, drawn as an outline, and finds
+its edge set again by matching the stored references against that body the way
+a solve does. Reopening a feature now looks like making it did.
+
+Both sides of the feature are outlined while it is being edited — what it is
+built on and what is built on it — and only the feature itself is drawn as the
+model. They are told apart in the graph rather than in the viewport, where the
+marker and the dimmed cone say which is which.
+
+One rule had to give way to another. A node can be pinned hidden, and that flag
+used to win over everything — including a view rolled back to that very node,
+which then showed an arrow and no body. Hiding a result answers "is this in the
+way of the model"; rolling back to it is asking to see that feature, and the two
+are different questions, so the marker's own result is drawn whatever its flag
+says. The flag itself was easy to set by accident, because the eye toggled
+between forced-on and forced-off and never back to automatic: pressing it twice
+on a node the model was hiding anyway looked like nothing had happened and left
+the node pinned hidden. It now cycles through automatic instead.
+
+The marker is session state rather than part of the document, because a saved
+file should open on the model rather than in the middle of somebody's afternoon.
+Editing borrows it and gives it back: the dialog remembers what the marker was,
+sets it to the node being edited and restores it on close, so editing while
+already rolled back somewhere returns you there rather than to now.
+
+And "new features splice at the marker" turned out to need no new mechanism at
+all, only a second reason to use piece 3's: `buildFeature` already knew how to
+splice, and a feature built on the node being looked at now goes in there. That
+is the general answer to where a new feature belongs — at the marker, or at the
+end when there is no marker — which is why Move's own `splice` flag stays the
+narrow special case it is rather than growing into a mode.
+
+Piece 6 wanted `BRepAlgoAPI_Defeaturing` for *delete face*, which was listed as
+supported in this build but had never been called. It was probed first, as these
+notes ask, and it works: a bore's wall comes off a block and the gap heals into
+a solid, a rounding comes off and the corner is sharp again, and several faces
+can go at once. *Delete face* means that defeature — not punching a hole, which
+would leave an open shell that cannot be booleaned or exported as a body.
+
+The probe was worth running for one thing it found. Asked to remove a face it
+cannot — an outside face of a plain block — the kernel reports `IsDone()` true
+and hands back the body **unchanged**. `HasErrors` is not bound at all in this
+build. So success is not something the call can be asked about; the node counts
+faces before and after, and a result with no fewer faces than it started with is
+the kernel having done nothing while saying otherwise. This is the same shape of
+problem as Shell's silently-empty offset, and it is handled the same way: check
+the result, and refuse with a reason.
+
+Naming the face was the larger half of the work. `face.plane` names a face by
+its normal and rank, which cannot name a bore or a rounding, so a face is now
+named the way an edge is — centroid as a fraction of the body's bounding box,
+plus area to separate two faces sharing a place. `matchFaceRef` is the whole of
+it, and it is tested without a kernel.
+
+The menu itself needed no new thinking, only one less duplicate: a body on
+screen and the node that made it are two views of one thing, so the viewport's
+menu is the node menu's own entries run by the node editor's own code, with the
+face-scoped entries on top. The popup came out into `src/ui/menu.ts` so there is
+one of it. And it opens on pointer*up*, because right-dragging pans the view and
+browsers disagree about whether the contextmenu event arrives on the way down or
+the way up — on the way down, the drag has not happened yet.

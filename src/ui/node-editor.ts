@@ -1,9 +1,13 @@
 import type { NodeStatus } from '../core/evaluator.js';
 import type { Graph, GraphChange } from '../core/graph.js';
+import { branchOf, removeAndHeal } from '../core/rewire.js';
 import type { Edge, EdgeId, NodeId, NodeSchema, PortRef, Value } from '../core/types.js';
 import { isPlane } from '../core/types.js';
 import type { NodeReport } from '../worker/protocol.js';
 import { nodeKind } from './kind.js';
+import { showMenu } from './menu.js';
+import type { NodeMenuAction } from './node-menu.js';
+import { nodeMenu } from './node-menu.js';
 import {
   HEADER_HEIGHT,
   NODE_WIDTH,
@@ -20,6 +24,22 @@ export interface NodeEditorCallbacks {
   onBeforeChange(): void;
   onDocumentChanged(): void;
   onSelectionChanged(nodeId: NodeId | null): void;
+  /**
+   * Whether this node can be reopened, and doing so.
+   *
+   * What editing a feature means belongs to whoever owns the dialogs, not to
+   * the graph view: today a sketch reopens its drawing session, and a feature
+   * dialog that can load its own node will arrive behind the same two calls.
+   */
+  canEdit(nodeId: NodeId): boolean;
+  onEdit(nodeId: NodeId): void;
+  /**
+   * Look at the model as it was at this node, or stop looking back.
+   *
+   * Which point the view is at belongs to whoever owns the viewport: the graph
+   * view only says which node was asked for.
+   */
+  onRollBack(nodeId: NodeId | null): void;
 }
 
 interface NodeView {
@@ -70,6 +90,8 @@ export class NodeEditor {
   private readonly wires = new Map<EdgeId, { visible: SVGPathElement; hit: SVGPathElement }>();
 
   private ghost: SVGPathElement | null = null;
+  /** Takes the open menu away again, if one is open. */
+  private closeMenu: () => void = () => undefined;
   private drag: Drag | null = null;
   private selected: NodeId | null = null;
 
@@ -77,6 +99,9 @@ export class NodeEditor {
   private zoom = 1;
 
   private shownNodes = new Set<NodeId>();
+  /** The point the view is rolled back to, and what that treats as absent. */
+  private marker: NodeId | null = null;
+  private beyond = new Set<NodeId>();
 
   constructor(
     private readonly container: HTMLElement,
@@ -110,6 +135,7 @@ export class NodeEditor {
     this.container.addEventListener('pointercancel', () => this.endDrag());
     this.container.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
     this.container.addEventListener('keydown', (event) => this.onKeyDown(event));
+    this.container.addEventListener('contextmenu', (event) => this.onContextMenu(event));
 
     graph.subscribe((change) => this.onGraphChange(change));
 
@@ -193,9 +219,131 @@ export class NodeEditor {
     field.select();
   }
 
+  // --------------------------------------------------------------------- menu
+
+  /**
+   * The menu a right-click on a node opens.
+   *
+   * Everything in it is something the graph can already do; what the menu adds
+   * is saying what each one will cost before it is done. Deleting a fillet from
+   * the middle of a chain and deleting the extrude the whole chain hangs on are
+   * the same gesture on two nodes, and only the menu can tell them apart.
+   */
+  private onContextMenu(event: MouseEvent): void {
+    const nodeEl = (event.target as HTMLElement).closest<HTMLElement>('.node');
+    const nodeId = nodeEl?.dataset.nodeId;
+    if (nodeId === undefined || this.graph.getNode(nodeId) === undefined) {
+      this.closeMenu();
+      return;
+    }
+
+    event.preventDefault();
+    this.container.focus();
+    this.select(nodeId);
+    this.openMenu(nodeId, event.clientX, event.clientY);
+  }
+
+  private openMenu(nodeId: NodeId, clientX: number, clientY: number): void {
+    this.closeMenu();
+    this.closeMenu = showMenu(this.container, {
+      title: this.graph.getNode(nodeId)?.label ?? this.graph.schemaOf(nodeId).label,
+      items: nodeMenu(this.graph, nodeId, {
+        editable: this.callbacks.canEdit(nodeId),
+        shown: this.shownNodes.has(nodeId),
+        rolledBackTo: this.marker,
+      }),
+      clientX,
+      clientY,
+      onChoose: (action) => this.runMenuAction(nodeId, action as NodeMenuAction),
+    });
+  }
+
+  /**
+   * Does what a menu entry says, wherever the menu was opened.
+   *
+   * The viewport's menu offers the same things for the body under the cursor as
+   * this one does for the node that made it, so there is one implementation and
+   * two ways in.
+   */
+  runMenuAction(nodeId: NodeId, action: NodeMenuAction): void {
+    this.closeMenu();
+    if (this.graph.getNode(nodeId) === undefined) return;
+
+    switch (action) {
+      case 'edit':
+        this.callbacks.onEdit(nodeId);
+        return;
+      case 'roll-back':
+        this.callbacks.onRollBack(nodeId);
+        return;
+      case 'return':
+        this.callbacks.onRollBack(null);
+        return;
+      case 'rename':
+        this.reveal(nodeId);
+        this.beginRename(nodeId);
+        return;
+      case 'hide':
+      case 'show':
+        this.callbacks.onBeforeChange();
+        this.graph.setVisibility(nodeId, action === 'show');
+        this.callbacks.onDocumentChanged();
+        return;
+      case 'auto':
+        this.callbacks.onBeforeChange();
+        this.graph.setVisibility(nodeId, undefined);
+        this.callbacks.onDocumentChanged();
+        return;
+      case 'suppress':
+      case 'unsuppress':
+        this.callbacks.onBeforeChange();
+        this.graph.setSuppressed(nodeId, action === 'suppress');
+        this.callbacks.onDocumentChanged();
+        return;
+      case 'delete':
+        this.deleteNode(nodeId);
+        return;
+      case 'delete-branch':
+        this.deleteBranch(nodeId);
+        return;
+    }
+  }
+
+  /**
+   * Takes a node out and joins what it was reading to what was reading it.
+   *
+   * What became of the wires is the part of a deletion nobody can see — the
+   * node it happened to has gone — so it is said out loud.
+   */
+  private deleteNode(nodeId: NodeId): void {
+    this.callbacks.onBeforeChange();
+    const { healed, stranded } = removeAndHeal(this.graph, nodeId);
+    if (this.selected === nodeId) this.select(null);
+    this.callbacks.onDocumentChanged();
+
+    const said: string[] = [];
+    if (healed > 0) said.push(`${healed} rewired`);
+    if (stranded > 0) said.push(`${stranded} left without an input`);
+    if (said.length > 0) this.notify(said.join(' · '), stranded > 0);
+  }
+
+  /** The node and everything that would have nothing left to read without it. */
+  private deleteBranch(nodeId: NodeId): void {
+    const going = branchOf(this.graph, nodeId);
+
+    this.callbacks.onBeforeChange();
+    for (const id of going) this.graph.removeNode(id);
+    if (this.selected !== null && going.has(this.selected)) this.select(null);
+    this.callbacks.onDocumentChanged();
+    this.notify(`${going.size} node${going.size === 1 ? '' : 's'} deleted`, false);
+  }
+
   // ---------------------------------------------------------------- rendering
 
   rebuild(): void {
+    // The menu is about a node in the document as it was a moment ago.
+    this.closeMenu();
+
     for (const view of this.views.values()) view.element.remove();
     this.views.clear();
     for (const wire of this.wires.values()) {
@@ -208,6 +356,7 @@ export class NodeEditor {
     for (const edge of this.graph.allEdges()) this.createWire(edge);
 
     this.applySelection();
+    this.applyRollback();
   }
 
   private createNodeView(nodeId: NodeId): void {
@@ -217,6 +366,8 @@ export class NodeEditor {
     const element = document.createElement('div');
     element.className = 'node';
     element.dataset.nodeId = nodeId;
+    // Greyed, and still there: a suppressed feature is held back, not removed.
+    if (node.suppressed === true) element.dataset.suppressed = 'true';
     element.style.width = `${NODE_WIDTH}px`;
     element.style.height = `${nodeHeight(schema)}px`;
 
@@ -262,9 +413,13 @@ export class NodeEditor {
       button.addEventListener('click', (event) => {
         event.stopPropagation();
         this.callbacks.onBeforeChange();
-        // The button reports what is on screen, so a click always means "do the
-        // other thing" — which keeps it reversible without a third state.
-        this.graph.setVisibility(nodeId, !this.shownNodes.has(nodeId));
+        // Two clicks put the node back where it was found, rather than pinning
+        // it to the opposite of what it started at. Pinning "hidden" on a node
+        // the model was hiding anyway looks like nothing has happened, and then
+        // bites later: rolled back to that node, or reached by a dialog, it is
+        // the one thing that should be on screen and is not.
+        const pinned = this.graph.requireNode(nodeId).visible !== undefined;
+        this.graph.setVisibility(nodeId, pinned ? undefined : !this.shownNodes.has(nodeId));
         this.callbacks.onDocumentChanged();
       });
       eye = button;
@@ -445,6 +600,12 @@ export class NodeEditor {
 
   private onPointerDown(event: PointerEvent): void {
     const target = event.target as HTMLElement;
+    if (target.closest('.menu') !== null) return;
+    this.closeMenu();
+
+    // Only the primary button works the canvas. Right-clicking a node's header
+    // would otherwise start dragging it out from under its own menu.
+    if (event.button !== 0) return;
     this.container.focus();
 
     const port = target.closest<HTMLElement>('.port');
@@ -633,6 +794,7 @@ export class NodeEditor {
 
   private onWheel(event: WheelEvent): void {
     event.preventDefault();
+    this.closeMenu();
     const rect = this.container.getBoundingClientRect();
     const cursorX = event.clientX - rect.left;
     const cursorY = event.clientY - rect.top;
@@ -648,25 +810,34 @@ export class NodeEditor {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      this.closeMenu();
+      return;
+    }
+
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
     if (this.selected === null) return;
     const target = event.target as HTMLElement;
     if (target.tagName === 'INPUT') return;
 
+    // The same deletion the menu offers, so the key and the entry mean one
+    // thing: a fillet leaves the body it was rounding behind it.
     event.preventDefault();
-    this.callbacks.onBeforeChange();
-    this.graph.removeNode(this.selected);
-    this.select(null);
-    this.callbacks.onDocumentChanged();
+    this.deleteNode(this.selected);
   }
 
-  private flash(message: string): void {
+  /** A line in the corner, where the zoom readout usually sits. */
+  private notify(message: string, wrong: boolean): void {
     this.hud.textContent = message;
-    this.hud.classList.add('editor-hud-error');
+    this.hud.classList.toggle('editor-hud-error', wrong);
     window.setTimeout(() => {
       this.hud.classList.remove('editor-hud-error');
       this.applyTransform();
     }, 2200);
+  }
+
+  private flash(message: string): void {
+    this.notify(message, true);
   }
 
   // ------------------------------------------------------------------ outward
@@ -687,6 +858,23 @@ export class NodeEditor {
   private applySelection(): void {
     for (const [nodeId, view] of this.views) {
       view.element.classList.toggle('node-selected', nodeId === this.selected);
+    }
+  }
+
+  /**
+   * Where in the history the view is, so the graph shows it: the node being
+   * looked at is marked and everything treated as absent is dimmed.
+   */
+  setRolledBack(marker: NodeId | null, beyond: ReadonlySet<NodeId>): void {
+    this.marker = marker;
+    this.beyond = new Set(beyond);
+    this.applyRollback();
+  }
+
+  private applyRollback(): void {
+    for (const [nodeId, view] of this.views) {
+      view.element.classList.toggle('node-marker', nodeId === this.marker);
+      view.element.classList.toggle('node-beyond', this.beyond.has(nodeId));
     }
   }
 
