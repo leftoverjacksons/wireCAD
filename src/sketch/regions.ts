@@ -17,18 +17,19 @@ export type Region =
  * below unambiguous and what a face can actually be built from. A loose end or
  * a branch is reported rather than guessed at.
  *
- * Construction lines are not here at all. They are reference geometry: a
- * diagonal across a rectangle would otherwise branch it at two corners and a
- * centreline hanging off it would be a loose end, and both are drawn to be
- * measured against rather than to bound anything.
+ * Construction geometry is not here at all. It is drawn to be measured against
+ * rather than to bound anything: a diagonal across a rectangle would otherwise
+ * branch it at two corners, a centreline hanging off it would be a loose end,
+ * and a circle the holes are spaced around would be a hole of its own.
  */
 export function regionsOf(sketch: Sketch): Region[] {
   const regions: Region[] = [];
   const lineIndices: number[] = [];
 
   for (const [index, entity] of sketch.entities.entries()) {
+    if (entity.construction === true) continue;
     if (entity.kind === 'circle') regions.push({ kind: 'circle', entity: index, centre: entity.centre });
-    else if (entity.construction !== true) lineIndices.push(index);
+    else lineIndices.push(index);
   }
 
   const meeting = new Map<number, number[]>();

@@ -53,9 +53,11 @@ const ARROW_SPREAD = 1 / 6;
 const ARC = 34;
 /** Within this, in millimetres, a span is straight enough to have no components. */
 const STRAIGHT = 1e-6;
-/** A construction line's dash and the gap after it, in pixels. */
+/** A construction entity's dash and the gap after it, in pixels. */
 const DASH = 7;
 const DASH_GAP = 5;
+/** The largest turn drawn as one straight piece of a dashed circle, in radians. */
+const ARC_STEP = 0.12;
 /**
  * The most dashes one line is drawn with. A line asking for more is zoomed so
  * far out that its dashes are a pixel apart anyway, and drawing thousands of
@@ -139,6 +141,48 @@ export function dashesAlong(a: Point, b: Point, scale: number): Array<readonly [
   const out: Array<readonly [Point, Point]> = [];
   for (let index = 0; index < count; index++) {
     out.push([add(a, along, index * period), add(a, along, index * period + on)]);
+  }
+  return out;
+}
+
+/**
+ * A circle as the dashes it is drawn with, each one an arc.
+ *
+ * A closed curve has no ends to land a dash on, so the pattern simply divides
+ * the circumference: whole dashes all the way round, of as near the asked-for
+ * size as a whole number of them allows. Each arc is drawn as short straight
+ * pieces, finely enough that a dash on a small circle still curves.
+ */
+export function dashesAround(
+  centre: Point,
+  radius: number,
+  scale: number,
+): Array<readonly Point[]> {
+  if (!(radius > 0)) return [];
+  const circumference = 2 * Math.PI * radius;
+
+  const dash = DASH * scale;
+  const gap = DASH_GAP * scale;
+  if (!(dash > 0) || !(gap > 0)) return [];
+
+  const duty = dash / (dash + gap);
+  const count = Math.min(MAX_DASHES, Math.max(2, Math.round(circumference / (dash + gap))));
+  const period = (Math.PI * 2) / count;
+  const on = period * duty;
+  const steps = Math.max(1, Math.ceil(on / ARC_STEP));
+
+  const out: Array<readonly Point[]> = [];
+  for (let index = 0; index < count; index++) {
+    const from = index * period;
+    const arc: Point[] = [];
+    for (let step = 0; step <= steps; step++) {
+      const angle = from + (on * step) / steps;
+      arc.push({
+        u: centre.u + radius * Math.cos(angle),
+        v: centre.v + radius * Math.sin(angle),
+      });
+    }
+    out.push(arc);
   }
   return out;
 }

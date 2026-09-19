@@ -113,11 +113,30 @@ describe('drawing', () => {
     expect(d.sketch.constraints).toEqual(rules);
   });
 
-  it('leaves a circle alone, because construction is a status of a line', () => {
+  it('draws a construction circle when asked for one', () => {
+    const d = draft();
+    addCircle(d, { u: 0, v: 0 }, 5, 0.5, true);
+
+    expect(d.sketch.entities[0]).toEqual({
+      kind: 'circle',
+      centre: 0,
+      radius: 5,
+      construction: true,
+    });
+  });
+
+  it('turns a circle into construction and back, like anything else', () => {
     const d = draft();
     addCircle(d, { u: 0, v: 0 }, 5, 0.5);
 
-    expect(setConstruction(d, [0], true)).toBe(0);
+    expect(setConstruction(d, [0], true)).toBe(1);
+    expect(d.sketch.entities[0]).toEqual({
+      kind: 'circle',
+      centre: 0,
+      radius: 5,
+      construction: true,
+    });
+    expect(setConstruction(d, [0], false)).toBe(1);
     expect(d.sketch.entities[0]).toEqual({ kind: 'circle', centre: 0, radius: 5 });
   });
 

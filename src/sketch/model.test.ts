@@ -25,6 +25,17 @@ describe('storing a sketch', () => {
     expect(roundtrip(sketch)).toEqual(sketch);
   });
 
+  it('keeps a construction circle construction', () => {
+    const sketch: Sketch = {
+      points: [{ u: 0, v: 0 }],
+      entities: [{ kind: 'circle', centre: 0, radius: 20, construction: true }],
+      constraints: [{ kind: 'radius', circle: 0, dimension: 'pitch' }],
+    };
+
+    expect(roundtrip(sketch)).toEqual(sketch);
+    expect(encodeSketch(sketch).entities).toEqual([['circle', 0, 20, 1]]);
+  });
+
   it('writes nothing extra for an ordinary line', () => {
     const sketch: Sketch = {
       points: [{ u: 0, v: 0 }, { u: 10, v: 0 }],
@@ -38,9 +49,12 @@ describe('storing a sketch', () => {
     expect(roundtrip(sketch).entities[0]).not.toHaveProperty('construction');
   });
 
-  it('reads a line written without the flag as an ordinary one', () => {
-    const sketch = decodeSketch([0, 0, 10, 0], [['line', 0, 1]], []);
-    expect(sketch.entities[0]).toEqual({ kind: 'line', a: 0, b: 1 });
+  it('reads entities written without the flag as ordinary ones', () => {
+    const sketch = decodeSketch([0, 0, 10, 0], [['line', 0, 1], ['circle', 0, 4]], []);
+    expect(sketch.entities).toEqual([
+      { kind: 'line', a: 0, b: 1 },
+      { kind: 'circle', centre: 0, radius: 4 },
+    ]);
   });
 
   it('refuses a flag that is neither on nor off', () => {

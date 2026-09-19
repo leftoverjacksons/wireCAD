@@ -75,6 +75,7 @@ export function ensureAnchor(draft: Draft): void {
  * there, and quietly changing what it is would be a surprise from a gesture
  * that looks like a no-op.
  */
+
 export function addLine(draft: Draft, a: number, b: number, construction = false): number | null {
   if (a === b) return null;
 
@@ -127,13 +128,10 @@ export function addRectangle(
 }
 
 /**
- * Makes the lines among `entities` construction, or ordinary again, and says
- * how many changed.
+ * Makes `entities` construction, or ordinary again, and says how many changed.
  *
- * Only lines: a circle is either a region or nothing, and a construction circle
- * is not something this sketch knows how to be. Every rule holding the line
- * stays exactly as it is — what changes is whether the profile is built from
- * it, not what it is or where.
+ * Every rule holding them stays exactly as it is — what changes is whether the
+ * profile is built from them, not what they are or where.
  */
 export function setConstruction(
   draft: Draft,
@@ -143,7 +141,7 @@ export function setConstruction(
   let changed = 0;
   for (const index of entities) {
     const entity = draft.sketch.entities[index];
-    if (entity === undefined || entity.kind !== 'line') continue;
+    if (entity === undefined) continue;
     if ((entity.construction === true) === construction) continue;
 
     if (construction) entity.construction = true;
@@ -153,9 +151,19 @@ export function setConstruction(
   return changed;
 }
 
-export function addCircle(draft: Draft, centre: Point, radius: number, slack: number): number {
+export function addCircle(
+  draft: Draft,
+  centre: Point,
+  radius: number,
+  slack: number,
+  construction = false,
+): number {
   const index = addPoint(draft, centre, slack);
-  draft.sketch.entities.push({ kind: 'circle', centre: index, radius });
+  draft.sketch.entities.push(
+    construction
+      ? { kind: 'circle', centre: index, radius, construction }
+      : { kind: 'circle', centre: index, radius },
+  );
   return draft.sketch.entities.length - 1;
 }
 

@@ -1,9 +1,9 @@
 /**
- * Checks construction lines: that one can be drawn, dimensioned and constrained
- * like any other line while the profile is built as though it were not there,
- * that the status can be turned on for what is drawn next and put on or taken
- * off a line already drawn, and that it survives a document being written out
- * and read back.
+ * Checks construction geometry — lines and circles both: that it can be drawn,
+ * dimensioned and constrained like anything else while the profile is built as
+ * though it were not there, that the status can be turned on for what is drawn
+ * next and put on or taken off what is already drawn, and that it survives a
+ * document being written out and read back.
  *
  *   npm run dev
  *   npm run verify:construction
@@ -149,6 +149,77 @@ check(
   built.asOutline ?? 'built a face out of a branching outline',
 );
 
+// A plate with a circle drawn inside it. As an ordinary circle it is a hole; as
+// a construction circle it is the circle holes would be spaced around, and the
+// plate is solid.
+const circled = await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+
+  const entities = (construction) => [
+    ['line', 0, 1],
+    ['line', 1, 2],
+    ['line', 2, 3],
+    ['line', 3, 0],
+    construction ? ['circle', 4, 15, 1] : ['circle', 4, 15],
+  ];
+
+  graph.addNode('sketch.constrained', {
+    id: 'sk',
+    label: 'Plate',
+    inputs: {
+      points: [0, 0, 80, 0, 80, 60, 0, 60, 40, 30],
+      entities: entities(true),
+      constraints: [
+        ['lockU', 0, 'originU'],
+        ['lockV', 0, 'originV'],
+        ['horizontal', 0],
+        ['horizontal', 2],
+        ['vertical', 1],
+        ['vertical', 3],
+        ['radius', 4, 'pitch'],
+      ],
+      dims: ['originU', 0, 'originV', 0, 'pitch', 15],
+    },
+  });
+  graph.addNode('solid.extrude', { id: 'body', inputs: { distance: 10 } });
+  graph.connect({ node: 'sk', port: 'profile' }, { node: 'body', port: 'profile' });
+  await window.__settle();
+
+  const volume = () => {
+    const mesh = window.wirecad.meshes().find((m) => m.nodeId === 'body');
+    return mesh === undefined ? null : window.__volume(mesh);
+  };
+  const asConstruction = volume();
+  const ports = graph
+    .schemaOf('sk')
+    .inputs.filter((p) => p.hidden !== true)
+    .map((p) => p.label);
+
+  graph.setInput('sk', 'entities', entities(false));
+  await window.__settle();
+
+  return { asConstruction, asHole: volume(), ports };
+});
+
+const plate = 80 * 60 * 10;
+const disc = Math.PI * 15 ** 2 * 10;
+check(
+  'a construction circle is no hole',
+  circled.asConstruction !== null && Math.abs(circled.asConstruction - plate) < 200,
+  `${circled.asConstruction?.toFixed(0)} mm3, wanted ${plate}`,
+);
+check(
+  'its radius is a port too  ',
+  circled.ports.includes('pitch'),
+  circled.ports.join(','),
+);
+check(
+  'and an ordinary one is    ',
+  circled.asHole !== null && Math.abs(circled.asHole - (plate - disc)) < 400,
+  `${circled.asHole?.toFixed(0)} mm3, wanted about ${(plate - disc).toFixed(0)}`,
+);
+
 console.log('');
 console.log('drawing one:');
 
@@ -285,6 +356,36 @@ check(
 await page.keyboard.press('Control+y');
 await page.waitForTimeout(600);
 
+// The mode is still on, so a circle drawn now is construction as well: the
+// circle holes would be placed around, rather than a hole.
+await panel.getByRole('button', { name: 'Circle', exact: true }).click();
+await page.mouse.click(...at(0.5, 0.48));
+await page.mouse.click(...at(0.55, 0.48));
+await page.waitForTimeout(400);
+
+const withCircle = await page.evaluate(async (id) => {
+  await window.__settle();
+  const { graph } = window.wirecad;
+  const entities = graph.inputValue(id, 'entities') ?? [];
+  const mesh = window.wirecad.meshes().find((m) => m.nodeId === id);
+  return {
+    circle: entities[5] ?? null,
+    error: window.wirecad.reports().find((r) => r.nodeId === id)?.error ?? null,
+    // The sketch's own face: a construction circle takes nothing out of it.
+    area: mesh === undefined ? null : mesh.positions.length,
+  };
+}, drawn.id);
+check(
+  'a circle drawn is one too ',
+  withCircle.circle?.[0] === 'circle' && withCircle.circle?.[3] === 1,
+  JSON.stringify(withCircle.circle),
+);
+check(
+  'and bores no hole in it   ',
+  withCircle.error === null,
+  withCircle.error ?? 'clean',
+);
+
 console.log('');
 console.log('drawn in dashes:');
 
@@ -305,6 +406,7 @@ const perMm = () =>
 
 const solidSegments = await dashesOn(0);
 const dashedNear = await dashesOn(4);
+const dashedCircle = await dashesOn(5);
 const zoomNear = await perMm();
 check(
   'an outline edge is one line',
@@ -315,6 +417,11 @@ check(
   'a construction line is many',
   dashedNear > 3,
   `${dashedNear} dashes`,
+);
+check(
+  'and so is a circle         ',
+  dashedCircle > 3,
+  `${dashedCircle} arcs`,
 );
 
 await page.mouse.move(800, 300);
@@ -353,8 +460,8 @@ const restored = await page.evaluate(async (id) => {
 }, drawn.id);
 check(
   'the status is kept        ',
-  restored.entities[4]?.[3] === 1 && restored.error === null,
-  `${JSON.stringify(restored.entities[4])} · ${restored.error ?? 'clean'}`,
+  restored.entities[4]?.[3] === 1 && restored.entities[5]?.[3] === 1 && restored.error === null,
+  `${JSON.stringify(restored.entities[4])} · ${JSON.stringify(restored.entities[5])} · ${restored.error ?? 'clean'}`,
 );
 
 if (pageErrors.length > 0) {

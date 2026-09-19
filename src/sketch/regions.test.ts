@@ -88,6 +88,21 @@ describe('regionsOf', () => {
     expect(regionsOf(sketch)).toHaveLength(1);
   });
 
+  it('leaves a construction circle out, so it is no hole in what holds it', () => {
+    const sketch: Sketch = {
+      points: [...box(0, 0, 40).points, { u: 20, v: 20 }],
+      entities: [],
+      constraints: [],
+    };
+    loop(sketch, 0, 4);
+    // The circle holes would be spaced around, rather than a hole itself.
+    sketch.entities.push({ kind: 'circle', centre: 4, radius: 12, construction: true });
+
+    const regions = regionsOf(sketch);
+    expect(regions).toHaveLength(1);
+    expect(nestRegions(regions, sketch.points, [0, 0, 0, 0, 12])[0]!.holes).toEqual([]);
+  });
+
   it('finds nothing closed in a sketch that is all construction', () => {
     const sketch: Sketch = { points: box(0, 0, 10).points, entities: [], constraints: [] };
     loop(sketch, 0, 4);

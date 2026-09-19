@@ -4,6 +4,7 @@ import {
   annotateOne,
   chooseSpan,
   dashesAlong,
+  dashesAround,
   decodePlaces,
   encodePlaces,
   formatLength,
@@ -239,5 +240,61 @@ describe('dashesAlong', () => {
 
   it('has nothing to draw for a line of no length', () => {
     expect(dashesAlong(a, a, 1)).toEqual([]);
+  });
+});
+
+describe('dashesAround', () => {
+  const centre = { u: 5, v: -3 };
+  const radius = 40;
+
+  const lengthOf = (arc: readonly { u: number; v: number }[]): number => {
+    let total = 0;
+    for (let i = 1; i < arc.length; i++) {
+      total += Math.hypot(arc[i]!.u - arc[i - 1]!.u, arc[i]!.v - arc[i - 1]!.v);
+    }
+    return total;
+  };
+
+  it('stays on the circle it dashes', () => {
+    for (const arc of dashesAround(centre, radius, 1)) {
+      for (const point of arc) {
+        expect(Math.hypot(point.u - centre.u, point.v - centre.v)).toBeCloseTo(radius, 6);
+      }
+    }
+  });
+
+  it('spaces the dashes evenly all the way round', () => {
+    const drawn = dashesAround(centre, radius, 1);
+    expect(drawn.length).toBeGreaterThan(4);
+
+    const first = lengthOf(drawn[0]!);
+    for (const arc of drawn) expect(lengthOf(arc)).toBeCloseTo(first, 6);
+
+    // A closed curve has no ends, so every dash is followed by a gap and the
+    // pattern divides the circumference exactly.
+    const gap = Math.hypot(
+      drawn[1]![0]!.u - drawn[0]![drawn[0]!.length - 1]!.u,
+      drawn[1]![0]!.v - drawn[0]![drawn[0]!.length - 1]!.v,
+    );
+    expect(drawn.length * (first + gap)).toBeCloseTo(2 * Math.PI * radius, 0);
+  });
+
+  it('draws in pixels, so leaning in gives more dashes and not bigger ones', () => {
+    const near = dashesAround(centre, radius, 1);
+    const far = dashesAround(centre, radius, 0.5);
+
+    expect(Math.abs(far.length - near.length * 2)).toBeLessThanOrEqual(1);
+    expect(lengthOf(far[0]!)).toBeLessThan(lengthOf(near[0]!));
+  });
+
+  it('curves a dash on a circle small enough for it to show', () => {
+    // A dash spanning a good part of the circle is drawn as several pieces
+    // rather than as the chord across it.
+    const tiny = dashesAround(centre, 2, 1);
+    expect(tiny.every((arc) => arc.length > 2)).toBe(true);
+  });
+
+  it('has nothing to draw for a circle of no radius', () => {
+    expect(dashesAround(centre, 0, 1)).toEqual([]);
   });
 });

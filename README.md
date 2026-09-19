@@ -154,18 +154,18 @@ is ready, typically around two seconds.
   contradictions in a sketch nobody asked to over-constrain, so a fresh drawing
   comes out under-constrained, which is what it honestly is, and the dimension
   tool is how it stops being.
-- **Construction lines** — a line can be reference geometry rather than part of
-  the outline. *Construction* pressed with nothing picked says that the lines
-  drawn next are construction; pressed with lines picked it turns those into
-  construction, and pressed again turns them back, so the same button both sets
-  the mode and changes what is already drawn. A construction line is constrained
-  and dimensioned exactly like any other — its dimension is a port on the node
-  like the rest — but the profile is built as though it were not there: a
-  diagonal across a rectangle drives its shape without branching it, and a
-  centreline can hang off the drawing without being a loose end. They are drawn
-  in a grey-blue dash to say what they are, and the dash is measured in pixels,
-  so leaning in shows more dashes rather than bigger ones. Circles have no such
-  status: a circle either bounds a region or there is no reason to draw it.
+- **Construction geometry** — a line or a circle can be reference geometry
+  rather than part of the outline. *Construction* pressed with nothing picked
+  says that what is drawn next is construction; pressed with entities picked it
+  turns those into construction, and pressed again turns them back, so the same
+  button both sets the mode and changes what is already drawn. Construction
+  geometry is constrained and dimensioned exactly like anything else — its
+  dimensions are ports on the node like the rest — but the profile is built as
+  though it were not there: a diagonal across a rectangle drives its shape
+  without branching it, a centreline can hang off the drawing without being a
+  loose end, and a pitch circle can carry a ring of holes without being a hole
+  itself. It is drawn in a grey-blue dash to say what it is, and the dash is
+  measured in pixels, so leaning in shows more dashes rather than bigger ones.
 - **Several outlines in one sketch** — a sketch is not one profile. Whatever it
   closes around becomes material and whatever is drawn inside that becomes a
   hole, as deep as you like: a ring drawn inside a hole is solid again. Two
@@ -346,7 +346,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:extrude` | Checks an extrude cuts and intersects its target, and that a new document wires no parameters |
 | `npm run verify:links` | Checks one node's dimension can drive another's, and that renaming sticks |
 | `npm run verify:constraints` | Checks a constrained sketch solves to the size its dimensions ask for |
-| `npm run verify:construction` | Checks a construction line drives what it measures without joining the profile, and that the status can be set, changed and saved |
+| `npm run verify:construction` | Checks construction geometry drives what it measures without joining the profile, and that the status can be set, changed and saved |
 | `npm run verify:datums` | Checks the origin planes are clickable, feed a dialog, and give way to a body in front of them |
 | `npm run verify:glyphs` | Checks relations are drawn on the sketch, and that picking one and pressing Delete takes it back |
 | `npm run verify:drag` | Checks a sketch can be pushed around by hand, and that where a dimension is put decides what it measures |
@@ -661,11 +661,12 @@ branch or a loose end is reported rather than guessed at — the alternative is
 building whichever loop the walk happened to find first and calling it the
 profile.
 
-Construction lines never reach the walk. They are left out before it starts, so
-they neither branch a loop nor trail an end, and the same drawing means the same
-face whether or not it has reference geometry on it. Everything else — the
-solve, the dimensions, the relations — treats them as ordinary lines, because to
-everything but the outline that is what they are.
+Construction geometry never reaches the walk. It is left out before the walk
+starts, so a line neither branches a loop nor trails an end and a circle is no
+region of its own, and the same drawing means the same face whether or not it
+has reference geometry on it. Everything else — the solve, the dimensions, the
+relations — treats it as ordinary, because to everything but the outline that is
+what it is.
 
 Which loop is material and which is a hole is decided by where they sit. A
 loop's depth is how many other loops contain it, tested with a point on its own
@@ -734,8 +735,6 @@ of it are built.
   because only points are pulled, not the radius itself: dimension it or type it.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
-- Construction is a status of a line only. A construction circle — a bolt circle
-  to place holes on, say — would be the obvious next one.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a
   loose end is reported rather than partly built, unless the line in question is
   construction, which the outline is built without.

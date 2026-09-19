@@ -11,25 +11,29 @@ export interface Point {
   v: number;
 }
 
-/** A straight edge between two points, by index into the point list. */
-export interface Line {
-  kind: 'line';
-  a: number;
-  b: number;
-  /**
-   * Reference geometry. A construction line is drawn, constrained and
-   * dimensioned like any other line, but it bounds nothing: the regions a
-   * profile is built from leave it out, so it can cross a face without cutting
-   * it and hang off one without leaving a loose end.
-   *
-   * Absent rather than false when a line is ordinary, so a document written
-   * before construction lines existed reads back as exactly what it was.
-   */
+/**
+ * Reference geometry. Something drawn for construction is drawn, constrained
+ * and dimensioned like anything else, but it bounds nothing: the regions a
+ * profile is built from leave it out, so a line can cross a face without
+ * cutting it or hang off one without leaving a loose end, and a circle can
+ * place holes around itself without becoming one.
+ *
+ * Absent rather than false when it is ordinary, so a document written before
+ * construction existed reads back as exactly what it was.
+ */
+interface Drawn {
   construction?: boolean;
 }
 
+/** A straight edge between two points, by index into the point list. */
+export interface Line extends Drawn {
+  kind: 'line';
+  a: number;
+  b: number;
+}
+
 /** A circle about a point, whose radius is solved for like any other unknown. */
-export interface Circle {
+export interface Circle extends Drawn {
   kind: 'circle';
   centre: number;
   radius: number;
@@ -137,13 +141,16 @@ export function encodeSketch(sketch: Sketch): {
 } {
   return {
     points: sketch.points.flatMap((point) => [point.u, point.v]),
-    entities: sketch.entities.map((entity) =>
-      entity.kind === 'line'
-        ? entity.construction === true
-          ? ['line', entity.a, entity.b, 1]
-          : ['line', entity.a, entity.b]
-        : ['circle', entity.centre, entity.radius],
-    ),
+    entities: sketch.entities.map((entity) => {
+      const row: Raw[] =
+        entity.kind === 'line'
+          ? ['line', entity.a, entity.b]
+          : ['circle', entity.centre, entity.radius];
+      // Written only when it is set, so an ordinary entity is the row it always
+      // was and a document from before construction existed still round-trips.
+      if (entity.construction === true) row.push(1);
+      return row;
+    }),
     constraints: sketch.constraints.map((constraint) => {
       switch (constraint.kind) {
         case 'coincident':
@@ -185,15 +192,16 @@ export function decodeSketch(points: Raw, entities: Raw, constraints: Raw): Sket
   const decodedEntities: Entity[] = entities.map((row, index) => {
     if (!Array.isArray(row)) throw new Error(`Entity ${index + 1} is malformed`);
     const what = `Entity ${index + 1}`;
+    let entity: Entity;
     if (row[0] === 'line') {
-      const line: Line = { kind: 'line', a: asIndex(row[1], what), b: asIndex(row[2], what) };
-      if (asFlag(row[3], what)) line.construction = true;
-      return line;
+      entity = { kind: 'line', a: asIndex(row[1], what), b: asIndex(row[2], what) };
+    } else if (row[0] === 'circle') {
+      entity = { kind: 'circle', centre: asIndex(row[1], what), radius: asNumber(row[2], what) };
+    } else {
+      throw new Error(`${what} is a ${String(row[0])}, which is not a kind of entity`);
     }
-    if (row[0] === 'circle') {
-      return { kind: 'circle', centre: asIndex(row[1], what), radius: asNumber(row[2], what) };
-    }
-    throw new Error(`${what} is a ${String(row[0])}, which is not a kind of entity`);
+    if (asFlag(row[3], what)) entity.construction = true;
+    return entity;
   });
 
   if (!Array.isArray(constraints)) throw new Error('Sketch constraints are missing');

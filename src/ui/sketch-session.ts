@@ -8,6 +8,7 @@ import {
   annotateOne,
   chooseSpan,
   dashesAlong,
+  dashesAround,
   decodePlaces,
   encodePlaces,
   formatLength,
@@ -112,15 +113,19 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'select',
     label: 'Select',
-    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too, and Construction turns a picked line into reference geometry and back.',
+    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too, and Construction turns what is picked into reference geometry and back.',
   },
   {
     id: 'line',
     label: 'Line',
-    hint: 'Click point after point. Enter or Escape ends the chain; clicking a point already there joins to it. With Construction on, the lines drawn are reference geometry.',
+    hint: 'Click point after point. Enter or Escape ends the chain; clicking a point already there joins to it. With Construction on, what is drawn is reference geometry.',
   },
   { id: 'rectangle', label: 'Rectangle', hint: 'Click one corner, then the opposite corner.' },
-  { id: 'circle', label: 'Circle', hint: 'Click the centre, then a point on the circle.' },
+  {
+    id: 'circle',
+    label: 'Circle',
+    hint: 'Click the centre, then a point on the circle. With Construction on, it is a circle to place things around rather than a hole.',
+  },
   { id: 'point', label: 'Point', hint: 'Click to place a point to constrain things against.' },
   {
     id: 'dimension',
@@ -146,8 +151,7 @@ function isCircle(sketch: Sketch, index: number): boolean {
 }
 
 function isConstruction(sketch: Sketch, index: number): boolean {
-  const entity = sketch.entities[index];
-  return entity?.kind === 'line' && entity.construction === true;
+  return sketch.entities[index]?.construction === true;
 }
 
 function lines(picked: Selection[]): number[] {
@@ -353,7 +357,7 @@ export class SketchSession {
     this.constructionButton.className = 'tool-button tool-toggle';
     this.constructionButton.textContent = 'Construction';
     this.constructionButton.title =
-      'Reference geometry: drawn, constrained and dimensioned like any line, but part of no profile';
+      'Reference geometry: drawn, constrained and dimensioned like anything else, but part of no profile';
     this.constructionButton.addEventListener('click', () => this.toggleConstruction());
     draw.row.append(this.constructionButton);
 
@@ -683,24 +687,27 @@ export class SketchSession {
   /**
    * Construction is a status, not a tool, and this one button says so twice.
    *
-   * With lines picked it changes those: an outline edge becomes reference
-   * geometry, or goes back to being an edge. With nothing picked it says what
-   * the next lines drawn will be. Which it means is never in doubt, because
+   * With entities picked it changes those: an outline edge or a circle becomes
+   * reference geometry, or goes back to bounding something. With nothing picked
+   * it says what is drawn next. Which it means is never in doubt, because
    * having something picked is the whole of the difference.
    */
   private toggleConstruction(): void {
     const draft = this.draft;
     if (draft === null) return;
 
-    const picked = lines(this.picked).filter((index) => isLine(draft.sketch, index));
+    const picked = lines(this.picked);
     if (picked.length === 0) {
-      const circles = lines(this.picked).filter((index) => isCircle(draft.sketch, index));
+      // Points and rules have no status of their own, so with only those picked
+      // this still means the mode — but it says so, rather than looking as
+      // though it ignored what was picked.
+      const nothing = this.picked.length > 0 ? 'Only an entity can be construction. ' : '';
       this.constructionMode = !this.constructionMode;
       this.hintEl.textContent =
-        (circles.length > 0 ? 'Construction is a status of a line, not a circle. ' : '') +
+        nothing +
         (this.constructionMode
-          ? 'Construction on: lines drawn now are reference geometry, and bound nothing.'
-          : 'Construction off: lines drawn now are part of the profile.');
+          ? 'Construction on: what is drawn now is reference geometry, and bounds nothing.'
+          : 'Construction off: what is drawn now is part of the profile.');
       this.render();
       return;
     }
@@ -714,9 +721,10 @@ export class SketchSession {
     const changed = setConstruction(draft, picked, construction);
     this.resolve();
     this.commit();
+    const what = `${changed} entit${changed === 1 ? 'y' : 'ies'}`;
     this.hintEl.textContent = construction
-      ? `${changed} line${changed === 1 ? '' : 's'} now construction: dimensioned as before, part of no profile.`
-      : `${changed} line${changed === 1 ? '' : 's'} back in the profile.`;
+      ? `${what} now construction: dimensioned as before, part of no profile.`
+      : `${what} back in the profile.`;
   }
 
   private applyRelation(relation: Relation): void {
@@ -1102,7 +1110,7 @@ export class SketchSession {
         this.hintEl.textContent = 'Move further from the centre to set a radius.';
         return;
       }
-      addCircle(draft, from, radius, slack);
+      addCircle(draft, from, radius, slack, this.constructionMode);
     }
 
     this.chain = [];
@@ -1488,12 +1496,19 @@ export class SketchSession {
       }
 
       const centre = solved.points[entity.centre]!;
-      segments.push({
-        points: ring(plane, centre, solved.radii[index]!),
-        selected,
-        construction: false,
-      });
-      this.drawn.push({ entity: index, construction: false });
+      const radius = solved.radii[index]!;
+      const construction = entity.construction === true;
+      const arcs: Array<readonly Point[]> = construction
+        ? dashesAround(centre, radius, scale)
+        : [ringOf(centre, radius)];
+      for (const arc of arcs) {
+        segments.push({
+          points: arc.map((point) => pointOnPlane(plane, point.u, point.v)),
+          selected,
+          construction,
+        });
+        this.drawn.push({ entity: index, construction });
+      }
     }
 
     const vertices = solved.points.map((point, index) => ({
@@ -1809,7 +1824,11 @@ export class SketchSession {
     const from = draft.sketch.points[start]!;
     if (this.tool === 'circle') {
       const radius = Math.hypot(at.u - from.u, at.v - from.v);
-      this.viewport.setSketchPreview(ring(plane, from, radius), true);
+      this.viewport.setSketchPreview(
+        ring(plane, from, radius),
+        true,
+        this.constructionMode,
+      );
       return;
     }
 
@@ -1822,8 +1841,8 @@ export class SketchSession {
             { u: from.u, v: at.v },
           ]
         : [from, at];
-    // The band says which it is drawing, since a line and a construction line
-    // are the same gesture. A circle is never construction, so it says nothing.
+    // The band says which it is drawing, since drawing a construction line and
+    // drawing an outline are the same gesture.
     this.viewport.setSketchPreview(
       corners.map((corner) => pointOnPlane(plane, corner.u, corner.v)),
       this.tool === 'rectangle',
@@ -1893,12 +1912,15 @@ export class SketchSession {
 }
 
 function ring(plane: PlaneValue, centre: Point, radius: number): Vec3[] {
-  const out: Vec3[] = [];
+  return ringOf(centre, radius).map((point) => pointOnPlane(plane, point.u, point.v));
+}
+
+/** The same ring in the plane's own axes, which is where dashes are measured. */
+function ringOf(centre: Point, radius: number): Point[] {
+  const out: Point[] = [];
   for (let step = 0; step <= CIRCLE_SEGMENTS; step++) {
     const angle = (step / CIRCLE_SEGMENTS) * Math.PI * 2;
-    out.push(
-      pointOnPlane(plane, centre.u + radius * Math.cos(angle), centre.v + radius * Math.sin(angle)),
-    );
+    out.push({ u: centre.u + radius * Math.cos(angle), v: centre.v + radius * Math.sin(angle) });
   }
   return out;
 }
