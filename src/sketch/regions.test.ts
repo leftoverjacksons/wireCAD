@@ -67,6 +67,37 @@ describe('regionsOf', () => {
     expect(() => regionsOf(sketch)).toThrow(/loose end/);
   });
 
+  it('leaves a construction line out of the profile it crosses', () => {
+    const sketch: Sketch = { points: box(0, 0, 10).points, entities: [], constraints: [] };
+    loop(sketch, 0, 4);
+    // A diagonal corner to corner: it would branch the loop at both ends if the
+    // profile were built from it.
+    sketch.entities.push({ kind: 'line', a: 0, b: 2, construction: true });
+
+    const regions = regionsOf(sketch);
+    expect(regions).toHaveLength(1);
+    expect(regions[0]).toMatchObject({ kind: 'loop', entities: [0, 1, 2, 3] });
+  });
+
+  it('lets a construction line hang off the drawing without a loose end', () => {
+    const sketch: Sketch = { points: box(0, 0, 10).points, entities: [], constraints: [] };
+    loop(sketch, 0, 4);
+    sketch.points.push({ u: 25, v: 5 });
+    sketch.entities.push({ kind: 'line', a: 1, b: 4, construction: true });
+
+    expect(regionsOf(sketch)).toHaveLength(1);
+  });
+
+  it('finds nothing closed in a sketch that is all construction', () => {
+    const sketch: Sketch = { points: box(0, 0, 10).points, entities: [], constraints: [] };
+    loop(sketch, 0, 4);
+    for (const entity of sketch.entities) {
+      if (entity.kind === 'line') entity.construction = true;
+    }
+
+    expect(regionsOf(sketch)).toEqual([]);
+  });
+
   it('refuses a point where three edges meet', () => {
     const sketch: Sketch = { points: box(0, 0, 10).points, entities: [], constraints: [] };
     loop(sketch, 0, 4);

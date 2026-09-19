@@ -15,10 +15,10 @@ architecture is in `README.md`.
   CHROMIUM_PATH=/opt/pw-browsers/chromium npm run verify:browser
   ```
 
-  There are twelve: `browser shell edges profile extrude links constraints
-  preview ghost drag glyphs datums`. They take about four minutes together and
-  they are the only thing that actually tests geometry, because the kernel is
-  WebAssembly and does not run in the unit suite.
+  There are thirteen: `browser shell edges profile extrude links constraints
+  construction preview ghost drag glyphs datums`. They take about four minutes
+  together and they are the only thing that actually tests geometry, because the
+  kernel is WebAssembly and does not run in the unit suite.
 - Anything about the interface is claimed only after looking at a screenshot.
   Assertions pass on things that look wrong.
 - When a test click misses, suspect the test before the code. Several "bugs"
@@ -50,13 +50,18 @@ architecture is in `README.md`.
   positive; reversed, applying it turns the geometry back to front.
 - **A drawing asserts only what it shows.** An edge drawn flat is horizontal;
   its length is never assumed. A fresh sketch is honestly under-constrained.
+- **Construction lines are ordinary everywhere but the outline.** They solve,
+  constrain and dimension like any line; `regionsOf` is the one place that knows
+  the difference, and it leaves them out before the walk. Anything new that
+  builds geometry from a sketch has to leave them out too.
 - **Topological naming.** Faces are found by normal and rank, edges by
   bounding-box fraction, direction and length. Translation preserves both, which
   is why Move is safe mid-chain; rotation would not be.
-- **Pixels are converted at draw time.** Arrowheads, relation marks and an
-  unplaced dimension's standoff are given in pixels and turned into millimetres
-  using what a pixel is currently worth. Anything that changes that — a zoom —
-  has to redraw them, or they silently become model-sized.
+- **Pixels are converted at draw time.** Arrowheads, relation marks, a
+  construction line's dashes and an unplaced dimension's standoff are given in
+  pixels and turned into millimetres using what a pixel is currently worth.
+  Anything that changes that — a zoom — has to redraw them, or they silently
+  become model-sized.
 - **The camera's matrices are stale until something draws.** Call
   `updateMatrixWorld()` before projecting or raycasting, or you measure against
   the view before last.

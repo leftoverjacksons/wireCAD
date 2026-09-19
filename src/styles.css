@@ -412,6 +412,15 @@ body.sketching #viewport canvas {
   color: #16031a;
 }
 
+/* A status rather than a tool, so it lights up in the colour construction
+   geometry is drawn in — the same grey-blue as the overlay in viewport.ts —
+   rather than in the colour of the tool in hand. */
+.sketch-tools .tool-button.tool-toggle.is-active {
+  background: #8aa0b4;
+  border-color: #8aa0b4;
+  color: #0b1016;
+}
+
 .sketch-hint {
   flex: none;
   font-size: 11px;

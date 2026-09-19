@@ -53,6 +53,16 @@ const ARROW_SPREAD = 1 / 6;
 const ARC = 34;
 /** Within this, in millimetres, a span is straight enough to have no components. */
 const STRAIGHT = 1e-6;
+/** A construction line's dash and the gap after it, in pixels. */
+const DASH = 7;
+const DASH_GAP = 5;
+/**
+ * The most dashes one line is drawn with. A line asking for more is zoomed so
+ * far out that its dashes are a pixel apart anyway, and drawing thousands of
+ * them costs more than looking at them is worth. Past this the pattern stretches
+ * rather than the count growing.
+ */
+const MAX_DASHES = 120;
 /**
  * How much a placement has to favour an axis before it stops meaning the
  * measurement it is nearest. Dragging straight out from a line is the common
@@ -98,6 +108,39 @@ function arrowhead(at: Point, along: Point, size: number): Array<[Point, Point]>
     [at, add(add(at, back, size), side, size * ARROW_SPREAD)],
     [at, add(add(at, back, size), side, -size * ARROW_SPREAD)],
   ];
+}
+
+/**
+ * A line as the dashes it is drawn with, which is how construction geometry is
+ * told apart from the outline.
+ *
+ * The dash is given in pixels and turned into millimetres here, like every
+ * other size on the drawing, so leaning in shows more dashes rather than bigger
+ * ones. A line shorter than a single dash keeps a whole one: drawn as nothing
+ * at all it would be worse than drawn solid.
+ */
+export function dashesAlong(a: Point, b: Point, scale: number): Array<readonly [Point, Point]> {
+  const span = length(subtract(b, a));
+  if (span < STRAIGHT) return [];
+
+  const dash = DASH * scale;
+  const gap = DASH_GAP * scale;
+  if (!(dash > 0) || !(gap > 0)) return [[a, b]];
+
+  // A dash at each end, as a dashed line is drawn: the count is whatever comes
+  // nearest the pattern asked for, and the pattern is then stretched or
+  // squeezed to fit the line exactly rather than running off the end of it.
+  const duty = dash / (dash + gap);
+  const count = Math.min(MAX_DASHES, Math.max(1, Math.round((span + gap) / (dash + gap))));
+  const period = span / (count - 1 + duty);
+  const on = period * duty;
+
+  const along = unit(subtract(b, a));
+  const out: Array<readonly [Point, Point]> = [];
+  for (let index = 0; index < count; index++) {
+    out.push([add(a, along, index * period), add(a, along, index * period + on)]);
+  }
+  return out;
 }
 
 export function formatLength(value: number): string {

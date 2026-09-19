@@ -66,8 +66,16 @@ export function ensureAnchor(draft: Draft): void {
   draft.dimensions.set('originV', at.v);
 }
 
-/** An edge between two points, or the one already there. Null if it would be degenerate. */
-export function addLine(draft: Draft, a: number, b: number): number | null {
+/**
+ * An edge between two points, or the one already there. Null if it would be
+ * degenerate.
+ *
+ * An edge already drawn between the two points is handed back as it stands,
+ * construction or not: drawing over something gives you the thing that is
+ * there, and quietly changing what it is would be a surprise from a gesture
+ * that looks like a no-op.
+ */
+export function addLine(draft: Draft, a: number, b: number, construction = false): number | null {
   if (a === b) return null;
 
   const existing = draft.sketch.entities.findIndex(
@@ -77,7 +85,9 @@ export function addLine(draft: Draft, a: number, b: number): number | null {
   );
   if (existing >= 0) return existing;
 
-  draft.sketch.entities.push({ kind: 'line', a, b });
+  draft.sketch.entities.push(
+    construction ? { kind: 'line', a, b, construction } : { kind: 'line', a, b },
+  );
   const index = draft.sketch.entities.length - 1;
 
   const from = draft.sketch.points[a]!;
@@ -94,7 +104,13 @@ export function addLine(draft: Draft, a: number, b: number): number | null {
 }
 
 /** The four corners and four edges of a rectangle drawn corner to corner. */
-export function addRectangle(draft: Draft, from: Point, to: Point, slack: number): number[] {
+export function addRectangle(
+  draft: Draft,
+  from: Point,
+  to: Point,
+  slack: number,
+  construction = false,
+): number[] {
   const corners = [
     { u: from.u, v: from.v },
     { u: to.u, v: from.v },
@@ -104,10 +120,37 @@ export function addRectangle(draft: Draft, from: Point, to: Point, slack: number
 
   const edges: number[] = [];
   for (let i = 0; i < 4; i++) {
-    const edge = addLine(draft, corners[i]!, corners[(i + 1) % 4]!);
+    const edge = addLine(draft, corners[i]!, corners[(i + 1) % 4]!, construction);
     if (edge !== null) edges.push(edge);
   }
   return edges;
+}
+
+/**
+ * Makes the lines among `entities` construction, or ordinary again, and says
+ * how many changed.
+ *
+ * Only lines: a circle is either a region or nothing, and a construction circle
+ * is not something this sketch knows how to be. Every rule holding the line
+ * stays exactly as it is — what changes is whether the profile is built from
+ * it, not what it is or where.
+ */
+export function setConstruction(
+  draft: Draft,
+  entities: readonly number[],
+  construction: boolean,
+): number {
+  let changed = 0;
+  for (const index of entities) {
+    const entity = draft.sketch.entities[index];
+    if (entity === undefined || entity.kind !== 'line') continue;
+    if ((entity.construction === true) === construction) continue;
+
+    if (construction) entity.construction = true;
+    else delete entity.construction;
+    changed += 1;
+  }
+  return changed;
 }
 
 export function addCircle(draft: Draft, centre: Point, radius: number, slack: number): number {

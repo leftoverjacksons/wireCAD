@@ -7,6 +7,7 @@ import {
   annotate,
   annotateOne,
   chooseSpan,
+  dashesAlong,
   decodePlaces,
   encodePlaces,
   formatLength,
@@ -17,7 +18,15 @@ import {
 import type { Glyph } from '../sketch/glyphs.js';
 import { glyphReach, glyphsFor } from '../sketch/glyphs.js';
 import type { Draft } from '../sketch/draw.js';
-import { addCircle, addLine, addPoint, addRectangle, removeParts, uniqueName } from '../sketch/draw.js';
+import {
+  addCircle,
+  addLine,
+  addPoint,
+  addRectangle,
+  removeParts,
+  setConstruction,
+  uniqueName,
+} from '../sketch/draw.js';
 import type { Constraint, Point, Sketch } from '../sketch/model.js';
 import { decodeSketch, dimensionsOf, encodeSketch } from '../sketch/model.js';
 import type { Pull, SolveResult } from '../sketch/solver.js';
@@ -103,12 +112,12 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'select',
     label: 'Select',
-    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too.',
+    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too, and Construction turns a picked line into reference geometry and back.',
   },
   {
     id: 'line',
     label: 'Line',
-    hint: 'Click point after point. Enter or Escape ends the chain; clicking a point already there joins to it.',
+    hint: 'Click point after point. Enter or Escape ends the chain; clicking a point already there joins to it. With Construction on, the lines drawn are reference geometry.',
   },
   { id: 'rectangle', label: 'Rectangle', hint: 'Click one corner, then the opposite corner.' },
   { id: 'circle', label: 'Circle', hint: 'Click the centre, then a point on the circle.' },
@@ -134,6 +143,11 @@ function isLine(sketch: Sketch, index: number): boolean {
 
 function isCircle(sketch: Sketch, index: number): boolean {
   return sketch.entities[index]?.kind === 'circle';
+}
+
+function isConstruction(sketch: Sketch, index: number): boolean {
+  const entity = sketch.entities[index];
+  return entity?.kind === 'line' && entity.construction === true;
 }
 
 function lines(picked: Selection[]): number[] {
@@ -259,6 +273,8 @@ export class SketchSession {
   /** The number of the dimension being placed, which has no field of its own yet. */
   private readonly previewLabel: HTMLElement;
   private annotations: Annotation[] = [];
+  /** What the drawing was last drawn as, one entry per segment in the scene. */
+  private drawn: Array<{ entity: number; construction: boolean }> = [];
   private glyphs: Glyph[] = [];
   private preview: Annotation | null = null;
   private releaseCamera: (() => void) | null = null;
@@ -284,6 +300,9 @@ export class SketchSession {
   private result: SolveResult | null = null;
 
   private tool: ToolId = 'select';
+  /** Whether lines drawn from now on are construction rather than profile. */
+  private constructionMode = false;
+  private readonly constructionButton: HTMLButtonElement;
   /** Points clicked so far for the tool in hand, by index into the sketch. */
   private chain: number[] = [];
   /** Where the pointer is, snapped, while a tool is part way through. */
@@ -326,6 +345,17 @@ export class SketchSession {
       this.toolButtons.set(tool.id, button);
       draw.row.append(button);
     }
+
+    // Construction is a status rather than a tool, so it sits with the tools
+    // but does not join them: pressing it leaves whatever is in hand in hand.
+    this.constructionButton = document.createElement('button');
+    this.constructionButton.type = 'button';
+    this.constructionButton.className = 'tool-button tool-toggle';
+    this.constructionButton.textContent = 'Construction';
+    this.constructionButton.title =
+      'Reference geometry: drawn, constrained and dimensioned like any line, but part of no profile';
+    this.constructionButton.addEventListener('click', () => this.toggleConstruction());
+    draw.row.append(this.constructionButton);
 
     const relations = this.group('Constrain');
     for (const relation of RELATIONS) {
@@ -446,6 +476,22 @@ export class SketchSession {
     return this.glyphs.map(({ constraint, kind, at }) => ({ constraint, kind, at }));
   }
 
+  /**
+   * The segments the drawing is currently made of, and which entity each one
+   * belongs to. Like the solved points and the relation marks, this is here
+   * because nothing else can say it: a construction line is drawn as its
+   * dashes, and a dash is measured in pixels, so this is also how anything
+   * checking that a zoom redrew them can ask.
+   */
+  drawnSegments(): ReadonlyArray<{ entity: number; construction: boolean }> {
+    return this.drawn;
+  }
+
+  /** True when lines drawn now will be construction rather than profile. */
+  get drawsConstruction(): boolean {
+    return this.constructionMode;
+  }
+
   /** True when this node is one the session can open. */
   static editable(graph: Graph, nodeId: NodeId | null): boolean {
     if (nodeId === null) return false;
@@ -474,6 +520,7 @@ export class SketchSession {
     this.chain = [];
     this.cursor = null;
     this.placing = null;
+    this.constructionMode = false;
     this.endGrab();
 
     this.panel.hidden = false;
@@ -526,6 +573,7 @@ export class SketchSession {
     this.previewLabel.hidden = true;
     this.annotations = [];
     this.glyphs = [];
+    this.drawn = [];
     this.preview = null;
 
     this.panel.hidden = true;
@@ -553,7 +601,9 @@ export class SketchSession {
     }
 
     const tool = this.tool;
+    const construction = this.constructionMode;
     this.enter(nodeId, plane);
+    this.constructionMode = construction;
     this.setTool(tool);
   }
 
@@ -628,6 +678,45 @@ export class SketchSession {
     // The panel is taller than the room it has and scrolls. A panel that opens
     // below the fold has not opened as far as the person is concerned.
     if (tool === 'dimension') this.dialogue.scrollIntoView({ block: 'nearest' });
+  }
+
+  /**
+   * Construction is a status, not a tool, and this one button says so twice.
+   *
+   * With lines picked it changes those: an outline edge becomes reference
+   * geometry, or goes back to being an edge. With nothing picked it says what
+   * the next lines drawn will be. Which it means is never in doubt, because
+   * having something picked is the whole of the difference.
+   */
+  private toggleConstruction(): void {
+    const draft = this.draft;
+    if (draft === null) return;
+
+    const picked = lines(this.picked).filter((index) => isLine(draft.sketch, index));
+    if (picked.length === 0) {
+      const circles = lines(this.picked).filter((index) => isCircle(draft.sketch, index));
+      this.constructionMode = !this.constructionMode;
+      this.hintEl.textContent =
+        (circles.length > 0 ? 'Construction is a status of a line, not a circle. ' : '') +
+        (this.constructionMode
+          ? 'Construction on: lines drawn now are reference geometry, and bound nothing.'
+          : 'Construction off: lines drawn now are part of the profile.');
+      this.render();
+      return;
+    }
+
+    // A mixed set all becomes construction; one that already is goes back. So
+    // pressing it twice leaves the sketch where it started.
+    const construction = !picked.every((index) => isConstruction(draft.sketch, index));
+
+    this.callbacks.onBeforeChange();
+    this.sync();
+    const changed = setConstruction(draft, picked, construction);
+    this.resolve();
+    this.commit();
+    this.hintEl.textContent = construction
+      ? `${changed} line${changed === 1 ? '' : 's'} now construction: dimensioned as before, part of no profile.`
+      : `${changed} line${changed === 1 ? '' : 's'} back in the profile.`;
   }
 
   private applyRelation(relation: Relation): void {
@@ -982,7 +1071,7 @@ export class SketchSession {
     if (this.tool === 'line') {
       const index = addPoint(draft, at, slack);
       const previous = this.chain[this.chain.length - 1];
-      if (previous !== undefined) addLine(draft, previous, index);
+      if (previous !== undefined) addLine(draft, previous, index, this.constructionMode);
 
       // Back to where the chain started: that closes it, and there is nothing
       // more to add to it.
@@ -1006,7 +1095,7 @@ export class SketchSession {
         this.hintEl.textContent = 'That would be a rectangle with no width or height.';
         return;
       }
-      addRectangle(draft, from, at, slack);
+      addRectangle(draft, from, at, slack, this.constructionMode);
     } else {
       const radius = Math.hypot(at.u - from.u, at.v - from.v);
       if (radius < GRID) {
@@ -1348,30 +1437,63 @@ export class SketchSession {
   // ----------------------------------------------------------- rendering
 
   private render(): void {
+    const solved = this.result;
+    if (this.draft === null || this.plane === null || solved === null) return;
+
+    this.renderOverlay(solved);
+    this.renderAnnotations(solved);
+    this.renderPreview();
+    this.renderPanel(solved);
+    this.renderDialogue();
+  }
+
+  /**
+   * The drawing itself: every entity, and which of them are picked.
+   *
+   * Construction lines are drawn in dashes, and a dash is given in pixels like
+   * every other size here. So this has to run again whenever what a pixel is
+   * worth changes, or the dashes quietly become millimetres and a zoomed-out
+   * construction line reads as a solid one.
+   */
+  private renderOverlay(solved: SolveResult): void {
     const draft = this.draft;
     const plane = this.plane;
-    const solved = this.result;
-    if (draft === null || plane === null || solved === null) return;
+    if (draft === null || plane === null) return;
 
     const sketch = draft.sketch;
+    const scale = this.viewport.pickTolerance(plane, 1);
     const isPicked = (kind: 'point' | 'entity', index: number): boolean =>
       this.picked.some((entry) => entry.kind === kind && entry.index === index);
 
-    const segments: Array<{ points: Vec3[]; selected: boolean }> = [];
+    const segments: Array<{ points: Vec3[]; selected: boolean; construction: boolean }> = [];
+    this.drawn = [];
     for (const [index, entity] of sketch.entities.entries()) {
       const selected = isPicked('entity', index);
       if (entity.kind === 'line') {
         const a = solved.points[entity.a]!;
         const b = solved.points[entity.b]!;
-        segments.push({
-          points: [pointOnPlane(plane, a.u, a.v), pointOnPlane(plane, b.u, b.v)],
-          selected,
-        });
+        const construction = entity.construction === true;
+        const drawn: Array<readonly [Point, Point]> = construction
+          ? dashesAlong(a, b, scale)
+          : [[a, b]];
+        for (const [from, to] of drawn) {
+          segments.push({
+            points: [pointOnPlane(plane, from.u, from.v), pointOnPlane(plane, to.u, to.v)],
+            selected,
+            construction,
+          });
+          this.drawn.push({ entity: index, construction });
+        }
         continue;
       }
 
       const centre = solved.points[entity.centre]!;
-      segments.push({ points: ring(plane, centre, solved.radii[index]!), selected });
+      segments.push({
+        points: ring(plane, centre, solved.radii[index]!),
+        selected,
+        construction: false,
+      });
+      this.drawn.push({ entity: index, construction: false });
     }
 
     const vertices = solved.points.map((point, index) => ({
@@ -1380,10 +1502,6 @@ export class SketchSession {
     }));
 
     this.viewport.setSketchOverlay(segments, vertices);
-    this.renderAnnotations(solved);
-    this.renderPreview();
-    this.renderPanel(solved);
-    this.renderDialogue();
   }
 
   /**
@@ -1553,6 +1671,9 @@ export class SketchSession {
 
     const scale = this.viewport.pickTolerance(plane, 1);
     if (Math.abs(scale - this.lastScale) > this.lastScale * 0.02) {
+      // Both, because both are drawn in pixels: the arrowheads and standoffs of
+      // the dimensions, and the dashes of the construction lines.
+      this.renderOverlay(solved);
       this.renderAnnotations(solved);
       return;
     }
@@ -1701,14 +1822,19 @@ export class SketchSession {
             { u: from.u, v: at.v },
           ]
         : [from, at];
+    // The band says which it is drawing, since a line and a construction line
+    // are the same gesture. A circle is never construction, so it says nothing.
     this.viewport.setSketchPreview(
       corners.map((corner) => pointOnPlane(plane, corner.u, corner.v)),
       this.tool === 'rectangle',
+      this.constructionMode,
     );
   }
 
   private renderPanel(solved: SolveResult): void {
     const draft = this.draft!;
+
+    this.constructionButton.classList.toggle('is-active', this.constructionMode);
 
     const parts: string[] = [];
     if (!solved.solved) parts.push('These rules cannot all hold');

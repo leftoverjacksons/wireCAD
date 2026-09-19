@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Draft } from './draw.js';
-import { addCircle, addLine, addPoint, addRectangle, removeParts, uniqueName } from './draw.js';
+import {
+  addCircle,
+  addLine,
+  addPoint,
+  addRectangle,
+  removeParts,
+  setConstruction,
+  uniqueName,
+} from './draw.js';
 import { dimensionsOf } from './model.js';
 
 function draft(): Draft {
@@ -53,6 +61,77 @@ describe('drawing', () => {
     expect(d.sketch.entities).toHaveLength(4);
     expect(d.sketch.points).toHaveLength(4);
     expect(dimensionsOf(d.sketch)).toEqual(['originU', 'originV']);
+  });
+
+  it('draws a construction line when asked for one, and an ordinary one otherwise', () => {
+    const d = draft();
+    const a = addPoint(d, { u: 0, v: 0 }, 0.5);
+    const b = addPoint(d, { u: 10, v: 6 }, 0.5);
+    const c = addPoint(d, { u: 20, v: 0 }, 0.5);
+
+    addLine(d, a, b);
+    addLine(d, b, c, true);
+
+    expect(d.sketch.entities).toEqual([
+      { kind: 'line', a: 0, b: 1 },
+      { kind: 'line', a: 1, b: 2, construction: true },
+    ]);
+  });
+
+  it('calls a construction line drawn flat horizontal, like any other', () => {
+    const d = draft();
+    const a = addPoint(d, { u: 0, v: 0 }, 0.5);
+    const b = addPoint(d, { u: 10, v: 0 }, 0.5);
+    addLine(d, a, b, true);
+
+    expect(d.sketch.constraints).toContainEqual({ kind: 'horizontal', line: 0 });
+  });
+
+  it('makes a rectangle of construction lines all the way round', () => {
+    const d = draft();
+    addRectangle(d, { u: 0, v: 0 }, { u: 40, v: 25 }, 0.5, true);
+
+    expect(
+      d.sketch.entities.every((entity) => entity.kind === 'line' && entity.construction === true),
+    ).toBe(true);
+  });
+
+  it('turns a drawn line into construction and back without touching its rules', () => {
+    const d = draft();
+    const a = addPoint(d, { u: 0, v: 0 }, 0.5);
+    const b = addPoint(d, { u: 10, v: 0 }, 0.5);
+    addLine(d, a, b);
+    const rules = [...d.sketch.constraints];
+
+    expect(setConstruction(d, [0], true)).toBe(1);
+    expect(d.sketch.entities[0]).toEqual({ kind: 'line', a: 0, b: 1, construction: true });
+    // Already construction: nothing to change, and nothing changed.
+    expect(setConstruction(d, [0], true)).toBe(0);
+
+    expect(setConstruction(d, [0], false)).toBe(1);
+    expect(d.sketch.entities[0]).toEqual({ kind: 'line', a: 0, b: 1 });
+    expect(d.sketch.constraints).toEqual(rules);
+  });
+
+  it('leaves a circle alone, because construction is a status of a line', () => {
+    const d = draft();
+    addCircle(d, { u: 0, v: 0 }, 5, 0.5);
+
+    expect(setConstruction(d, [0], true)).toBe(0);
+    expect(d.sketch.entities[0]).toEqual({ kind: 'circle', centre: 0, radius: 5 });
+  });
+
+  it('keeps a line construction when something else is deleted from under it', () => {
+    const d = draft();
+    const a = addPoint(d, { u: 0, v: 0 }, 0.5);
+    const b = addPoint(d, { u: 10, v: 0 }, 0.5);
+    const c = addPoint(d, { u: 10, v: 8 }, 0.5);
+    addLine(d, a, b);
+    addLine(d, b, c, true);
+
+    removeParts(d, [0], []);
+
+    expect(d.sketch.entities).toEqual([{ kind: 'line', a: 1, b: 2, construction: true }]);
   });
 
   it('will not draw an edge twice between the same two points', () => {

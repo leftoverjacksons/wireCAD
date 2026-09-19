@@ -16,6 +16,16 @@ export interface Line {
   kind: 'line';
   a: number;
   b: number;
+  /**
+   * Reference geometry. A construction line is drawn, constrained and
+   * dimensioned like any other line, but it bounds nothing: the regions a
+   * profile is built from leave it out, so it can cross a face without cutting
+   * it and hang off one without leaving a loose end.
+   *
+   * Absent rather than false when a line is ordinary, so a document written
+   * before construction lines existed reads back as exactly what it was.
+   */
+  construction?: boolean;
 }
 
 /** A circle about a point, whose radius is solved for like any other unknown. */
@@ -108,6 +118,13 @@ function asIndex(value: Raw, what: string): number {
   return index;
 }
 
+/** Flags travel as 1 rather than true, and an absent one is false. */
+function asFlag(value: Raw, what: string): boolean {
+  if (value === undefined || value === null || value === 0 || value === false) return false;
+  if (value === 1 || value === true) return true;
+  throw new Error(`${what} has a flag that is neither on nor off`);
+}
+
 function asName(value: Raw, what: string): string {
   if (typeof value !== 'string' || value.trim() === '') throw new Error(`${what} is not a name`);
   return value;
@@ -122,7 +139,9 @@ export function encodeSketch(sketch: Sketch): {
     points: sketch.points.flatMap((point) => [point.u, point.v]),
     entities: sketch.entities.map((entity) =>
       entity.kind === 'line'
-        ? ['line', entity.a, entity.b]
+        ? entity.construction === true
+          ? ['line', entity.a, entity.b, 1]
+          : ['line', entity.a, entity.b]
         : ['circle', entity.centre, entity.radius],
     ),
     constraints: sketch.constraints.map((constraint) => {
@@ -166,7 +185,11 @@ export function decodeSketch(points: Raw, entities: Raw, constraints: Raw): Sket
   const decodedEntities: Entity[] = entities.map((row, index) => {
     if (!Array.isArray(row)) throw new Error(`Entity ${index + 1} is malformed`);
     const what = `Entity ${index + 1}`;
-    if (row[0] === 'line') return { kind: 'line', a: asIndex(row[1], what), b: asIndex(row[2], what) };
+    if (row[0] === 'line') {
+      const line: Line = { kind: 'line', a: asIndex(row[1], what), b: asIndex(row[2], what) };
+      if (asFlag(row[3], what)) line.construction = true;
+      return line;
+    }
     if (row[0] === 'circle') {
       return { kind: 'circle', centre: asIndex(row[1], what), radius: asNumber(row[2], what) };
     }

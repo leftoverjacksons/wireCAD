@@ -16,6 +16,11 @@ export type Region =
  * point they meet at joins exactly two of them, which is what makes the walk
  * below unambiguous and what a face can actually be built from. A loose end or
  * a branch is reported rather than guessed at.
+ *
+ * Construction lines are not here at all. They are reference geometry: a
+ * diagonal across a rectangle would otherwise branch it at two corners and a
+ * centreline hanging off it would be a loose end, and both are drawn to be
+ * measured against rather than to bound anything.
  */
 export function regionsOf(sketch: Sketch): Region[] {
   const regions: Region[] = [];
@@ -23,7 +28,7 @@ export function regionsOf(sketch: Sketch): Region[] {
 
   for (const [index, entity] of sketch.entities.entries()) {
     if (entity.kind === 'circle') regions.push({ kind: 'circle', entity: index, centre: entity.centre });
-    else lineIndices.push(index);
+    else if (entity.construction !== true) lineIndices.push(index);
   }
 
   const meeting = new Map<number, number[]>();

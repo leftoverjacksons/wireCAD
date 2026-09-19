@@ -264,6 +264,17 @@ export class Viewport {
     color: 0xff61c6,
     depthTest: false,
   });
+  /**
+   * Construction geometry, which bounds nothing. Grey-blue rather than the
+   * cyan the profile wears, and drawn in dashes by whoever hands the segments
+   * over: subordinate to the outline at a glance, which is the whole point of
+   * drawing it differently. The same colour appears in the stylesheet, where
+   * the button that turns it on lights up.
+   */
+  private readonly overlayConstructionMaterial = new THREE.LineBasicMaterial({
+    color: 0x8aa0b4,
+    depthTest: false,
+  });
   private readonly overlayPointMaterial = new THREE.PointsMaterial({
     color: 0xf4ff61,
     size: 8,
@@ -340,6 +351,12 @@ export class Viewport {
   private sketchLine: THREE.LineLoop | THREE.Line | null = null;
   private sketchPoints: THREE.Points | null = null;
   private readonly sketchLineMaterial = new THREE.LineBasicMaterial({ color: 0xf4ff61 });
+  /**
+   * The rubber band while construction geometry is being drawn. Only the
+   * colour changes: the band is a continuous line and dashing it would mean
+   * drawing it as something else, for the half-second it is on screen.
+   */
+  private readonly sketchConstructionMaterial = new THREE.LineBasicMaterial({ color: 0x8aa0b4 });
   private readonly sketchPointMaterial = new THREE.PointsMaterial({
     color: 0xff61c6,
     size: 7,
@@ -1174,7 +1191,7 @@ export class Viewport {
     };
   }
 
-  setSketchPreview(points: readonly Vec3[], closed: boolean): void {
+  setSketchPreview(points: readonly Vec3[], closed: boolean, construction = false): void {
     this.clearSketchPreview();
     if (points.length === 0) return;
 
@@ -1189,9 +1206,10 @@ export class Viewport {
     geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
 
     if (points.length > 1) {
+      const material = construction ? this.sketchConstructionMaterial : this.sketchLineMaterial;
       this.sketchLine = closed
-        ? new THREE.LineLoop(geometry, this.sketchLineMaterial)
-        : new THREE.Line(geometry, this.sketchLineMaterial);
+        ? new THREE.LineLoop(geometry, material)
+        : new THREE.Line(geometry, material);
       this.sketchLine.renderOrder = 4;
       this.scene.add(this.sketchLine);
     }
@@ -1207,15 +1225,33 @@ export class Viewport {
    * the solved profile the worker sends back.
    */
   setSketchOverlay(
-    segments: ReadonlyArray<{ points: readonly Vec3[]; selected: boolean }>,
+    segments: ReadonlyArray<{ points: readonly Vec3[]; selected: boolean; construction?: boolean }>,
     vertices: ReadonlyArray<{ at: Vec3; selected: boolean }>,
   ): void {
     this.clearSketchOverlay();
 
-    for (const group of [false, true]) {
+    // Picked first, because being picked is what you most need to see: a
+    // construction line held by the cursor wears the picked colour and stays
+    // dashed, so it reads as both at once.
+    const groups: Array<{
+      wants: (segment: { selected: boolean; construction?: boolean }) => boolean;
+      material: THREE.LineBasicMaterial;
+    }> = [
+      { wants: (segment) => segment.selected, material: this.overlayPickedMaterial },
+      {
+        wants: (segment) => !segment.selected && segment.construction === true,
+        material: this.overlayConstructionMaterial,
+      },
+      {
+        wants: (segment) => !segment.selected && segment.construction !== true,
+        material: this.overlayMaterial,
+      },
+    ];
+
+    for (const group of groups) {
       const flat: number[] = [];
       for (const segment of segments) {
-        if (segment.selected !== group) continue;
+        if (!group.wants(segment)) continue;
         for (let i = 0; i + 1 < segment.points.length; i++) {
           const a = segment.points[i]!;
           const b = segment.points[i + 1]!;
@@ -1226,10 +1262,7 @@ export class Viewport {
 
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat), 3));
-      const lines = new THREE.LineSegments(
-        geometry,
-        group ? this.overlayPickedMaterial : this.overlayMaterial,
-      );
+      const lines = new THREE.LineSegments(geometry, group.material);
       lines.renderOrder = 6;
       this.overlay.push(lines);
       this.scene.add(lines);

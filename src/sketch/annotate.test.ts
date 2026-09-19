@@ -3,6 +3,7 @@ import {
   annotate,
   annotateOne,
   chooseSpan,
+  dashesAlong,
   decodePlaces,
   encodePlaces,
   formatLength,
@@ -177,5 +178,66 @@ describe('formatLength', () => {
     expect(formatLength(40)).toBe('40');
     expect(formatLength(12.5)).toBe('12.5');
     expect(formatLength(12.345)).toBe('12.35');
+  });
+});
+
+describe('dashesAlong', () => {
+  const a = { u: 0, v: 0 };
+  const b = { u: 100, v: 0 };
+
+  it('starts at one end and finishes at the other', () => {
+    const drawn = dashesAlong(a, b, 1);
+
+    expect(drawn.length).toBeGreaterThan(1);
+    expect(drawn[0]![0]).toEqual(a);
+    expect(drawn[drawn.length - 1]![1]!.u).toBeCloseTo(b.u, 9);
+  });
+
+  it('stays on the line it dashes', () => {
+    const drawn = dashesAlong({ u: 0, v: 0 }, { u: 30, v: 40 }, 1);
+
+    for (const [from, to] of drawn) {
+      // The line is 3-4-5: every point on it has v exactly four thirds of u.
+      expect(from.v).toBeCloseTo((from.u * 4) / 3, 9);
+      expect(to.v).toBeCloseTo((to.u * 4) / 3, 9);
+    }
+  });
+
+  it('draws in pixels, so leaning in gives more dashes and not bigger ones', () => {
+    // Half the millimetres to the pixel is twice the zoom.
+    const near = dashesAlong(a, b, 1);
+    const far = dashesAlong(a, b, 0.5);
+    const dashOf = (drawn: ReturnType<typeof dashesAlong>): number =>
+      Math.hypot(drawn[0]![1]!.u - drawn[0]![0]!.u, drawn[0]![1]!.v - drawn[0]![0]!.v);
+
+    // Not exactly double and exactly half: the pattern is fitted to the line,
+    // so the count is whole and the dash is the size that then falls out of it.
+    expect(Math.abs(far.length - near.length * 2)).toBeLessThanOrEqual(1);
+    expect(dashOf(far) / (dashOf(near) / 2)).toBeCloseTo(1, 1);
+    expect(dashOf(far)).toBeLessThan(dashOf(near));
+  });
+
+  it('keeps a whole dash on a line too short for one', () => {
+    expect(dashesAlong(a, { u: 2, v: 0 }, 1)).toEqual([[a, { u: 2, v: 0 }]]);
+  });
+
+  it('starts and finishes on a dash, as a dashed line is drawn', () => {
+    for (const span of [18, 37.5, 61, 140]) {
+      const drawn = dashesAlong(a, { u: span, v: 0 }, 1);
+      expect(drawn[0]![0]!.u).toBeCloseTo(0, 9);
+      expect(drawn[drawn.length - 1]![1]!.u).toBeCloseTo(span, 9);
+    }
+  });
+
+  it('stretches the pattern rather than drawing thousands of dashes', () => {
+    // A metre of line seen from far enough away to fit it on screen.
+    const drawn = dashesAlong(a, { u: 1000, v: 0 }, 0.01);
+
+    expect(drawn.length).toBeLessThanOrEqual(120);
+    expect(drawn[drawn.length - 1]![1]!.u).toBeCloseTo(1000, 6);
+  });
+
+  it('has nothing to draw for a line of no length', () => {
+    expect(dashesAlong(a, a, 1)).toEqual([]);
   });
 });

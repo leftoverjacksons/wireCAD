@@ -17,6 +17,7 @@
     "verify:extrude": "node scripts/verify-extrude.mjs",
     "verify:links": "node scripts/verify-links.mjs",
     "verify:constraints": "node scripts/verify-constraints.mjs",
+    "verify:construction": "node scripts/verify-construction.mjs",
     "verify:drag": "node scripts/verify-drag.mjs",
     "verify:glyphs": "node scripts/verify-glyphs.mjs",
     "verify:datums": "node scripts/verify-datums.mjs",
