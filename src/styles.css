@@ -430,6 +430,12 @@ body.sketching #viewport canvas {
   min-height: 2.8em;
 }
 
+/* A button that answers only in the hint line looks like a button that did
+   nothing, so a refusal is coloured like one rather than left to be noticed. */
+.sketch-hint[data-state='problem'] {
+  color: var(--error);
+}
+
 .sketch-panel .feature-actions {
   flex: none;
   position: sticky;

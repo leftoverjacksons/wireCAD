@@ -399,6 +399,130 @@ for (const [name, ok, extra] of editChecks) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
 }
 
+// Making a point coincident with a line. Every other sketcher means point-on-line
+// by that, and a button that answers only in the hint line reads as a button
+// that did nothing.
+console.log('');
+console.log('a point against an edge:');
+
+await page.evaluate(async () => {
+  const { graph } = window.wirecad;
+  graph.restore({ version: 1, nodes: [], edges: [] });
+  graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
+  graph.addNode('sketch.constrained', {
+    id: 'sk',
+    inputs: {
+      // A rectangle, a loose point inside it, and a circle to ask for the one
+      // coincidence there is no rule for.
+      points: [0, 0, 60, 0, 60, 40, 0, 40, 30, 26, 18, 12],
+      entities: [
+        ['line', 0, 1],
+        ['line', 1, 2],
+        ['line', 2, 3],
+        ['line', 3, 0],
+        ['circle', 5, 5],
+      ],
+      constraints: [['lockU', 0, 'originU'], ['lockV', 0, 'originV'], ['horizontal', 0]],
+      dims: ['originU', 0, 'originV', 0],
+    },
+  });
+  graph.connect({ node: 'xy', port: 'plane' }, { node: 'sk', port: 'plane' });
+  await window.__settle();
+  window.wirecad.select('sk');
+});
+
+await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
+const coincide = page.locator('.sketch-panel');
+await coincide.waitFor({ state: 'visible', timeout: 10_000 });
+await page.waitForTimeout(400);
+
+// A click that lands on the panel or the toolbar picks nothing, and a check
+// that then passes or fails says nothing about the code.
+const clickInSketch = async (u, v, what) => {
+  const at = await page.evaluate(([u, v]) => window.wirecad.screenOfSketch(u, v), [u, v]);
+  const over = await page.evaluate(
+    ([x, y]) => {
+      const element = document.elementFromPoint(x, y);
+      return element === null ? 'nothing' : element.tagName;
+    },
+    [at.x, at.y],
+  );
+  if (over !== 'CANVAS') throw new Error(`${what} is over ${over}, not the drawing`);
+  await page.mouse.click(at.x, at.y);
+  await page.waitForTimeout(250);
+};
+
+const panelState = () =>
+  page.evaluate(() => {
+    const hint = document.querySelector('.sketch-hint');
+    return {
+      kinds: (window.wirecad.graph.inputValue('sk', 'constraints') ?? []).map((row) => row[0]),
+      status: document.querySelector('.sketch-status')?.textContent ?? '',
+      hint: hint?.textContent ?? '',
+      problem: hint?.dataset.state === 'problem',
+    };
+  });
+
+// Where things are now, not where they were typed in: the solver moves them,
+// and a click at a stale position picks nothing or picks the wrong thing.
+const clickPoint = async (index, what) => {
+  const at = await page.evaluate(
+    (index) => window.wirecad.sketch.solvedPoints()[index],
+    index,
+  );
+  await clickInSketch(at.u, at.v, what);
+};
+const clickRim = async (entity, what) => {
+  const at = await page.evaluate((entity) => {
+    const row = (window.wirecad.graph.inputValue('sk', 'entities') ?? [])[entity];
+    const centre = window.wirecad.sketch.solvedPoints()[row[1]];
+    return { u: centre.u + row[2], v: centre.v };
+  }, entity);
+  await clickInSketch(at.u, at.v, what);
+};
+
+const beforeCoincident = await panelState();
+
+// The one coincidence there is no rule for goes first, while everything is
+// still where it was drawn: a refusal moves nothing, and a rule that holds
+// moves the drawing out from under the next click.
+await clickPoint(4, 'the loose point');
+await clickRim(4, 'the circle');
+await coincide.getByRole('button', { name: 'Coincident', exact: true }).click();
+await page.waitForTimeout(400);
+const onCircle = await panelState();
+
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+await clickPoint(4, 'the loose point again');
+await clickInSketch(60, 18, 'the right-hand edge');
+await coincide.getByRole('button', { name: 'Coincident', exact: true }).click();
+await page.waitForTimeout(600);
+const onEdge = await panelState();
+
+await coincide.getByRole('button', { name: 'Finish', exact: true }).click();
+await coincide.waitFor({ state: 'hidden', timeout: 10_000 });
+
+const freedomIn = (text) => Number(/(\d+) degree/.exec(text)?.[1] ?? '-1');
+const coincidentChecks = [
+  ['a point and an edge is a rule', onEdge.kinds.includes('pointOnLine'), onEdge.kinds.join(',')],
+  ['and it takes a freedom away  ',
+    freedomIn(onEdge.status) === freedomIn(beforeCoincident.status) - 1,
+    `${beforeCoincident.status} → ${onEdge.status}`],
+  ['the panel says it took       ', /Coincident added/.test(onEdge.hint) && !onEdge.problem,
+    onEdge.hint],
+  ['a point and a circle cannot  ',
+    !onCircle.kinds.includes('pointOnLine'),
+    onCircle.kinds.join(',')],
+  ['and it is refused out loud   ', onCircle.problem && /circle/.test(onCircle.hint),
+    `${onCircle.problem ? 'marked' : 'unmarked'} · ${onCircle.hint}`],
+];
+for (const [name, ok, extra] of coincidentChecks) {
+  if (!ok) failures += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${extra}`);
+}
+
 // Dimensioning the way a person does it: point at the thing, settle it, type
 // the number over the drawing.
 console.log('');

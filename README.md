@@ -141,7 +141,11 @@ is ready, typically around two seconds.
   the right of the caret.
 - **Constraining** — with Select, click points and edges in the 3D view, then
   apply a relation: Horizontal, Vertical, Parallel, Perpendicular, Equal,
-  Coincident, Concentric, On line, Midpoint. *Delete* removes what is picked,
+  Coincident, Concentric, On line, Midpoint. *Coincident* takes two points, or
+  a point and a line — against an edge it means the point lies somewhere along
+  it, which is the same rule *On line* applies under a name of its own. A
+  relation that cannot use what is picked says why, in red, rather than leaving
+  the button looking broken. *Delete* removes what is picked,
   along with every rule that referred to it. The panel says how many degrees of
   freedom are left, lists every rule with its number editable in place, and
   removes one with ×. A relation that would contradict what is already there is
@@ -735,6 +739,8 @@ of it are built.
   because only points are pulled, not the radius itself: dimension it or type it.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
+- There is no point-on-circle rule, so a point cannot be held on a rim the way
+  it can be held on a line. Coincident says so when asked for one.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a
   loose end is reported rather than partly built, unless the line in question is
   construction, which the outline is built without.

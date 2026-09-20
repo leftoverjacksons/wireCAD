@@ -45,7 +45,7 @@ export interface SketchSessionCallbacks {
  * point is: its glyph or its dimension is drawn on the sketch, so clicking that
  * and pressing Delete is how a rule is taken back.
  */
-type Selection = { kind: 'point' | 'entity' | 'constraint'; index: number };
+export type Selection = { kind: 'point' | 'entity' | 'constraint'; index: number };
 type ToolId = 'select' | 'line' | 'rectangle' | 'circle' | 'point' | 'dimension';
 
 /** The name a dimension goes by while it is still being placed. */
@@ -101,7 +101,7 @@ interface DrawTool {
   hint: string;
 }
 
-interface Relation {
+export interface Relation {
   id: string;
   label: string;
   /** Null when the current selection suits it, otherwise why it does not. */
@@ -169,7 +169,12 @@ function needs(
   return (picked, sketch) => (test(picked, sketch) ? null : message);
 }
 
-const RELATIONS: Relation[] = [
+/**
+ * What picking things and pressing a relation button means. Exported because it
+ * is a table of plain rules about picks, testable without a browser, and the
+ * one part of the panel where a wrong answer is silent.
+ */
+export const RELATIONS: Relation[] = [
   {
     id: 'horizontal',
     label: 'Horizontal',
@@ -218,8 +223,24 @@ const RELATIONS: Relation[] = [
   {
     id: 'coincident',
     label: 'Coincident',
-    check: needs((p) => points(p).length === 2 && lines(p).length === 0, 'Pick two points'),
-    apply: (p) => [{ kind: 'coincident', a: points(p)[0]!, b: points(p)[1]! }],
+    // Two points in the same place, or a point somewhere along a line. The
+    // second is what every other sketcher means by making a point coincident
+    // with an edge, and it is the same rule as On line — which stays, because a
+    // rule with a name of its own is easier to find than one hidden in another.
+    check: (picked, sketch) => {
+      const chosenPoints = points(picked);
+      const chosenLines = lines(picked);
+      if (chosenPoints.length === 2 && chosenLines.length === 0) return null;
+      if (chosenPoints.length === 1 && chosenLines.length === 1) {
+        if (isLine(sketch, chosenLines[0]!)) return null;
+        return 'a point on a circle is not a rule this sketch has yet — pick a line instead';
+      }
+      return 'Pick two points, or a point and a line';
+    },
+    apply: (p) =>
+      points(p).length === 2
+        ? [{ kind: 'coincident', a: points(p)[0]!, b: points(p)[1]! }]
+        : [{ kind: 'pointOnLine', point: points(p)[0]!, line: lines(p)[0]! }],
   },
   {
     id: 'concentric',
@@ -444,6 +465,18 @@ export class SketchSession {
     this.onDragMove = this.onDragMove.bind(this);
     this.onDragUp = this.onDragUp.bind(this);
     this.onKeyDown = this.onKeyDown.bind(this);
+  }
+
+  /**
+   * What the panel says about what just happened.
+   *
+   * A refusal is marked as one. The hint line is a quiet corner of the panel,
+   * and a button that answers only there looks like a button that did nothing.
+   */
+  private say(message: string, problem = false): void {
+    this.hintEl.textContent = message;
+    if (problem) this.hintEl.dataset.state = 'problem';
+    else delete this.hintEl.dataset.state;
   }
 
   private group(label: string): { el: HTMLElement; row: HTMLElement } {
@@ -676,7 +709,7 @@ export class SketchSession {
     if (tool === 'dimension') this.placing = this.buildPlacing(null, null);
 
     for (const [id, button] of this.toolButtons) button.classList.toggle('is-active', id === tool);
-    this.hintEl.textContent = DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '';
+    this.say(DRAW_TOOLS.find((entry) => entry.id === tool)?.hint ?? '');
     this.render();
 
     // The panel is taller than the room it has and scrolls. A panel that opens
@@ -703,11 +736,12 @@ export class SketchSession {
       // though it ignored what was picked.
       const nothing = this.picked.length > 0 ? 'Only an entity can be construction. ' : '';
       this.constructionMode = !this.constructionMode;
-      this.hintEl.textContent =
+      this.say(
         nothing +
-        (this.constructionMode
-          ? 'Construction on: what is drawn now is reference geometry, and bounds nothing.'
-          : 'Construction off: what is drawn now is part of the profile.');
+          (this.constructionMode
+            ? 'Construction on: what is drawn now is reference geometry, and bounds nothing.'
+            : 'Construction off: what is drawn now is part of the profile.'),
+      );
       this.render();
       return;
     }
@@ -722,9 +756,11 @@ export class SketchSession {
     this.resolve();
     this.commit();
     const what = `${changed} entit${changed === 1 ? 'y' : 'ies'}`;
-    this.hintEl.textContent = construction
-      ? `${what} now construction: dimensioned as before, part of no profile.`
-      : `${what} back in the profile.`;
+    this.say(
+      construction
+        ? `${what} now construction: dimensioned as before, part of no profile.`
+        : `${what} back in the profile.`,
+    );
   }
 
   private applyRelation(relation: Relation): void {
@@ -733,7 +769,7 @@ export class SketchSession {
 
     const problem = relation.check(this.picked, draft.sketch);
     if (problem !== null) {
-      this.hintEl.textContent = `${relation.label}: ${problem}.`;
+      this.say(`${relation.label}: ${problem}.`, true);
       return;
     }
 
@@ -946,7 +982,7 @@ export class SketchSession {
     const attempt = solveSketch(draft.sketch, draft.dimensions);
     if (!attempt.solved) {
       draft.sketch.constraints = before;
-      this.hintEl.textContent = `${label} contradicts the rules already here.`;
+      this.say(`${label} contradicts the rules already here.`, true);
       this.render();
       return false;
     }
@@ -954,10 +990,11 @@ export class SketchSession {
     this.callbacks.onBeforeChange();
     this.result = attempt;
     this.picked = [];
-    this.hintEl.textContent =
+    this.say(
       attempt.redundant > 0
         ? `${label} added, but it repeats a rule already here.`
-        : `${label} added.`;
+        : `${label} added.`,
+    );
     this.commit();
     this.render();
     return true;
@@ -967,7 +1004,7 @@ export class SketchSession {
     const draft = this.draft;
     if (draft === null) return;
     if (this.picked.length === 0) {
-      this.hintEl.textContent = 'Delete: pick what you want gone first.';
+      this.say('Delete: pick what you want gone first.', true);
       return;
     }
 
@@ -1002,7 +1039,7 @@ export class SketchSession {
     this.chain = [];
     this.resolve();
     this.commit();
-    this.hintEl.textContent = 'Deleted.';
+    this.say('Deleted.');
   }
 
   /**
@@ -1100,14 +1137,14 @@ export class SketchSession {
     const from = draft.sketch.points[start]!;
     if (this.tool === 'rectangle') {
       if (at.u === from.u || at.v === from.v) {
-        this.hintEl.textContent = 'That would be a rectangle with no width or height.';
+        this.say('That would be a rectangle with no width or height.', true);
         return;
       }
       addRectangle(draft, from, at, slack, this.constructionMode);
     } else {
       const radius = Math.hypot(at.u - from.u, at.v - from.v);
       if (radius < GRID) {
-        this.hintEl.textContent = 'Move further from the centre to set a radius.';
+        this.say('Move further from the centre to set a radius.', true);
         return;
       }
       addCircle(draft, from, radius, slack, this.constructionMode);
@@ -1255,14 +1292,15 @@ export class SketchSession {
 
     if (grab.dimension !== null) {
       this.commit();
-      this.hintEl.textContent = 'Dimension moved.';
+      this.say('Dimension moved.');
       return;
     }
 
     // What the drag arrived at is where the sketch now is.
     this.sync();
     this.after();
-    this.hintEl.textContent = this.result?.solved === true ? 'Moved.' : 'These rules cannot all hold';
+    const moved = this.result?.solved === true;
+    this.say(moved ? 'Moved.' : 'These rules cannot all hold', !moved);
   }
 
   /** Works out what a press that has started moving is actually dragging. */
