@@ -250,6 +250,9 @@ function startSketch(choice: PlaneChoice): void {
     editor.reveal(nodeId);
     document.body.classList.add('sketching');
     sketchSession.enter(nodeId, plane);
+    // The body under the sketch is pinned while it is open, so its edges are
+    // there to measure from; that is a question for the worker.
+    requestSolve();
   } catch (thrown) {
     statusEl.textContent = thrown instanceof Error ? thrown.message : String(thrown);
   }
@@ -258,8 +261,12 @@ function startSketch(choice: PlaneChoice): void {
 const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   onBeforeChange: () => history.capture(),
   onChanged: () => requestSolve(),
+  visibleSolids: () =>
+    [...lastMeshes.values()].filter((mesh) => mesh.kind === 'solid').map((mesh) => mesh.nodeId),
   onExit: () => {
     document.body.classList.remove('sketching');
+    // Whatever was held on screen for the sketch to measure from can go.
+    requestSolve();
     // Leaving a sketch nobody drew in takes the node with it.
     if (selected !== null && (graph.getNode(selected) ?? null) === null) {
       applySelection(null, true);
@@ -283,6 +290,9 @@ function editSketch(nodeId: NodeId | null = selected): void {
 
   document.body.classList.add('sketching');
   sketchSession.enter(nodeId!, plane);
+  // Reopened, the body it measures from has usually been replaced by whatever
+  // the sketch went on to make. It comes back, as its edges, to be clicked.
+  requestSolve();
 }
 
 /** The middle of a mesh's bounding box, in model units. */
@@ -1046,9 +1056,16 @@ let pickedEdges: { nodeId: NodeId; indices: number[] } | null = null;
  */
 let editPins: NodeId[] = [];
 
+/** The body the open sketch measures from, if a sketch is open and has one. */
+function sketchBody(): NodeId | null {
+  return sketchSession.isActive ? sketchSession.referenceBody() : null;
+}
+
 /** Everything the view is being asked to show beyond the model itself. */
 function pinnedNodes(): NodeId[] {
-  const pins = [pickPin, ghostPin, edgesPin, ...editPins].filter(
+  // A sketch measures from the body its face is on, and that body has to be
+  // there to click even when something built later has replaced it.
+  const pins = [pickPin, ghostPin, edgesPin, sketchBody(), ...editPins].filter(
     (id): id is NodeId => id !== null,
   );
   return [...new Set(pins)];
@@ -1158,7 +1175,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   // selected node made. One that would be on screen anyway is left alone.
   const forced = new Set(message.pinnedShown);
   const ghosts = new Map<NodeId, GhostMode>();
-  for (const nodeId of [pickPin, edgesPin, ...editPins]) {
+  for (const nodeId of [pickPin, edgesPin, sketchBody(), ...editPins]) {
     if (nodeId !== null && forced.has(nodeId)) ghosts.set(nodeId, 'edges');
   }
   for (const nodeId of message.pinnedShown) {
@@ -1183,6 +1200,8 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   );
   refreshEdgeHighlight();
   refreshPlaneHighlight();
+  // The body may have moved under an open sketch that measures from it.
+  if (sketchSession.isActive) sketchSession.modelChanged();
 
   // A reopened fillet shows the edges it holds, on the body they came off,
   // which is also where its arrow sits. Both need that body meshed, so this

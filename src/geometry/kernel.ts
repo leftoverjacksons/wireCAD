@@ -45,6 +45,20 @@ export interface EdgeInfo {
   /** Chord direction, sign-canonicalised so a reversed edge reads the same. */
   direction: Vec3;
   length: number;
+  /**
+   * The two ends, ordered along `direction` so a reversed edge reports them the
+   * same way round. What a sketch pins a point to when it refers to this edge.
+   */
+  start: Vec3;
+  end: Vec3;
+  /** True when the edge comes back to where it started: a rim, not a span. */
+  closed: boolean;
+  /**
+   * The middle of the points the edge was sampled at. For a circle that is its
+   * centre, which no point on the edge itself is — and the centre is what a
+   * hole is dimensioned to.
+   */
+  centre: Vec3;
   /** Segments for one edge are contiguous, so this doubles as a render group. */
   segmentStart: number;
   segmentCount: number;
@@ -403,23 +417,97 @@ function describeEdge(
 ): Omit<EdgeInfo, 'segmentStart' | 'segmentCount'> {
   const props = new oc.GProp_GProps_1();
   oc.BRepGProp.LinearProperties(edge, props, false, false);
-  const centre = props.CentreOfMass();
-  const midpoint: Vec3 = { x: centre.X(), y: centre.Y(), z: centre.Z() };
+  const mass = props.CentreOfMass();
+  const midpoint: Vec3 = { x: mass.X(), y: mass.Y(), z: mass.Z() };
   const length = props.Mass();
   props.delete?.();
 
   const first = sampled[0]!;
   const last = sampled[sampled.length - 1]!;
+  const direction = canonicalDirection(first, last);
+  const closed = Math.hypot(last.x - first.x, last.y - first.y, last.z - first.z) < 1e-7;
+  const forwards =
+    (last.x - first.x) * direction.x +
+      (last.y - first.y) * direction.y +
+      (last.z - first.z) * direction.z >=
+    0;
+
+  const centre = closed ? centreOfRim(sampled) : meanOf(sampled);
+
   return {
+    start: forwards ? first : last,
+    end: forwards ? last : first,
+    closed,
+    centre,
     midpoint,
     fraction: {
       x: (midpoint.x - bounds.min.x) / bounds.size.x,
       y: (midpoint.y - bounds.min.y) / bounds.size.y,
       z: (midpoint.z - bounds.min.z) / bounds.size.z,
     },
-    direction: canonicalDirection(first, last),
+    direction,
     length,
   };
+}
+
+function meanOf(points: readonly Vec3[]): Vec3 {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const point of points) {
+    x += point.x;
+    y += point.y;
+    z += point.z;
+  }
+  return { x: x / points.length, y: y / points.length, z: z / points.length };
+}
+
+/**
+ * The centre of a closed edge, taken as the centre of the circle through three
+ * of its samples. Exact for a circle however unevenly it was sampled, which an
+ * average of the samples is not — and the two sides that ask this, the worker
+ * and the view, sample at different densities and have to get the same answer.
+ * Anything that is not a circle falls back to the average.
+ */
+function centreOfRim(sampled: readonly Vec3[]): Vec3 {
+  // The last sample repeats the first.
+  const ring = sampled.slice(0, -1);
+  if (ring.length < 3) return meanOf(ring.length === 0 ? sampled : ring);
+
+  const a = ring[0]!;
+  const b = ring[Math.floor(ring.length / 3)]!;
+  const c = ring[Math.floor((2 * ring.length) / 3)]!;
+  const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+  const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+  const n = {
+    x: ab.y * ac.z - ab.z * ac.y,
+    y: ab.z * ac.x - ab.x * ac.z,
+    z: ab.x * ac.y - ab.y * ac.x,
+  };
+  const nn = n.x * n.x + n.y * n.y + n.z * n.z;
+  if (nn < 1e-18) return meanOf(ring);
+
+  const ab2 = ab.x * ab.x + ab.y * ab.y + ab.z * ab.z;
+  const ac2 = ac.x * ac.x + ac.y * ac.y + ac.z * ac.z;
+  const t = {
+    x: ab2 * (ac.y * n.z - ac.z * n.y) * -1 + ac2 * (ab.y * n.z - ab.z * n.y),
+    y: ab2 * (ac.z * n.x - ac.x * n.z) * -1 + ac2 * (ab.z * n.x - ab.x * n.z),
+    z: ab2 * (ac.x * n.y - ac.y * n.x) * -1 + ac2 * (ab.x * n.y - ab.y * n.x),
+  };
+  const centre = {
+    x: a.x - t.x / (2 * nn),
+    y: a.y - t.y / (2 * nn),
+    z: a.z - t.z / (2 * nn),
+  };
+
+  // Every sample of a circle is the same distance from its centre. One that is
+  // not says this was some other closed curve, which has no centre to offer.
+  const radius = Math.hypot(a.x - centre.x, a.y - centre.y, a.z - centre.z);
+  for (const point of ring) {
+    const distance = Math.hypot(point.x - centre.x, point.y - centre.y, point.z - centre.z);
+    if (Math.abs(distance - radius) > 1e-6 * Math.max(1, radius)) return meanOf(ring);
+  }
+  return centre;
 }
 
 /**

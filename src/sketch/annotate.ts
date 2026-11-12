@@ -135,7 +135,23 @@ export function spanOf(kind: SpanKind, from: Point, to: Point): Measured {
 }
 
 /** What a distance-like constraint spans, and in which direction it reads. */
-function span(constraint: Constraint, points: readonly Point[]): Measured | null {
+function span(sketch: Sketch, constraint: Constraint, points: readonly Point[]): Measured | null {
+  if (constraint.kind === 'lineDistance') {
+    const line = sketch.entities[constraint.line];
+    const to = points[constraint.point];
+    if (line?.kind !== 'line' || to === undefined) return null;
+    const a = points[line.a];
+    const b = points[line.b];
+    if (a === undefined || b === undefined) return null;
+
+    // From the foot of the point on the line, extended if it has to be: the
+    // distance is to the line, not to the stretch of it that happens to be
+    // drawn.
+    const along = unit(subtract(b, a));
+    const from = add(a, along, dot(subtract(to, a), along));
+    return { from, to, along: length(subtract(to, from)) < 1e-9 ? across(along) : unit(subtract(to, from)) };
+  }
+
   if (
     constraint.kind !== 'distance' &&
     constraint.kind !== 'horizontalDistance' &&
@@ -230,7 +246,7 @@ export function placeOf(
     return { offset: length(subtract(cursor, corner.at)), slide: 0 };
   }
 
-  const measured = span(constraint, points);
+  const measured = span(sketch, constraint, points);
   if (measured === null) return null;
   const offset = subtract(cursor, midpoint(measured.from, measured.to));
   return { offset: dot(offset, across(measured.along)), slide: dot(offset, measured.along) };
@@ -313,7 +329,7 @@ export function annotateOne(
     };
   }
 
-  const measured = span(constraint, points);
+  const measured = span(sketch, constraint, points);
   if (measured === null) return null;
 
   // Unplaced, it goes to whichever side faces away from the drawing, so it

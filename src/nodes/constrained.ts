@@ -1,9 +1,10 @@
 import type { NodeDefinition, NodeSchema, PortDef, Value } from '../core/types.js';
 import { circleWire, compoundOf, faceWithHoles, wireFromPoints } from '../geometry/build.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
-import { geometry } from '../geometry/kernel.js';
+import { geometry, shapeOf, tessellate } from '../geometry/kernel.js';
 import { WORLD_XY, pointOnPlane } from '../geometry/plane.js';
-import { decodeSketch, dimensionsOf } from '../sketch/model.js';
+import { decodeSketch, dimensionsOf, refsOf } from '../sketch/model.js';
+import { placeReferences } from '../sketch/references.js';
 import type { Region } from '../sketch/regions.js';
 import { nestRegions, regionsOf, signedArea } from '../sketch/regions.js';
 import { solveSketch } from '../sketch/solver.js';
@@ -33,10 +34,14 @@ export const constrainedSchema: NodeSchema = {
   category: 'Sketch',
   inputs: [
     { id: 'plane', label: 'Plane', type: 'plane', default: WORLD_XY },
+    // The body the sketch measures from, when it measures from one. Left
+    // unwired by a sketch that refers to nothing, which is most of them.
+    { id: 'body', label: 'Measures from', type: 'geometry' },
     { id: 'points', label: 'Points', type: 'list', default: [], hidden: true },
     { id: 'entities', label: 'Entities', type: 'list', default: [], hidden: true },
     { id: 'constraints', label: 'Constraints', type: 'list', default: [], hidden: true },
     { id: 'dims', label: 'Dimensions', type: 'list', default: [], hidden: true },
+    { id: 'refs', label: 'References', type: 'list', default: [], hidden: true },
     // Where each dimension was dragged to. Nothing the kernel builds depends on
     // it, so it is cosmetic and changing it rebuilds nothing.
     {
@@ -53,7 +58,12 @@ export const constrainedSchema: NodeSchema = {
     let names: string[] = [];
     try {
       names = dimensionsOf(
-        decodeSketch(inputs.points ?? [], inputs.entities ?? [], inputs.constraints ?? []),
+        decodeSketch(
+          inputs.points ?? [],
+          inputs.entities ?? [],
+          inputs.constraints ?? [],
+          inputs.refs ?? [],
+        ),
       );
     } catch {
       // A malformed sketch grows no ports; evaluating it reports why.
@@ -88,7 +98,30 @@ export function createConstrainedNodes(oc: OpenCascadeInstance): NodeDefinition[
         inputs.points ?? [],
         inputs.entities ?? [],
         inputs.constraints ?? [],
+        inputs.refs ?? [],
       );
+
+      // What the sketch measures from is put where the body now has it, before
+      // anything is solved: those points are the body's to place, and the rest
+      // of the sketch is whatever satisfies its rules around them.
+      if (refsOf(model).length > 0) {
+        if ((inputs.body ?? null) === null) {
+          throw new Error(
+            'This sketch measures from a body, and no body is wired into it — ' +
+              'wire one into "Measures from", or delete the dimensions that reach for it',
+          );
+        }
+        // A coarse mesh is enough: an edge's ends and a circle's centre do not
+        // depend on how finely it was sampled.
+        const { mesh } = tessellate(oc, shapeOf(inputs.body ?? null, 'body') as Shape, 1.0, 0.6);
+        const missing = placeReferences(model, mesh.edges, plane);
+        if (missing.length > 0) {
+          throw new Error(
+            `${missing.length === 1 ? 'An edge' : `${missing.length} edges`} this sketch measures ` +
+              'from can no longer be found on the body — removed, or moved too far to be recognised',
+          );
+        }
+      }
 
       const dimensions = new Map<string, number>();
       for (const name of dimensionsOf(model)) {
