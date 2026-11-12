@@ -123,7 +123,7 @@ const out = await page.evaluate(async () => {
 
 const near = (got, want) => got !== null && Math.abs(got - want) < 0.5;
 const checks = [
-  ['dimensions become ports    ', out.labels.join(',') === 'Plane,originU,originV,width,height', out.labels.join(',')],
+  ['dimensions become ports    ', out.labels.join(',') === 'Plane,Measures from,originU,originV,width,height', out.labels.join(',')],
   ['solves to 50 x 30 x 10     ', near(out.asDrawn.volume, 50 * 30 * 10), detail(out.asDrawn)],
   ['follows width to 120       ', near(out.widened.volume, 120 * 30 * 10), detail(out.widened)],
   ['height driven by a wire    ', near(out.wired.volume, 120 * 45 * 10), detail(out.wired)],
@@ -238,7 +238,7 @@ const drawChecks = [
   ['with the relations drawn    ', (drawn.relations ?? []).filter((k) => k === 'horizontal').length === 2 &&
     (drawn.relations ?? []).filter((k) => k === 'vertical').length === 2,
     (drawn.relations ?? []).join(',')],
-  ['and no lengths assumed      ', (drawn.labels ?? []).join(',') === 'Plane,originU,originV',
+  ['and no lengths assumed      ', (drawn.labels ?? []).join(',') === 'Plane,Measures from,originU,originV',
     (drawn.labels ?? []).join(',')],
   ['it says how loose it is     ', /degrees of freedom/.test(drawn.status), drawn.status],
   ['the view comes back         ', cameraAfter.join(',') === cameraBefore.join(','),
