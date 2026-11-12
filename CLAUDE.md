@@ -78,6 +78,10 @@ architecture is in `README.md`.
 ## Working with the branch
 
 - Branch from `main`, merge promptly, delete the branch after.
+- **Finish a change by opening a pull request and merging it**, without waiting
+  to be asked. The owner evaluates on the hosted site, which only builds from
+  `main`, so a change that is not merged cannot be looked at; the pull request
+  is what there is to revert if it turns out wrong. Verify first, then merge.
 - Do not run two sessions against the same files at once. Two edits to
   `src/viewport.ts` on different branches is how a quiet afternoon ends.
 - If the branch falls behind, merge `main` in and re-run the suites.
