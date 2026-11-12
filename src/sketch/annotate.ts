@@ -12,6 +12,14 @@ export interface Annotation {
   /** Index into the sketch's constraints, so a click can find its rule. -1 while placing. */
   constraint: number;
   dimension: string;
+  /**
+   * What this drawn dimension is known by. Its name, unless several rules share
+   * that name: a number can be held by more than one rule, and each of them is
+   * still drawn, placed and typed into separately.
+   */
+  key: string;
+  /** True when the number is shared with another rule. */
+  linked: boolean;
   value: number;
   /** What the number reads as, units and all. */
   text: string;
@@ -103,6 +111,39 @@ function arrowhead(at: Point, along: Point, size: number): Array<[Point, Point]>
 export function formatLength(value: number): string {
   const rounded = Math.round(value * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, '');
+}
+
+/** Splits a shared number's later rules from its first, in a drawn dimension's key. */
+const KEY_MARK = '~';
+
+function usesOfName(sketch: Sketch, name: string): number {
+  let count = 0;
+  for (const rule of sketch.constraints) {
+    if ('dimension' in rule && rule.dimension === name) count += 1;
+  }
+  return count;
+}
+
+/**
+ * What the dimension drawn for a rule is known by: the name of its number, with
+ * a count on the end for every rule after the first that shares it.
+ */
+export function keyOfRule(sketch: Sketch, index: number): string {
+  const rule = sketch.constraints[index];
+  if (rule === undefined || !('dimension' in rule)) return '';
+
+  let nth = 1;
+  for (let before = 0; before < index; before++) {
+    const other = sketch.constraints[before]!;
+    if ('dimension' in other && other.dimension === rule.dimension) nth += 1;
+  }
+  return nth === 1 ? rule.dimension : `${rule.dimension}${KEY_MARK}${nth}`;
+}
+
+/** The name of the number a drawn dimension's key belongs to. */
+export function nameOfKey(key: string): string {
+  const mark = key.indexOf(KEY_MARK);
+  return mark < 0 ? key : key.slice(0, mark);
 }
 
 /** The middle of everything drawn, so dimensions can be put on the outside of it. */
@@ -272,7 +313,14 @@ export function annotateOne(
   if (!('dimension' in constraint)) return null;
   if (constraint.kind === 'lockU' || constraint.kind === 'lockV') return null;
 
-  const base = { constraint: index, dimension: constraint.dimension, value };
+  const key = index < 0 ? constraint.dimension : keyOfRule(sketch, index);
+  const base = {
+    constraint: index,
+    dimension: constraint.dimension,
+    key,
+    linked: index >= 0 && usesOfName(sketch, constraint.dimension) > 1,
+    value,
+  };
 
   if (constraint.kind === 'radius') {
     const entity = sketch.entities[constraint.circle];
@@ -388,7 +436,7 @@ export function annotate(
       radii,
       dimensions.get(constraint.dimension) ?? 0,
       scale,
-      places.get(constraint.dimension),
+      places.get(keyOfRule(sketch, index)),
       centre,
     );
     if (drawn !== null) out.push(drawn);

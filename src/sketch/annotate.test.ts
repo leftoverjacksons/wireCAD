@@ -6,6 +6,8 @@ import {
   decodePlaces,
   encodePlaces,
   formatLength,
+  keyOfRule,
+  nameOfKey,
   placeOf,
 } from './annotate.js';
 import type { Sketch } from './model.js';
@@ -179,3 +181,66 @@ describe('formatLength', () => {
     expect(formatLength(12.345)).toBe('12.35');
   });
 });
+
+describe('a number more than one rule holds', () => {
+  const shared: Sketch = {
+    points: [
+      { u: 0, v: 0 },
+      { u: 30, v: 0 },
+      { u: 30, v: 20 },
+    ],
+    entities: [
+      { kind: 'line', a: 0, b: 1 },
+      { kind: 'line', a: 1, b: 2 },
+    ],
+    constraints: [
+      { kind: 'distance', a: 0, b: 1, dimension: 'side' },
+      { kind: 'horizontal', line: 0 },
+      { kind: 'distance', a: 1, b: 2, dimension: 'side' },
+    ],
+  };
+
+  it('is drawn once for each rule, each known by a key of its own', () => {
+    const drawn = annotate(shared, shared.points, [], new Map([['side', 30]]), 1);
+
+    expect(drawn.map((entry) => entry.key)).toEqual(['side', 'side~2']);
+    expect(drawn.every((entry) => entry.dimension === 'side' && entry.linked)).toBe(true);
+    expect(keyOfRule(shared, 2)).toBe('side~2');
+    expect(nameOfKey('side~2')).toBe('side');
+    expect(nameOfKey('side')).toBe('side');
+  });
+
+  it('is placed separately for each rule that holds it', () => {
+    const places = new Map([['side~2', { offset: 50, slide: 0 }]]);
+    const drawn = annotate(shared, shared.points, [], new Map([['side', 30]]), 1, places);
+
+    // Only the second was put anywhere by hand; the first places itself.
+    expect(Math.abs(drawn[1]!.label.u - 30)).toBeCloseTo(50, 6);
+    expect(Math.abs(drawn[0]!.label.v)).toBeLessThan(50);
+  });
+
+  it('is not called shared when only one rule holds it', () => {
+    const alone = { ...shared, constraints: shared.constraints.slice(0, 2) };
+    expect(annotate(alone, alone.points, [], new Map([['side', 30]]), 1)[0]!.linked).toBe(false);
+  });
+});
+
+describe('how far a point stands off a line', () => {
+  it('is drawn from the foot of the point on the line, extended if need be', () => {
+    const sketch: Sketch = {
+      points: [
+        { u: 0, v: 0 },
+        { u: 0, v: 10 },
+        { u: 12, v: 30 },
+      ],
+      entities: [{ kind: 'line', a: 0, b: 1 }],
+      constraints: [{ kind: 'lineDistance', point: 2, line: 0, dimension: 'gap' }],
+    };
+    const [drawn] = annotate(sketch, sketch.points, [], new Map([['gap', 12]]), 1);
+
+    // One witness line starts on the line's extension, level with the point.
+    expect(drawn!.lines.some(([from]) => from.u === 0 && from.v === 30)).toBe(true);
+    expect(drawn!.text).toBe('12');
+  });
+});
+

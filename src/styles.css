@@ -1006,6 +1006,13 @@ input[type='range'] {
   cursor: move;
 }
 
+/* A number more than one rule holds: changing it here moves something else. */
+.sketch-label-field.is-linked {
+  border-style: double;
+  border-width: 3px;
+  font-style: italic;
+}
+
 /* A dimension picked out wears the same colour as anything else picked. */
 .sketch-label-field.is-picked {
   border-color: var(--highlight);
