@@ -17,6 +17,11 @@ npm run dev
 
 Then open the URL Vite prints (by default <http://localhost:5173>).
 
+Or use the hosted copy: every push to `main` is built and published to GitHub
+Pages by `.github/workflows/pages.yml`, at
+<https://leftoverjacksons.github.io/wireCAD/>. It is built with a relative base
+path, because a project site is served from `/wireCAD/` rather than the root.
+
 The kernel compiles in the browser on first load — the sidebar reports when it
 is ready, typically around two seconds.
 
