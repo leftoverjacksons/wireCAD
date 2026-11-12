@@ -23,7 +23,9 @@ export function regionsOf(sketch: Sketch): Region[] {
 
   for (const [index, entity] of sketch.entities.entries()) {
     if (entity.kind === 'circle') regions.push({ kind: 'circle', entity: index, centre: entity.centre });
-    else lineIndices.push(index);
+    // An edge of the body laid in to measure from bounds nothing: a profile is
+    // made of what was drawn, not of what it was drawn against.
+    else if (entity.reference !== true) lineIndices.push(index);
   }
 
   const meeting = new Map<number, number[]>();

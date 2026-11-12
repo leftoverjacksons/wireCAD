@@ -106,7 +106,7 @@ is ready, typically around two seconds.
   nobody drew in is removed rather than left behind reporting that it is empty.
 - **Dimensioning** — *Dimension* is a tool like the drawing ones, and pressing
   it opens its own panel. Click what you want measured — a line, a circle, two
-  points — and the dimension follows the cursor: move it to where it reads best
+  points, or a line and then a point for how far the point stands off it — and the dimension follows the cursor: move it to where it reads best
   and click to leave it there. It arrives drawn with witness lines and
   arrowheads, its number waiting to be typed over: type and press Enter and the
   sketch follows it. Clicking a second line instead of placing it makes an angle
@@ -120,6 +120,19 @@ is ready, typically around two seconds.
   of those names pins it, so a placement that would read as a component can be
   held to the length. A span already square to an axis has no components worth
   the name, so it is always just its length.
+- **Measuring from the body** — a sketch on a face can be dimensioned to the
+  body it is on, and there is no command for it: with Select or Dimension in
+  hand, the edges of the body light up under the cursor and can be clicked like
+  anything drawn. Clicking one lays it into the sketch, in the body's own
+  orange — a straight edge as a line with its two ends, the rim of a bore as its
+  centre, since the centre is what a hole is dimensioned to and it is not
+  somewhere a click can land. From then on it is picked, dimensioned and
+  constrained against like the rest: an edge and then a circle is how far the
+  circle stands off the edge, a corner and a point is the distance between
+  them, and Parallel, On line and Coincident all take it. What the body placed
+  does not move when the sketch is pushed about, and a dimension that is only
+  about the body is refused, because that distance is the body's to set. An
+  edge that was clicked and never measured from is taken back out on leaving.
 - **Moving things about** — with Select, drag a point, an edge or a circle and
   the sketch follows as far as its rules allow: a point nothing holds goes where
   it is put, a point on a horizontal line slides along it, and a fully
@@ -348,6 +361,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:move` | Checks a move at the end of a chain shifts the whole body, and one in the middle leaves what was cut from it where it was |
 | `npm run verify:edit` | Checks a feature reopens on its own values, changes live, and is put back by Cancel |
 | `npm run verify:viewport-menu` | Checks a right-click on a body offers what the node offers, scoped to the face under the cursor, and that right-dragging still pans |
+| `npm run verify:references` | Checks a sketch on a face can be dimensioned to the body's edges, and follows the body when it changes |
 | `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
@@ -516,6 +530,61 @@ pixel is currently worth in millimetres, so dimensions keep their proportions as
 the view zooms rather than growing with the model. The offset goes to whichever
 side faces away from the middle of the drawing, so a dimension lands outside the
 shape rather than across it.
+
+## Measuring a sketch from the body
+
+A sketch on a face has nothing to measure from but the face, and the face is not
+in the sketch. So an edge of the body can be laid into it. Its ends, dropped
+onto the sketch plane along the normal, become points in the sketch like any
+other — with one difference, which is the whole of the feature: the solver is
+not allowed to move them. They keep their place in the vector of unknowns, so
+every constraint reads them exactly as it reads any other point, and simply
+have no column in the Jacobian. Nothing can ask them to move, because nothing is
+ever told that they could.
+
+That is why there was nothing to add to the dimension tool or to the relations.
+A point the body placed is a point; a reference line is a line. Every rule the
+sketch already understood works against them unchanged.
+
+The reference itself is stored the way a fillet's edge selection is: the edge's
+midpoint as a fraction of the body's bounding box, its direction and its length,
+re-resolved against the body on every solve. So the sketch reads the body
+through a `Measures from` input, wired the first time an edge is clicked, and a
+dimension to an edge follows that edge when the body is resized. It needs to:
+a face plane's origin is the middle of its face, which moves when the face
+changes shape, so a sketch that only remembered coordinates would drift with it.
+
+Both sides place the references from the same description of the edges. The
+worker has the shape and the view has the mesh it is drawing, but an edge's ends
+and a rim's centre are recorded with the tessellation, and one function turns
+those into points on the plane — so the drawing on screen is already where the
+solve will put it. A rim's centre is taken as the centre of the circle through
+three of its samples rather than as their average, because the two sides sample
+at different densities and an average would only agree for a circle sampled
+evenly.
+
+Three things had to give way to make it sit comfortably.
+
+**A reference line bounds nothing.** A profile is made of what was drawn, not of
+what it was drawn against, so the walk that recovers closed loops skips
+reference lines — otherwise the first edge clicked would be reported as a loose
+end.
+
+**The origin lock gives way.** A sketch is pinned by its first point so a solve
+cannot slide the whole drawing about, which is a stand-in for nobody having said
+where it goes. A dimension to the body is somebody saying. Left alongside it,
+the lock would agree with that dimension until its number was changed and
+contradict it from then on, so wherever the two say the same thing — which the
+solver's count of redundant rows detects — the lock is the one that goes.
+
+**A reference is removed by name.** Two edges that meet share their corner in
+the sketch as they do on the body. Taking a reference out by asking for its
+points took every reference sharing a corner with it; a unit test for exactly
+that is how it was found.
+
+A reference whose edge can no longer be found fails the sketch with a reason
+rather than leaving the point where it last was, and an edge that has changed
+from a span into a rim, or the reverse, is not the edge that was referred to.
 
 ## Solving a sketch
 
@@ -718,6 +787,16 @@ of it are built.
   corners it reads is fixed by the two lines' direction.
 - Dragging a circle moves it. There is no dragging its rim to change the radius,
   because only points are pulled, not the radius itself: dimension it or type it.
+- A sketch measures from one body. The first edge clicked decides which, and
+  edges of another body are not offered after that.
+- Only an edge's ends, a straight edge's line and a closed edge's centre can be
+  measured from. The rim of a bore is not itself something to be tangent to or a
+  set distance from, and a curved edge offers its two ends and nothing between.
+- An edge of the body is found again by where it sits in the body's bounding
+  box, like a fillet's selection. A change that moves it a long way within that
+  box, or adds a similar edge next to it, can leave the sketch measuring from
+  the wrong one or failing to find it.
+- Laying an edge into a sketch and dimensioning to it are two steps to undo.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a

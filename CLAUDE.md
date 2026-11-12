@@ -15,12 +15,15 @@ architecture is in `README.md`.
   CHROMIUM_PATH=/opt/pw-browsers/chromium npm run verify:browser
   ```
 
-  There are twelve: `browser shell edges profile extrude links constraints
-  preview ghost drag glyphs datums`. They take about four minutes together and
-  they are the only thing that actually tests geometry, because the kernel is
-  WebAssembly and does not run in the unit suite.
+  There are eighteen, one `verify:<name>` script each: `browser shell edges
+  profile extrude links constraints preview ghost drag glyphs datums menu move
+  edit rollback viewport-menu references`. They take several minutes together
+  and they are the only thing that actually tests geometry, because the kernel
+  is WebAssembly and does not run in the unit suite.
 - Anything about the interface is claimed only after looking at a screenshot.
   Assertions pass on things that look wrong.
+- A screenshot read at reduced size turns a one-pixel coloured line white. Read
+  the pixels before deciding a highlight is missing.
 - When a test click misses, suspect the test before the code. Several "bugs"
   here were clicks landing on the toolbar or the sketch panel. Check with
   `document.elementFromPoint` and fail loudly rather than silently missing.
@@ -50,6 +53,9 @@ architecture is in `README.md`.
   positive; reversed, applying it turns the geometry back to front.
 - **A drawing asserts only what it shows.** An edge drawn flat is horizontal;
   its length is never assumed. A fresh sketch is honestly under-constrained.
+- **Points the body placed are not unknowns.** A sketch's reference points keep
+  their slots in the solver's vector but have no Jacobian column. Anything that
+  counts freedom, drags, or deletes points has to ask `fixedPoints` first.
 - **Topological naming.** Faces are found by normal and rank, edges by
   bounding-box fraction, direction and length. Translation preserves both, which
   is why Move is safe mid-chain; rotation would not be.

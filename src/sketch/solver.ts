@@ -1,5 +1,5 @@
 import type { Constraint, Point, Sketch } from './model.js';
-import { circleOf, lineOf, pointIndex } from './model.js';
+import { circleOf, fixedPoints, lineOf, pointIndex } from './model.js';
 
 /**
  * Solves a sketch by least squares.
@@ -64,6 +64,13 @@ interface Layout {
   /** Unknown index of each circle entity's radius, by entity index. */
   radiusAt: Map<number, number>;
   size: number;
+  /**
+   * Slots the solver may not move: the points a reference pins to the body.
+   * They keep their place in the vector, so every residual reads them exactly
+   * as it reads any other point, and simply have no column in the Jacobian —
+   * nothing can ask them to move, because nothing is ever told that they could.
+   */
+  fixed: boolean[];
 }
 
 function layoutOf(sketch: Sketch): Layout {
@@ -77,7 +84,15 @@ function layoutOf(sketch: Sketch): Layout {
     next += 1;
   }
 
-  return { pointAt, radiusAt, size: next };
+  const fixed = new Array<boolean>(next).fill(false);
+  for (const point of fixedPoints(sketch)) {
+    const slot = pointAt[point];
+    if (slot === undefined) continue;
+    fixed[slot] = true;
+    fixed[slot + 1] = true;
+  }
+
+  return { pointAt, radiusAt, size: next, fixed };
 }
 
 function pack(sketch: Sketch, layout: Layout): number[] {
@@ -209,6 +224,18 @@ function residualsOf(
       out.push(b.v - a.v - value(constraint.dimension));
       return;
     }
+    case 'lineDistance': {
+      const line = lineOf(sketch, constraint.line, 'Distance to a line');
+      const a = at(x, layout, line.a);
+      const b = at(x, layout, line.b);
+      const p = at(x, layout, pointIndex(sketch, constraint.point, 'Distance to a line'));
+      const d = { u: b.u - a.u, v: b.v - a.v };
+      const scale = Math.max(norm(d), EPSILON);
+      // Unsigned: the number says how far, and which side the point is on is
+      // whichever it was drawn on, since the solver starts from there.
+      out.push(Math.abs(d.u * (p.v - a.v) - d.v * (p.u - a.u)) / scale - value(constraint.dimension));
+      return;
+    }
     case 'radius': {
       circleOf(sketch, constraint.circle, 'Radius');
       out.push(x[layout.radiusAt.get(constraint.circle)!]! - value(constraint.dimension));
@@ -243,10 +270,12 @@ function jacobianOf(
   x: number[],
   columns: number,
   rows: number,
+  fixed: readonly boolean[],
 ): number[][] {
   const J: number[][] = Array.from({ length: rows }, () => new Array<number>(columns).fill(0));
 
   for (let column = 0; column < columns; column++) {
+    if (fixed[column] === true) continue;
     const step = 1e-7 * Math.max(1, Math.abs(x[column]!));
     const original = x[column]!;
 
@@ -337,7 +366,13 @@ export function solveSketch(
     const J =
       rows === 0
         ? []
-        : jacobianOf((at) => evaluate(sketch, layout, at, dimensions), x, layout.size, rows);
+        : jacobianOf(
+            (at) => evaluate(sketch, layout, at, dimensions),
+            x,
+            layout.size,
+            rows,
+            layout.fixed,
+          );
     const rank = rows === 0 ? 0 : rankOf(J, layout.size);
     return {
       points: sketch.points.map((_, index) => ({
@@ -350,7 +385,7 @@ export function solveSketch(
       solved,
       worst,
       iterations,
-      freedom: Math.max(layout.size - rank, 0),
+      freedom: Math.max(layout.size - layout.fixed.filter(Boolean).length - rank, 0),
       redundant: Math.max(rows - rank, 0),
     };
   };
@@ -371,7 +406,11 @@ export function solveSketch(
   // pull gone, puts the constraints exactly right again from wherever that
   // landed. What the drag could not have is dropped rather than approximated.
   const start = [...x];
-  const dragging = options.pull ?? [];
+  // A point the body places cannot be dragged: the wish would have nothing to
+  // move and would only keep the solver from ever calling itself done.
+  const dragging = (options.pull ?? []).filter(
+    (wish) => layout.fixed[layout.pointAt[wish.point] ?? -1] !== true,
+  );
   const settling = options.settle ?? true;
   const passes: Array<{ weight: number; pull: readonly Pull[] }> =
     dragging.length > 0
@@ -465,7 +504,7 @@ function run(
   while (iterations < maxIterations && !done(x)) {
     iterations += 1;
 
-    const J = jacobianOf(full, x, layout.size, height);
+    const J = jacobianOf(full, x, layout.size, height, layout.fixed);
 
     // Normal equations: (JtJ + lambda * diag(JtJ)) step = -Jt r.
     const JtJ: number[][] = Array.from({ length: layout.size }, () =>

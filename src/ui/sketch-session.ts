@@ -17,9 +17,22 @@ import {
 import type { Glyph } from '../sketch/glyphs.js';
 import { glyphReach, glyphsFor } from '../sketch/glyphs.js';
 import type { Draft } from '../sketch/draw.js';
-import { addCircle, addLine, addPoint, addRectangle, removeParts, uniqueName } from '../sketch/draw.js';
+import {
+  addCircle,
+  addLine,
+  addPoint,
+  addRectangle,
+  onlyAboutTheBody,
+  pruneReferences,
+  removeParts,
+  uniqueName,
+} from '../sketch/draw.js';
 import type { Constraint, Point, Sketch } from '../sketch/model.js';
-import { decodeSketch, dimensionsOf, encodeSketch } from '../sketch/model.js';
+import { decodeSketch, dimensionsOf, encodeSketch, fixedPoints, refsOf } from '../sketch/model.js';
+import type { ReferenceHit } from '../sketch/references.js';
+import { addReference, outlineOf, placeReferences, referenceAt } from '../sketch/references.js';
+import { matchEdgeRefs } from '../nodes/edges.js';
+import { outputPortFor } from './features.js';
 import type { Pull, SolveResult } from '../sketch/solver.js';
 import { solveSketch } from '../sketch/solver.js';
 import type { Viewport } from '../viewport.js';
@@ -28,6 +41,8 @@ export interface SketchSessionCallbacks {
   onBeforeChange(): void;
   onChanged(): void;
   onExit(): void;
+  /** The solid bodies on screen, which a sketch on no face may measure from. */
+  visibleSolids(): NodeId[];
 }
 
 /**
@@ -103,7 +118,7 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'select',
     label: 'Select',
-    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too.',
+    hint: 'Click to pick, drag to move as far as the rules allow, Delete to remove. Dimensions and relation marks are pickable too, and so are the edges of the body.',
   },
   {
     id: 'line',
@@ -116,7 +131,7 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'dimension',
     label: 'Dimension',
-    hint: 'Click a line, a circle, or two points, then move to place the dimension and click. Click a second line instead for an angle. Then type the number.',
+    hint: 'Click a line, a circle, or two points, then move to place the dimension and click. A line and then a point gives the distance between them; a second line gives an angle. Edges of the body can be clicked like anything drawn. Then type the number.',
   },
 ];
 
@@ -288,6 +303,10 @@ export class SketchSession {
   private chain: number[] = [];
   /** Where the pointer is, snapped, while a tool is part way through. */
   private cursor: Point | null = null;
+  /** Where it is without the snapping: the body's edges do not sit on the grid. */
+  private rawCursor: Point | null = null;
+  /** The edge of the body a click would take right now, as it would be drawn. */
+  private hover: Vec3[] | null = null;
 
   constructor(
     container: HTMLElement,
@@ -458,6 +477,7 @@ export class SketchSession {
       node.inputs.points ?? [],
       node.inputs.entities ?? [],
       node.inputs.constraints ?? [],
+      node.inputs.refs ?? [],
     );
 
     const dimensions = new Map<string, number>();
@@ -473,6 +493,7 @@ export class SketchSession {
     this.picked = [];
     this.chain = [];
     this.cursor = null;
+    this.hover = null;
     this.placing = null;
     this.endGrab();
 
@@ -496,6 +517,18 @@ export class SketchSession {
     const nodeId = this.nodeId;
     if (nodeId === null) return;
 
+    // An edge of the body that was laid in and then never measured from goes
+    // back out: clicking one is how a person finds out what is there to click.
+    if (this.draft !== null && refsOf(this.draft.sketch).length > 0) {
+      this.sync();
+      if (pruneReferences(this.draft)) {
+        this.callbacks.onBeforeChange();
+        if (refsOf(this.draft.sketch).length === 0) this.releaseBody(nodeId);
+        this.result = solveSketch(this.draft.sketch, this.draft.dimensions);
+        this.commit();
+      }
+    }
+
     // A sketch nobody drew in is not worth keeping: left behind it would sit in
     // the graph reporting that it has nothing in it.
     if (this.draft !== null && this.draft.sketch.points.length === 0) {
@@ -516,6 +549,7 @@ export class SketchSession {
     this.chain = [];
     this.result = null;
     this.placing = null;
+    this.hover = null;
     this.places = new Map();
 
     this.releaseCamera?.();
@@ -561,8 +595,151 @@ export class SketchSession {
 
   private resolve(): void {
     if (this.draft === null) return;
+    this.placeOnBody();
     this.result = solveSketch(this.draft.sketch, this.draft.dimensions);
     this.render();
+  }
+
+  // ----------------------------------------------------------- the body
+
+  /**
+   * The body this sketch measures from: the one wired into it, or failing that
+   * the one whose face it sits on. Null for a sketch on a datum plane that has
+   * not yet reached for anything, which may reach for whatever is on screen.
+   */
+  referenceBody(): NodeId | null {
+    const nodeId = this.nodeId;
+    if (nodeId === null) return null;
+
+    const wired = this.graph.incomingEdge(nodeId, 'body');
+    if (wired !== undefined) return wired.from.node;
+
+    const plane = this.graph.incomingEdge(nodeId, 'plane');
+    if (plane === undefined || this.graph.getNode(plane.from.node)?.type !== 'face.plane') return null;
+    return this.graph.incomingEdge(plane.from.node, 'solid')?.from.node ?? null;
+  }
+
+  /** The bodies whose edges a click may take. */
+  private candidateBodies(): NodeId[] {
+    const nodeId = this.nodeId;
+    if (nodeId === null) return [];
+
+    const own = this.referenceBody();
+    if (own !== null) return [own];
+
+    // Anything built from this sketch cannot also be what it measures from.
+    const after = this.graph.downstreamOf(nodeId);
+    return this.callbacks.visibleSolids().filter((body) => !after.has(body));
+  }
+
+  /**
+   * Puts the points the body places where the body now has them. The worker
+   * does the same from the shape itself when it builds the profile; this is the
+   * view doing it from the mesh it is drawing, so the sketch on screen is
+   * already where the solve will put it.
+   */
+  private placeOnBody(): boolean {
+    const draft = this.draft;
+    const plane = this.plane;
+    if (draft === null || plane === null || refsOf(draft.sketch).length === 0) return false;
+
+    const body = this.referenceBody();
+    const edges = body === null ? undefined : this.viewport.edgesOf(body);
+    if (edges === undefined) return false;
+
+    const before = draft.sketch.points.map((point) => ({ ...point }));
+    placeReferences(draft.sketch, edges, plane);
+    return draft.sketch.points.some(
+      (point, index) =>
+        Math.abs(point.u - before[index]!.u) > 1e-9 || Math.abs(point.v - before[index]!.v) > 1e-9,
+    );
+  }
+
+  /**
+   * The model was solved again. If the body moved under the sketch, the sketch
+   * follows it here as it will in the worker.
+   */
+  modelChanged(): void {
+    if (this.draft === null || this.grab?.moved === true) return;
+    this.sync();
+    if (!this.placeOnBody()) return;
+    this.result = solveSketch(this.draft.sketch, this.draft.dimensions);
+    this.render();
+  }
+
+  /** The edge of the body under a point, among those not already in the sketch. */
+  private bodyEdgeAt(at: Point, slack: number): { body: NodeId; hit: ReferenceHit } | null {
+    const draft = this.draft;
+    const plane = this.plane;
+    if (draft === null || plane === null) return null;
+
+    const own = this.graph.incomingEdge(this.nodeId!, 'body')?.from.node ?? null;
+    for (const body of this.candidateBodies()) {
+      const edges = this.viewport.edgesOf(body);
+      if (edges === undefined) continue;
+
+      // An edge already laid in is hit as part of the sketch, not again here.
+      const taken = new Set(
+        body === own
+          ? matchEdgeRefs(
+              edges,
+              refsOf(draft.sketch).map((ref) => ref.edge),
+            )
+          : [],
+      );
+      const hit = referenceAt(edges, plane, at, slack, taken);
+      if (hit !== null) return { body, hit };
+    }
+    return null;
+  }
+
+  /**
+   * Takes the edge of the body under a click into the sketch, and answers with
+   * what was clicked: an end, the centre of a rim, or the edge itself.
+   *
+   * This is the whole of projecting geometry. There is no command for it,
+   * because wanting to measure from an edge is already said by clicking it.
+   */
+  private adopt(at: Point, slack: number): Selection | null {
+    const draft = this.draft;
+    const plane = this.plane;
+    const nodeId = this.nodeId;
+    if (draft === null || plane === null || nodeId === null) return null;
+
+    const found = this.bodyEdgeAt(at, slack);
+    if (found === null) return null;
+    const edge = this.viewport.edgesOf(found.body)?.[found.hit.edge];
+    if (edge === undefined) return null;
+
+    this.callbacks.onBeforeChange();
+    if (this.graph.incomingEdge(nodeId, 'body') === undefined) {
+      const source = outputPortFor(this.graph, found.body, 'geometry');
+      if (source === null) return null;
+      this.graph.connect(source, { node: nodeId, port: 'body' });
+    }
+
+    this.sync();
+    const laid = addReference(draft.sketch, edge, plane);
+    this.hover = null;
+    this.resolve();
+    this.commit();
+
+    switch (found.hit.part) {
+      case 'start':
+        return { kind: 'point', index: laid.points[0]! };
+      case 'end':
+        return { kind: 'point', index: laid.points[1]! };
+      case 'centre':
+        return { kind: 'point', index: laid.points[0]! };
+      default:
+        return laid.line < 0 ? null : { kind: 'entity', index: laid.line };
+    }
+  }
+
+  /** Lets go of the body once nothing in the sketch measures from it. */
+  private releaseBody(nodeId: NodeId): void {
+    const wired = this.graph.incomingEdge(nodeId, 'body');
+    if (wired !== undefined) this.graph.disconnect(wired.id);
   }
 
   /**
@@ -595,6 +772,7 @@ export class SketchSession {
     this.graph.setInput(nodeId, 'points', encoded.points);
     this.graph.setInput(nodeId, 'entities', encoded.entities as Value[]);
     this.graph.setInput(nodeId, 'constraints', encoded.constraints as Value[]);
+    this.graph.setInput(nodeId, 'refs', encoded.refs as Value[]);
     this.graph.setInput(nodeId, 'dims', dims as Value[]);
     this.graph.setInput(nodeId, 'places', encodePlaces(this.places) as Value[]);
     for (const [name, value] of draft.dimensions) {
@@ -640,7 +818,13 @@ export class SketchSession {
       return;
     }
 
-    this.tryAdding(relation.apply(this.picked, draft.sketch), relation.label);
+    const added = relation.apply(this.picked, draft.sketch);
+    if (added.every((rule) => onlyAboutTheBody(draft.sketch, rule))) {
+      this.hintEl.textContent = `${relation.label}: that is all the body\u2019s, and the body already says how it lies. Pick something drawn as well.`;
+      return;
+    }
+
+    this.tryAdding(added, relation.label);
   }
 
   // ----------------------------------------------------------- dimensions
@@ -693,6 +877,36 @@ export class SketchSession {
       };
     }
 
+    // A line and a point, or a line and a circle, is how far the point stands
+    // off the line: what a hole is from an edge.
+    const straight = chosenLines.filter((index) => isLine(sketch, index));
+    const round = chosenLines.filter((index) => isCircle(sketch, index));
+    if (straight.length === 1 && chosenPoints.length + round.length === 1) {
+      const circle = round.length === 1 ? sketch.entities[round[0]!] : undefined;
+      const point = circle?.kind === 'circle' ? circle.centre : chosenPoints[0]!;
+      const line = sketch.entities[straight[0]!]!;
+      if (line.kind === 'line' && point !== line.a && point !== line.b) {
+        const constraint: Constraint = {
+          kind: 'lineDistance',
+          point,
+          line: straight[0]!,
+          dimension: PENDING,
+        };
+        const from = solved.points[line.a]!;
+        const to = solved.points[line.b]!;
+        const p = solved.points[point]!;
+        const size = Math.max(Math.hypot(to.u - from.u, to.v - from.v), 1e-9);
+        return {
+          constraint,
+          place: at === null ? null : placeOf(sketch, constraint, solved.points, at),
+          value:
+            Math.abs((to.u - from.u) * (p.v - from.v) - (to.v - from.v) * (p.u - from.u)) / size,
+          stem: 'offset',
+          pinned: null,
+        };
+      }
+    }
+
     let a: number;
     let b: number;
     let stem: string;
@@ -742,21 +956,23 @@ export class SketchSession {
     const draft = this.draft;
     if (draft === null) return;
     const sketch = draft.sketch;
-    const hit = this.nearest(at, this.slack());
+    let hit = this.nearest(at, this.slack());
 
     if (this.placing !== null) {
-      // A second line turns a length into an angle, which is the one click that
-      // is not a placement.
+      // A second line turns a length into an angle, and a point or a circle
+      // turns it into how far that stands off the line. Those are the clicks
+      // that are not a placement.
       const already = this.picked;
       const only = already.length === 1 ? already[0] : undefined;
+      const line =
+        only !== undefined && only.kind === 'entity' ? sketch.entities[only.index] : undefined;
       if (
         hit !== null &&
-        hit.kind === 'entity' &&
-        isLine(sketch, hit.index) &&
+        line?.kind === 'line' &&
         only !== undefined &&
-        only.kind === 'entity' &&
-        isLine(sketch, only.index) &&
-        hit.index !== only.index
+        (hit.kind === 'entity'
+          ? hit.index !== only.index
+          : hit.kind === 'point' && hit.index !== line.a && hit.index !== line.b)
       ) {
         this.picked = [...already, hit];
         this.placing = this.buildPlacing(at, null);
@@ -768,17 +984,20 @@ export class SketchSession {
       return;
     }
 
+    // Nothing drawn is under the click, so it may be the body that was meant.
+    if (hit === null) hit = this.adopt(this.rawCursor ?? at, this.slack());
     if (hit === null) {
       this.picked = [];
       this.render();
       return;
     }
 
+    const chosen = hit;
     const already = this.picked.findIndex(
-      (entry) => entry.kind === hit.kind && entry.index === hit.index,
+      (entry) => entry.kind === chosen.kind && entry.index === chosen.index,
     );
     if (already >= 0) this.picked.splice(already, 1);
-    else this.picked.push(hit);
+    else this.picked.push(chosen);
 
     this.placing = this.buildPlacing(at, null);
     this.render();
@@ -789,6 +1008,15 @@ export class SketchSession {
     const pending = this.placing;
     const draft = this.draft;
     if (pending === null || draft === null) return false;
+
+    if (onlyAboutTheBody(draft.sketch, pending.constraint)) {
+      this.placing = null;
+      this.picked = [];
+      this.hintEl.textContent =
+        'Both ends of that belong to the body, so the distance is the body\u2019s to set. Pick something drawn as well.';
+      this.render();
+      return false;
+    }
 
     const name = uniqueName(draft.dimensions, pending.stem);
     const constraint = { ...pending.constraint, dimension: name } as Constraint;
@@ -846,7 +1074,7 @@ export class SketchSession {
     const before = [...draft.sketch.constraints];
     draft.sketch.constraints = [...before, ...added];
 
-    const attempt = solveSketch(draft.sketch, draft.dimensions);
+    let attempt = solveSketch(draft.sketch, draft.dimensions);
     if (!attempt.solved) {
       draft.sketch.constraints = before;
       this.hintEl.textContent = `${label} contradicts the rules already here.`;
@@ -855,6 +1083,7 @@ export class SketchSession {
     }
 
     this.callbacks.onBeforeChange();
+    attempt = this.yieldAnchor(attempt);
     this.result = attempt;
     this.picked = [];
     this.hintEl.textContent =
@@ -864,6 +1093,40 @@ export class SketchSession {
     this.commit();
     this.render();
     return true;
+  }
+
+  /**
+   * Lets the origin lock give way to a rule that says where the sketch is.
+   *
+   * A sketch is pinned by its first point so that a solve cannot slide the
+   * whole drawing about — a stand-in for nobody having said where it goes. A
+   * dimension to the body is somebody saying. Kept alongside it, the lock
+   * would agree with that dimension only until its number was changed, and
+   * then contradict it; so wherever the two now say the same thing, the lock is
+   * the one that goes.
+   */
+  private yieldAnchor(current: SolveResult): SolveResult {
+    const draft = this.draft;
+    if (draft === null || refsOf(draft.sketch).length === 0) return current;
+
+    let standing = current;
+    for (let index = draft.sketch.constraints.length - 1; index >= 0; index--) {
+      if (standing.redundant === 0) break;
+
+      const rule = draft.sketch.constraints[index]!;
+      const anchoring =
+        (rule.kind === 'lockU' && rule.dimension === 'originU') ||
+        (rule.kind === 'lockV' && rule.dimension === 'originV');
+      if (!anchoring) continue;
+
+      const without = draft.sketch.constraints.filter((_, at) => at !== index);
+      const trial = solveSketch({ ...draft.sketch, constraints: without }, draft.dimensions);
+      if (!trial.solved || trial.redundant >= standing.redundant) continue;
+
+      this.forget(index);
+      standing = trial;
+    }
+    return standing;
   }
 
   private deletePicked(): void {
@@ -885,12 +1148,18 @@ export class SketchSession {
     const loose = new Set(points(this.picked));
     // The ends of a deleted edge go with it, unless something else still holds
     // them. removeParts keeps whatever is still needed.
+    // Except an end the body placed: that is a reference in its own right, and
+    // deleting a line drawn from it says nothing about wanting it gone.
+    const fixed = fixedPoints(draft.sketch);
+    const loosen = (point: number, own: boolean): void => {
+      if (own || !fixed.has(point)) loose.add(point);
+    };
     for (const index of entities) {
       const entity = draft.sketch.entities[index]!;
-      if (entity.kind === 'circle') loose.add(entity.centre);
+      if (entity.kind === 'circle') loosen(entity.centre, false);
       else {
-        loose.add(entity.a);
-        loose.add(entity.b);
+        loosen(entity.a, entity.reference === true);
+        loosen(entity.b, entity.reference === true);
       }
     }
 
@@ -901,6 +1170,7 @@ export class SketchSession {
     for (const name of this.places.keys()) {
       if (!draft.dimensions.has(name)) this.places.delete(name);
     }
+    if (refsOf(draft.sketch).length === 0 && this.nodeId !== null) this.releaseBody(this.nodeId);
     this.picked = [];
     this.chain = [];
     this.resolve();
@@ -958,6 +1228,12 @@ export class SketchSession {
     const raw = this.viewport.planePoint(clientX, clientY, this.plane);
     if (raw === null) return null;
     return { u: Math.round(raw.u / GRID) * GRID, v: Math.round(raw.v / GRID) * GRID };
+  }
+
+  /** The same point without the grid, for hitting things that are not on it. */
+  private unsnapped(clientX: number, clientY: number): Point | null {
+    if (this.plane === null) return null;
+    return this.viewport.planePoint(clientX, clientY, this.plane);
   }
 
   private slack(): number {
@@ -1028,6 +1304,8 @@ export class SketchSession {
   // ------------------------------------------------------------- picking
 
   private onPointerMove(event: PointerEvent): void {
+    this.rawCursor = this.unsnapped(event.clientX, event.clientY);
+    this.trackHover();
     if (this.tool === 'select') return;
 
     this.cursor = this.snapped(event.clientX, event.clientY);
@@ -1040,6 +1318,35 @@ export class SketchSession {
     this.renderPreview();
   }
 
+  /**
+   * Shows the edge of the body a click would take, while the tool in hand is
+   * one that picks. Nothing says an edge can be measured from until it lights
+   * up under the cursor.
+   */
+  private trackHover(): void {
+    const plane = this.plane;
+    const at = this.rawCursor;
+    const picking =
+      this.grab === null &&
+      (this.tool === 'select' || (this.tool === 'dimension' && this.placing === null));
+
+    let next: Vec3[] | null = null;
+    if (picking && plane !== null && at !== null && this.draft !== null && this.result !== null) {
+      const slack = this.slack();
+      if (this.nearest(at, slack) === null && this.constraintAt(at, slack) === null) {
+        const found = this.bodyEdgeAt(at, slack);
+        const edge = found === null ? undefined : this.viewport.edgesOf(found.body)?.[found.hit.edge];
+        if (edge !== undefined) {
+          next = outlineOf(edge, plane).map((point) => pointOnPlane(plane, point.u, point.v));
+        }
+      }
+    }
+
+    if (next === null && this.hover === null) return;
+    this.hover = next;
+    this.renderPreview();
+  }
+
   private onPointerDown(event: PointerEvent): void {
     const draft = this.draft;
     if (draft === null || this.result === null || event.button !== 0) return;
@@ -1048,6 +1355,7 @@ export class SketchSession {
     if (at === null) return;
     event.preventDefault();
     this.cursor = at;
+    this.rawCursor = this.unsnapped(event.clientX, event.clientY);
 
     if (this.tool === 'dimension') {
       this.dimensionClick(at);
@@ -1064,7 +1372,11 @@ export class SketchSession {
     const found = this.nearest(at, this.slack());
     const rule = found === null ? this.constraintAt(at, this.slack()) : null;
     const hit: Selection | null =
-      found ?? (rule === null ? null : { kind: 'constraint', index: rule.index });
+      found ??
+      (rule === null
+        ? // Nothing of the sketch is here, so it may be the body that was meant.
+          this.adopt(this.rawCursor ?? at, this.slack())
+        : { kind: 'constraint', index: rule.index });
     this.startGrab(
       {
         hit,
@@ -1188,6 +1500,13 @@ export class SketchSession {
       if (entity.kind === 'circle') moving.push(entity.centre);
       else moving.push(entity.a, entity.b);
     } else {
+      return false;
+    }
+
+    // What the body placed stays where the body has it.
+    const fixed = fixedPoints(draft.sketch);
+    if (moving.every((point) => fixed.has(point))) {
+      this.hintEl.textContent = 'That belongs to the body, and moves when the body does.';
       return false;
     }
 
@@ -1357,7 +1676,7 @@ export class SketchSession {
     const isPicked = (kind: 'point' | 'entity', index: number): boolean =>
       this.picked.some((entry) => entry.kind === kind && entry.index === index);
 
-    const segments: Array<{ points: Vec3[]; selected: boolean }> = [];
+    const segments: Array<{ points: Vec3[]; selected: boolean; reference?: boolean }> = [];
     for (const [index, entity] of sketch.entities.entries()) {
       const selected = isPicked('entity', index);
       if (entity.kind === 'line') {
@@ -1366,6 +1685,7 @@ export class SketchSession {
         segments.push({
           points: [pointOnPlane(plane, a.u, a.v), pointOnPlane(plane, b.u, b.v)],
           selected,
+          reference: entity.reference === true,
         });
         continue;
       }
@@ -1374,9 +1694,11 @@ export class SketchSession {
       segments.push({ points: ring(plane, centre, solved.radii[index]!), selected });
     }
 
+    const fixed = fixedPoints(sketch);
     const vertices = solved.points.map((point, index) => ({
       at: pointOnPlane(plane, point.u, point.v),
       selected: isPicked('point', index),
+      reference: fixed.has(index),
     }));
 
     this.viewport.setSketchOverlay(segments, vertices);
@@ -1681,7 +2003,12 @@ export class SketchSession {
 
     const start = this.chain[this.tool === 'line' ? this.chain.length - 1 : 0];
     if (at === null || start === undefined || this.tool === 'select' || this.tool === 'point') {
-      this.viewport.clearSketchPreview();
+      if (this.hover !== null && this.hover.length > 1) {
+        const closed = this.hover.length > 2;
+        this.viewport.setSketchPreview(closed ? this.hover.slice(0, -1) : this.hover, closed);
+      } else {
+        this.viewport.clearSketchPreview();
+      }
       return;
     }
 
@@ -1793,6 +2120,8 @@ function describe(constraint: Constraint): string {
       return `P${constraint.point + 1} on E${constraint.line + 1}`;
     case 'midpoint':
       return `P${constraint.point + 1} midpoint of E${constraint.line + 1}`;
+    case 'lineDistance':
+      return `P${constraint.point + 1} off E${constraint.line + 1}`;
     case 'distance':
       return `Distance P${constraint.a + 1}–P${constraint.b + 1}`;
     case 'horizontalDistance':

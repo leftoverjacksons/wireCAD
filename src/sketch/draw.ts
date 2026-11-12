@@ -1,4 +1,5 @@
-import type { Constraint, Point, Sketch } from './model.js';
+import type { Constraint, Point, Reference, Sketch } from './model.js';
+import { fixedPoints, lineOfRef, pointsOfRef, refsOf } from './model.js';
 
 /** Within this, in millimetres, a drawn edge was meant to be axis-aligned. */
 const STRAIGHT = 1e-6;
@@ -57,6 +58,9 @@ export function ensureAnchor(draft: Draft): void {
   const at = sketch.points[0];
   if (at === undefined) return;
   if (sketch.constraints.some((rule) => rule.kind === 'lockU' || rule.kind === 'lockV')) return;
+  // A sketch that measures from the body is somewhere already. Locking it down
+  // as well would fight the first dimension that says where it really is.
+  if (refsOf(sketch).length > 0) return;
 
   sketch.constraints.push(
     { kind: 'lockU', point: 0, dimension: 'originU' },
@@ -127,10 +131,43 @@ export function removeParts(
   draft: Draft,
   entities: readonly number[],
   points: readonly number[],
+  /** References to take out by name, rather than by asking for their points. */
+  references: readonly number[] = [],
 ): void {
   const sketch = draft.sketch;
   const droppedEntities = new Set(entities);
   const droppedPoints = new Set(points);
+
+  // A reference goes whole or not at all: asked to give up its line or one of
+  // its points, it takes the rest of itself with it, because half of an edge of
+  // the body is not a thing a sketch can be left holding.
+  const refs = refsOf(sketch);
+  const droppedRefs = new Set<number>(references);
+  // Decided against what was asked for, before any reference adds its own
+  // points to the list: otherwise one going would take every reference that
+  // shares a corner with it, and those would take the ones they share with.
+  const askedPoints = new Set(droppedPoints);
+  for (const [index, ref] of refs.entries()) {
+    const line = lineOfRef(sketch, ref);
+    if (
+      (line >= 0 && droppedEntities.has(line)) ||
+      pointsOfRef(ref).some((point) => askedPoints.has(point))
+    ) {
+      droppedRefs.add(index);
+    }
+  }
+  for (const index of droppedRefs) {
+    const ref = refs[index];
+    if (ref === undefined) continue;
+    const line = lineOfRef(sketch, ref);
+    if (line >= 0) droppedEntities.add(line);
+    for (const point of pointsOfRef(ref)) droppedPoints.add(point);
+  }
+  // Two edges that meet share a corner, and the one that stays still needs it.
+  for (const [index, ref] of refs.entries()) {
+    if (droppedRefs.has(index)) continue;
+    for (const point of pointsOfRef(ref)) droppedPoints.delete(point);
+  }
 
   // A point an edge still needs cannot go; the edge would be left dangling.
   for (const [index, entity] of sketch.entities.entries()) {
@@ -153,6 +190,19 @@ export function removeParts(
         : { ...entity, a: pointMap[entity.a]!, b: pointMap[entity.b]! },
     );
   sketch.points = sketch.points.filter((_, index) => !droppedPoints.has(index));
+
+  if (refs.length > 0) {
+    const kept = refs
+      .filter((_, index) => !droppedRefs.has(index))
+      .map(
+        (ref): Reference =>
+          ref.kind === 'ends'
+            ? { ...ref, a: pointMap[ref.a]!, b: pointMap[ref.b]! }
+            : { ...ref, point: pointMap[ref.point]! },
+      );
+    if (kept.length > 0) sketch.refs = kept;
+    else delete sketch.refs;
+  }
 
   sketch.constraints = sketch.constraints
     .map((constraint) => remap(constraint, entityMap, pointMap, droppedEntities, droppedPoints))
@@ -195,6 +245,7 @@ function remap(
       return { ...constraint, circle: entityMap[constraint.circle]! };
     case 'pointOnLine':
     case 'midpoint':
+    case 'lineDistance':
       if (droppedEntities.has(constraint.line) || droppedPoints.has(constraint.point)) return null;
       return { ...constraint, line: entityMap[constraint.line]!, point: pointMap[constraint.point]! };
     case 'lockU':
@@ -212,4 +263,99 @@ function remap(
       if (droppedPoints.has(constraint.a) || droppedPoints.has(constraint.b)) return null;
       return { ...constraint, a: pointMap[constraint.a]!, b: pointMap[constraint.b]! };
   }
+}
+
+/** The points and entities a rule is about. */
+export function usesOf(constraint: Constraint): { points: number[]; entities: number[] } {
+  switch (constraint.kind) {
+    case 'horizontal':
+    case 'vertical':
+      return { points: [], entities: [constraint.line] };
+    case 'radius':
+      return { points: [], entities: [constraint.circle] };
+    case 'pointOnLine':
+    case 'midpoint':
+    case 'lineDistance':
+      return { points: [constraint.point], entities: [constraint.line] };
+    case 'lockU':
+    case 'lockV':
+      return { points: [constraint.point], entities: [] };
+    case 'parallel':
+    case 'perpendicular':
+    case 'equal':
+    case 'concentric':
+    case 'angle':
+      return { points: [], entities: [constraint.a, constraint.b] };
+    default:
+      return { points: [constraint.a, constraint.b], entities: [] };
+  }
+}
+
+/** Every point a rule reaches, through the entities it names as well as directly. */
+export function pointsUnder(sketch: Sketch, constraint: Constraint): number[] {
+  const uses = usesOf(constraint);
+  const out = [...uses.points];
+  for (const index of uses.entities) {
+    const entity = sketch.entities[index];
+    if (entity === undefined) continue;
+    if (entity.kind === 'circle') out.push(entity.centre);
+    else out.push(entity.a, entity.b);
+  }
+  return out;
+}
+
+/**
+ * True when a rule is only about the body: every point it reaches is one the
+ * body places. Such a rule can change nothing — it either repeats what the body
+ * already says or contradicts it — so it is not one a sketch should hold.
+ */
+export function onlyAboutTheBody(sketch: Sketch, constraint: Constraint): boolean {
+  const fixed = fixedPoints(sketch);
+  if (fixed.size === 0) return false;
+  if (constraint.kind === 'radius') return false;
+  const reached = pointsUnder(sketch, constraint);
+  return reached.length > 0 && reached.every((point) => fixed.has(point));
+}
+
+/**
+ * Takes out the references nothing is using.
+ *
+ * A reference is made by clicking an edge, which is also how a person finds out
+ * what is there to click. Whatever was laid in and then never measured from
+ * would otherwise stay in the sketch for good, tying it to edges it has no
+ * interest in — and failing the sketch on the day one of them is filleted away.
+ */
+export function pruneReferences(draft: Draft): boolean {
+  const sketch = draft.sketch;
+  const refs = refsOf(sketch);
+  if (refs.length === 0) return false;
+
+  const usedPoints = new Set<number>();
+  const usedEntities = new Set<number>();
+  for (const constraint of sketch.constraints) {
+    const uses = usesOf(constraint);
+    for (const point of uses.points) usedPoints.add(point);
+    for (const entity of uses.entities) usedEntities.add(entity);
+  }
+  for (const entity of sketch.entities) {
+    if (entity.kind === 'circle') usedPoints.add(entity.centre);
+    else if (entity.reference !== true) {
+      usedPoints.add(entity.a);
+      usedPoints.add(entity.b);
+    }
+  }
+
+  const unused: number[] = [];
+  for (const [index, ref] of refs.entries()) {
+    const line = lineOfRef(sketch, ref);
+    if (line >= 0 && usedEntities.has(line)) continue;
+    if (pointsOfRef(ref).some((point) => usedPoints.has(point))) continue;
+    unused.push(index);
+  }
+  if (unused.length === 0) return false;
+
+  // By name, not by their points: a corner shared with a reference that is
+  // still in use has to stay, and asking for the point would take both.
+  removeParts(draft, [], [], unused);
+  return true;
 }

@@ -264,6 +264,21 @@ export class Viewport {
     color: 0xff61c6,
     depthTest: false,
   });
+  /**
+   * What the body lent the sketch to measure from. The body's own colour rather
+   * than the drawing's, because it is the body's: nothing here was drawn, and
+   * none of it moves when the sketch is pushed about.
+   */
+  private readonly overlayReferenceMaterial = new THREE.LineBasicMaterial({
+    color: 0xffb454,
+    depthTest: false,
+  });
+  private readonly overlayReferencePointMaterial = new THREE.PointsMaterial({
+    color: 0xffb454,
+    size: 7,
+    sizeAttenuation: false,
+    depthTest: false,
+  });
   private readonly overlayPointMaterial = new THREE.PointsMaterial({
     color: 0xf4ff61,
     size: 8,
@@ -1207,15 +1222,20 @@ export class Viewport {
    * the solved profile the worker sends back.
    */
   setSketchOverlay(
-    segments: ReadonlyArray<{ points: readonly Vec3[]; selected: boolean }>,
-    vertices: ReadonlyArray<{ at: Vec3; selected: boolean }>,
+    segments: ReadonlyArray<{ points: readonly Vec3[]; selected: boolean; reference?: boolean }>,
+    vertices: ReadonlyArray<{ at: Vec3; selected: boolean; reference?: boolean }>,
   ): void {
     this.clearSketchOverlay();
 
-    for (const group of [false, true]) {
+    type Style = 'drawn' | 'picked' | 'reference';
+    const styleOf = (entry: { selected: boolean; reference?: boolean }): Style =>
+      entry.selected ? 'picked' : entry.reference === true ? 'reference' : 'drawn';
+    const styles: Style[] = ['reference', 'drawn', 'picked'];
+
+    for (const group of styles) {
       const flat: number[] = [];
       for (const segment of segments) {
-        if (segment.selected !== group) continue;
+        if (styleOf(segment) !== group) continue;
         for (let i = 0; i + 1 < segment.points.length; i++) {
           const a = segment.points[i]!;
           const b = segment.points[i + 1]!;
@@ -1228,17 +1248,21 @@ export class Viewport {
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat), 3));
       const lines = new THREE.LineSegments(
         geometry,
-        group ? this.overlayPickedMaterial : this.overlayMaterial,
+        group === 'picked'
+          ? this.overlayPickedMaterial
+          : group === 'reference'
+            ? this.overlayReferenceMaterial
+            : this.overlayMaterial,
       );
       lines.renderOrder = 6;
       this.overlay.push(lines);
       this.scene.add(lines);
     }
 
-    for (const group of [false, true]) {
+    for (const group of styles) {
       const flat: number[] = [];
       for (const vertex of vertices) {
-        if (vertex.selected !== group) continue;
+        if (styleOf(vertex) !== group) continue;
         flat.push(vertex.at.x, vertex.at.y, vertex.at.z);
       }
       if (flat.length === 0) continue;
@@ -1247,7 +1271,11 @@ export class Viewport {
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat), 3));
       const points = new THREE.Points(
         geometry,
-        group ? this.overlayPickedPointMaterial : this.overlayPointMaterial,
+        group === 'picked'
+          ? this.overlayPickedPointMaterial
+          : group === 'reference'
+            ? this.overlayReferencePointMaterial
+            : this.overlayPointMaterial,
       );
       points.renderOrder = 7;
       this.overlay.push(points);
