@@ -10,7 +10,9 @@ import {
   decodePlaces,
   encodePlaces,
   formatLength,
+  keyOfRule,
   measureOf,
+  nameOfKey,
   placeOf,
   placeOfSpan,
 } from '../sketch/annotate.js';
@@ -80,7 +82,7 @@ interface Placing {
 interface Grab {
   hit: Selection | null;
   /** The dimension under the press, if that is what was taken hold of. */
-  dimension: { name: string; constraint: Constraint } | null;
+  dimension: { key: string; constraint: Constraint } | null;
   screen: { x: number; y: number };
   at: Point;
   moved: boolean;
@@ -131,7 +133,7 @@ const DRAW_TOOLS: DrawTool[] = [
   {
     id: 'dimension',
     label: 'Dimension',
-    hint: 'Click a line, a circle, or two points, then move to place the dimension and click. A line and then a point gives the distance between them; a second line gives an angle. Edges of the body can be clicked like anything drawn. Then type the number.',
+    hint: 'Click a line, a circle, or two points, then move to place the dimension and click. A line and then a point gives the distance between them; a second line gives an angle, or the gap between the two if they run the same way. While a number is open for typing, clicking another dimension makes it the same as that one. Edges of the body can be clicked like anything drawn. Then type the number.',
   },
 ];
 
@@ -140,6 +142,8 @@ const CIRCLE_SEGMENTS = 48;
 const PICK_SLACK = 10;
 /** Drawn positions land on this grid, in millimetres, so straight reads straight. */
 const GRID = 1;
+/** The sine of the angle below which two lines are running the same way. */
+const PARALLEL = 1e-4;
 /** How far a press has to travel, in pixels, before it is a drag and not a pick. */
 const DRAG_SLACK = 4;
 
@@ -847,6 +851,19 @@ export class SketchSession {
     const chosenPoints = points(this.picked);
 
     if (chosenLines.length === 2 && chosenLines.every((index) => isLine(sketch, index))) {
+      // Two lines that run the same way have no angle worth the name. What
+      // lies between them is a gap, which is what an offset is.
+      const gap = this.gapBetween(chosenLines[0]!, chosenLines[1]!);
+      if (gap !== null) {
+        return {
+          constraint: gap.constraint,
+          place: at === null ? null : placeOf(sketch, gap.constraint, solved.points, at),
+          value: gap.value,
+          stem: 'gap',
+          pinned: null,
+        };
+      }
+
       const constraint: Constraint = {
         kind: 'angle',
         a: chosenLines[0]!,
@@ -966,6 +983,11 @@ export class SketchSession {
       const only = already.length === 1 ? already[0] : undefined;
       const line =
         only !== undefined && only.kind === 'entity' ? sketch.entities[only.index] : undefined;
+      // With a line in hand, an edge of the body is as good a second pick as a
+      // drawn one: that is how a line is set a distance off the body.
+      if (hit === null && line?.kind === 'line') {
+        hit = this.adopt(this.rawCursor ?? at, this.slack());
+      }
       if (
         hit !== null &&
         line?.kind === 'line' &&
@@ -1021,11 +1043,34 @@ export class SketchSession {
     const name = uniqueName(draft.dimensions, pending.stem);
     const constraint = { ...pending.constraint, dimension: name } as Constraint;
 
+    // A gap is only a gap while the two lines stay the same way round, so the
+    // dimension brings that with it — unless something already says so, as two
+    // edges both drawn flat do, in which case saying it again would only be a
+    // rule that repeats another.
+    const added: Constraint[] = [constraint];
+    const chosen = lines(this.picked);
+    if (constraint.kind === 'lineDistance' && chosen.length === 2) {
+      const gap = this.gapBetween(chosen[0]!, chosen[1]!);
+      if (gap !== null) {
+        const parallel: Constraint = { kind: 'parallel', a: gap.from, b: gap.to };
+        const trial = new Map(draft.dimensions).set(name, pending.value);
+        const without = solveSketch(
+          { ...draft.sketch, constraints: [...draft.sketch.constraints, constraint] },
+          trial,
+        );
+        const withIt = solveSketch(
+          { ...draft.sketch, constraints: [...draft.sketch.constraints, constraint, parallel] },
+          trial,
+        );
+        if (withIt.solved && withIt.redundant <= without.redundant) added.push(parallel);
+      }
+    }
+
     this.placing = null;
     draft.dimensions.set(name, pending.value);
     if (pending.place !== null) this.places.set(name, pending.place);
 
-    if (!this.tryAdding([constraint], 'Dimension')) {
+    if (!this.tryAdding(added, 'Dimension')) {
       draft.dimensions.delete(name);
       this.places.delete(name);
       this.picked = [];
@@ -1037,7 +1082,48 @@ export class SketchSession {
     // number on the drawing.
     this.pendingLabel = name;
     this.render();
+    // Added to what was just said rather than over it: that this dimension
+    // repeats a rule already here is worth more than how to type a number.
+    this.hintEl.textContent +=
+      ' Type the number, or click another dimension to make this one the same as it.';
     return true;
+  }
+
+  /**
+   * The gap between two lines, if they run the same way: how far an end of one
+   * stands off the other.
+   *
+   * Which line is measured from matters only when one of them is the body's.
+   * That one cannot move, so it is the one the distance is taken from, and the
+   * end is taken from the line that can.
+   */
+  private gapBetween(
+    first: number,
+    second: number,
+  ): { constraint: Constraint; value: number; from: number; to: number } | null {
+    const sketch = this.draft!.sketch;
+    const solved = this.result!.points;
+    const a = sketch.entities[first];
+    const b = sketch.entities[second];
+    if (a?.kind !== 'line' || b?.kind !== 'line') return null;
+
+    const [from, to, base, other] =
+      b.reference === true && a.reference !== true ? [second, first, b, a] : [first, second, a, b];
+    const p = solved[base.a]!;
+    const q = solved[base.b]!;
+    const r = solved[other.a]!;
+    const t = solved[other.b]!;
+    const d1 = { u: q.u - p.u, v: q.v - p.v };
+    const d2 = { u: t.u - r.u, v: t.v - r.v };
+    const size = Math.hypot(d1.u, d1.v) * Math.hypot(d2.u, d2.v);
+    if (size < 1e-12 || Math.abs(d1.u * d2.v - d1.v * d2.u) / size > PARALLEL) return null;
+
+    return {
+      constraint: { kind: 'lineDistance', point: other.a, line: from, dimension: PENDING },
+      value: Math.abs(d1.u * (r.v - p.v) - d1.v * (r.u - p.u)) / Math.hypot(d1.u, d1.v),
+      from,
+      to,
+    };
   }
 
   /** Says which of the three a span means, instead of letting the cursor say. */
@@ -1167,8 +1253,8 @@ export class SketchSession {
     this.sync();
     for (const index of rules) this.forget(index);
     if (entities.length > 0 || loose.size > 0) removeParts(draft, entities, [...loose]);
-    for (const name of this.places.keys()) {
-      if (!draft.dimensions.has(name)) this.places.delete(name);
+    for (const key of [...this.places.keys()]) {
+      if (!draft.dimensions.has(nameOfKey(key))) this.places.delete(key);
     }
     if (refsOf(draft.sketch).length === 0 && this.nodeId !== null) this.releaseBody(this.nodeId);
     this.picked = [];
@@ -1193,9 +1279,14 @@ export class SketchSession {
     const stillUsed = draft.sketch.constraints.some(
       (other) => 'dimension' in other && other.dimension === removed.dimension,
     );
-    if (!stillUsed) {
-      draft.dimensions.delete(removed.dimension);
-      this.places.delete(removed.dimension);
+    if (!stillUsed) draft.dimensions.delete(removed.dimension);
+    // Which of a shared number's rules is the second and which the third has
+    // just changed, so where each was put can no longer be told apart. They go
+    // back to placing themselves.
+    for (const key of [...this.places.keys()]) {
+      if (nameOfKey(key) === removed.dimension && (!stillUsed || key !== removed.dimension)) {
+        this.places.delete(key);
+      }
     }
   }
 
@@ -1326,9 +1417,15 @@ export class SketchSession {
   private trackHover(): void {
     const plane = this.plane;
     const at = this.rawCursor;
+    const only = this.picked.length === 1 ? this.picked[0] : undefined;
+    const lineInHand =
+      only !== undefined && only.kind === 'entity' && this.draft !== null
+        ? isLine(this.draft.sketch, only.index)
+        : false;
     const picking =
       this.grab === null &&
-      (this.tool === 'select' || (this.tool === 'dimension' && this.placing === null));
+      (this.tool === 'select' ||
+        (this.tool === 'dimension' && (this.placing === null || lineInHand)));
 
     let next: Vec3[] | null = null;
     if (picking && plane !== null && at !== null && this.draft !== null && this.result !== null) {
@@ -1357,6 +1454,17 @@ export class SketchSession {
     this.cursor = at;
     this.rawCursor = this.unsnapped(event.clientX, event.clientY);
 
+    // A number open for typing, and a click on another dimension: that is not
+    // a pick, it is saying what the number should be.
+    const open = this.openKey();
+    if (open !== null) {
+      const other = this.constraintAt(at, this.slack());
+      if (other !== null && other.key !== null && other.key !== open) {
+        this.link(open, other.key);
+        return;
+      }
+    }
+
     if (this.tool === 'dimension') {
       this.dimensionClick(at);
       return;
@@ -1383,9 +1491,9 @@ export class SketchSession {
         // Only a dimension can be dragged: a relation's glyph is placed by what
         // it belongs to, which has nowhere of its own to be put.
         dimension:
-          rule === null || rule.name === null
+          rule === null || rule.key === null
             ? null
-            : { name: rule.name, constraint: rule.constraint },
+            : { key: rule.key, constraint: rule.constraint },
         screen: { x: event.clientX, y: event.clientY },
         at,
         moved: false,
@@ -1443,7 +1551,7 @@ export class SketchSession {
         this.result?.points ?? [],
         at,
       );
-      if (place !== null) this.places.set(grab.dimension.name, place);
+      if (place !== null) this.places.set(grab.dimension.key, place);
       this.render();
       return;
     }
@@ -1542,11 +1650,11 @@ export class SketchSession {
   private constraintAt(
     at: Point,
     slack: number,
-  ): { index: number; name: string | null; constraint: Constraint } | null {
+  ): { index: number; key: string | null; constraint: Constraint } | null {
     const draft = this.draft;
     if (draft === null) return null;
 
-    let best: { index: number; name: string | null } | null = null;
+    let best: { index: number; key: string | null } | null = null;
     let bestDistance = slack;
 
     for (const entry of this.annotations) {
@@ -1556,7 +1664,7 @@ export class SketchSession {
       }
       if (distance < bestDistance) {
         bestDistance = distance;
-        best = { index: entry.constraint, name: entry.dimension };
+        best = { index: entry.constraint, key: entry.key };
       }
     }
 
@@ -1568,7 +1676,7 @@ export class SketchSession {
       if (distance > reach) continue;
       if (distance < bestDistance) {
         bestDistance = distance;
-        best = { index: glyph.constraint, name: null };
+        best = { index: glyph.constraint, key: null };
       }
     }
 
@@ -1778,7 +1886,7 @@ export class SketchSession {
 
   /** One field per drawn dimension, made and dropped as dimensions come and go. */
   private syncLabels(): void {
-    const wanted = new Set(this.annotations.map((entry) => entry.dimension));
+    const wanted = new Set(this.annotations.map((entry) => entry.key));
 
     for (const [name, field] of this.labels) {
       if (wanted.has(name)) continue;
@@ -1787,7 +1895,7 @@ export class SketchSession {
     }
 
     for (const entry of this.annotations) {
-      let field = this.labels.get(entry.dimension);
+      let field = this.labels.get(entry.key);
       if (field === undefined) {
         const holder = document.createElement('div');
         holder.className = 'sketch-label';
@@ -1796,8 +1904,8 @@ export class SketchSession {
         field.type = 'text';
         field.inputMode = 'decimal';
         field.className = 'sketch-label-field';
-        field.dataset.dimension = entry.dimension;
-        field.addEventListener('change', () => this.readLabel(entry.dimension));
+        field.dataset.dimension = entry.key;
+        field.addEventListener('change', () => this.readLabel(entry.key));
         field.addEventListener('keydown', (event) => {
           if (event.key === 'Enter') {
             event.preventDefault();
@@ -1815,8 +1923,8 @@ export class SketchSession {
         // Dragging the number moves the dimension; clicking it types over the
         // number. Which one it was is not known until the pointer either moves
         // or does not, so the press starts as neither.
-        const name = entry.dimension;
-        holder.addEventListener('pointerdown', (event) => this.grabLabel(event, name));
+        const key = entry.key;
+        holder.addEventListener('pointerdown', (event) => this.grabLabel(event, key));
         // One click picks the dimension, which is what makes Delete mean the
         // dimension rather than the character to the right of the caret. Two
         // clicks is how you get at the number itself.
@@ -1832,12 +1940,16 @@ export class SketchSession {
 
         holder.append(field);
         this.labelLayer.append(holder);
-        this.labels.set(entry.dimension, field);
+        this.labels.set(entry.key, field);
       }
 
       // Not while it is being typed into: that is the person's text, not ours.
       if (document.activeElement !== field) field.value = entry.text;
       field.size = Math.max(entry.text.length, 2);
+      // A number more than one rule holds says so, or changing it here would
+      // move something elsewhere with nothing to explain why.
+      field.classList.toggle('is-linked', entry.linked);
+      field.title = entry.linked ? `Shared: ${entry.dimension}` : '';
       field.classList.toggle(
         'is-picked',
         this.picked.some((pick) => pick.kind === 'constraint' && pick.index === entry.constraint),
@@ -1899,7 +2011,7 @@ export class SketchSession {
     }
 
     for (const entry of this.annotations) {
-      const field = this.labels.get(entry.dimension);
+      const field = this.labels.get(entry.key);
       const holder = field?.parentElement;
       if (holder === null || holder === undefined) continue;
 
@@ -1912,13 +2024,19 @@ export class SketchSession {
   }
 
   /** Taking hold of a dimension by its number, to move it rather than type it. */
-  private grabLabel(event: PointerEvent, name: string): void {
+  private grabLabel(event: PointerEvent, key: string): void {
     const draft = this.draft;
     if (draft === null || event.button !== 0) return;
 
-    const index = draft.sketch.constraints.findIndex(
-      (constraint) => 'dimension' in constraint && constraint.dimension === name,
-    );
+    // Another number is open for typing: this click says what it should be.
+    const open = this.openKey();
+    if (open !== null && open !== key) {
+      event.preventDefault();
+      this.link(open, key);
+      return;
+    }
+
+    const index = this.annotations.find((entry) => entry.key === key)?.constraint ?? -1;
     const constraint = draft.sketch.constraints[index];
     if (constraint === undefined) return;
 
@@ -1928,13 +2046,13 @@ export class SketchSession {
     // A press on a number that is not already being typed into does not put the
     // caret there: it picks the dimension, and a second click asks for the
     // number. A press on one that is being typed into is left alone.
-    const field = this.labels.get(name) ?? null;
+    const field = this.labels.get(key) ?? null;
     if (document.activeElement !== field) event.preventDefault();
 
     this.startGrab(
       {
         hit: { kind: 'constraint', index },
-        dimension: { name, constraint },
+        dimension: { key, constraint },
         screen: { x: event.clientX, y: event.clientY },
         at,
         moved: false,
@@ -1943,6 +2061,80 @@ export class SketchSession {
       },
       null,
     );
+  }
+
+  // ------------------------------------------------------------- linking
+
+  /** The dimension whose number is open for typing, if one is. */
+  private openKey(): string | null {
+    for (const [key, field] of this.labels) {
+      if (document.activeElement === field) return key;
+    }
+    return null;
+  }
+
+  /**
+   * Makes one dimension the same number as another.
+   *
+   * Not a copy of the value: the rule is given the other's number to hold, so
+   * there is one number where there were two and changing it changes both. A
+   * rule has always named its number rather than owned it, which is all this
+   * needs — the port the first one had goes, and the other's now drives both.
+   */
+  private link(fromKey: string, toKey: string): void {
+    const draft = this.draft;
+    if (draft === null) return;
+
+    const from = this.annotations.find((entry) => entry.key === fromKey);
+    const to = this.annotations.find((entry) => entry.key === toKey);
+    const rule = from === undefined ? undefined : draft.sketch.constraints[from.constraint];
+    const target = to === undefined ? undefined : draft.sketch.constraints[to.constraint];
+    if (from === undefined || to === undefined || rule === undefined || target === undefined) return;
+    if (!('dimension' in rule) || !('dimension' in target)) return;
+
+    this.labels.get(fromKey)?.blur();
+
+    if (rule.dimension === target.dimension) {
+      this.hintEl.textContent = 'Those two are already the same number.';
+      return;
+    }
+    // Degrees and millimetres are not the same kind of number.
+    if ((rule.kind === 'angle') !== (target.kind === 'angle')) {
+      this.hintEl.textContent = 'An angle and a length cannot be the same number.';
+      return;
+    }
+
+    const before = draft.sketch.constraints;
+    const index = from.constraint;
+    const old = rule.dimension;
+    draft.sketch.constraints = before.map((entry, at) =>
+      at === index ? ({ ...rule, dimension: target.dimension } as Constraint) : entry,
+    );
+
+    const attempt = solveSketch(draft.sketch, draft.dimensions);
+    if (!attempt.solved) {
+      draft.sketch.constraints = before;
+      this.hintEl.textContent = `Making that ${formatLength(draft.dimensions.get(target.dimension) ?? 0)} contradicts the rules already here.`;
+      this.render();
+      return;
+    }
+
+    this.callbacks.onBeforeChange();
+    // Where it was put goes with it to the name it is now known by.
+    const place = this.places.get(fromKey);
+    this.places.delete(fromKey);
+    if (place !== undefined) this.places.set(keyOfRule(draft.sketch, index), place);
+
+    const stillUsed = draft.sketch.constraints.some(
+      (entry) => 'dimension' in entry && entry.dimension === old,
+    );
+    if (!stillUsed) draft.dimensions.delete(old);
+
+    this.result = attempt;
+    this.picked = [];
+    this.commit();
+    this.render();
+    this.hintEl.textContent = `Linked to ${target.dimension}: changing either changes both.`;
   }
 
   /** The dimension tool's own panel: what to do next, and what it will measure. */
@@ -1966,7 +2158,9 @@ export class SketchSession {
           ? 'Move to set how far out the arc sits, then click.'
           : pending.constraint.kind === 'radius'
             ? 'Move to lay out the leader, then click.'
-            : 'Move to place it, then click. Click another line instead for an angle.';
+            : pending.stem === 'gap'
+              ? 'Move to place the gap between them, then click.'
+              : 'Move to place it, then click. Click another line instead for an angle, or for the gap if they run the same way.';
       this.dialogueValue.textContent =
         pending.constraint.kind === 'angle'
           ? `${formatLength(pending.value)}°`
@@ -1980,18 +2174,18 @@ export class SketchSession {
   }
 
   /** A number typed over a dimension is the dimension, as soon as it is typed. */
-  private readLabel(name: string): void {
-    const field = this.labels.get(name);
-    if (field === undefined) return;
+  private readLabel(key: string): void {
+    const field = this.labels.get(key);
+    const entry = this.annotations.find((candidate) => candidate.key === key);
+    if (field === undefined || entry === undefined) return;
 
     const next = Number(field.value.replace(/[^0-9.+-]/g, ''));
     if (Number.isNaN(next)) {
-      const entry = this.annotations.find((candidate) => candidate.dimension === name);
-      field.value = entry?.text ?? field.value;
+      field.value = entry.text;
       return;
     }
 
-    this.setDimension(name, next);
+    this.setDimension(entry.dimension, next);
   }
 
   /** The rubber band: what the tool in hand would add if you clicked now. */

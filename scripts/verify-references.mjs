@@ -77,11 +77,17 @@ await page.evaluate(async () => {
     id: 'sk',
     label: 'Hole',
     inputs: {
-      points: [-15, -8],
-      entities: [['circle', 0, 4]],
+      // A circle, and a loose upright line to be set off the body's edge. The
+      // line is taken out again before the profile is built: nothing closes it.
+      points: [-15, -8, -20, 5, -20, 15],
+      entities: [
+        ['circle', 0, 4],
+        ['line', 1, 2],
+      ],
       constraints: [
         ['lockU', 0, 'originU'],
         ['lockV', 0, 'originV'],
+        ['vertical', 1],
       ],
       dims: ['originU', -15, 'originV', -8],
       d_originU: -15,
@@ -173,7 +179,7 @@ check(
 await typeDimension(20);
 let points = await solved();
 check('typing a number moves the circle', near(points[0].u, -10), `U = ${points[0].u}`);
-check('and leaves the edge where the body has it', near(points[1].u, -30) && near(points[2].u, -30));
+check('and leaves the edge where the body has it', near(points[3].u, -30) && near(points[4].u, -30));
 
 // The bore: clicking its rim means its centre.
 await clickAt(8, 0, 'the rim of the bore');
@@ -194,6 +200,130 @@ await typeDimension(12);
 points = await solved();
 check('typing it moves the circle the other way', near(points[0].v, -12), `V = ${points[0].v}`);
 if (shots) await page.screenshot({ path: `${shots}/references-2-dimensioned.png` });
+
+console.log('offsets and shared numbers:');
+
+// Two lines that run the same way: the drawn one, and the body's left edge.
+await clickAt(-20, 10, 'the drawn line');
+await clickAt(-30, 14, 'the left edge, already in the sketch');
+await clickAt(-25, 18, 'somewhere to put the gap');
+now = await stored();
+const gap = now.constraints.filter((row) => row[0] === 'lineDistance')[1];
+check('two lines that run the same way give the gap between them', gap !== undefined, JSON.stringify(now.constraints));
+check(
+  'measured from the body\u2019s edge to the drawn line',
+  gap !== undefined && now.entities[gap[2]][3] === 'reference' && (gap[1] === 1 || gap[1] === 2),
+  JSON.stringify(gap),
+);
+check(
+  'without repeating that they are parallel, which upright already says',
+  !now.constraints.some((row) => row[0] === 'parallel'),
+);
+await typeDimension(14);
+points = await solved();
+check('typing it sets the line off the edge', near(points[1].u, -16) && near(points[2].u, -16), `U = ${points[1].u}`);
+
+// The same against an edge not yet in the sketch: the right side of the block.
+await clickAt(-16, 10, 'the drawn line again');
+await clickAt(30, 14, 'the right edge of the block');
+now = await stored();
+check('a body edge can be the second line without being laid in first', now.refs.length === 3, `${now.refs.length} reference(s)`);
+await clickAt(8, 17, 'somewhere to put the second gap');
+now = await stored();
+check('and the gap to it is measured', now.constraints.filter((row) => row[0] === 'lineDistance').length === 3);
+check('which repeats the first, and says so', (await panel.locator('.sketch-hint').innerText()).includes('repeats'));
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+// Taken back out: one gap is enough to hold the line.
+await tool('Select');
+{
+  const at = await page.evaluate(() => {
+    const field = [...document.querySelectorAll('.sketch-label-field')].at(-1);
+    const box = field.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  });
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(300);
+}
+now = await stored();
+check('a dimension picked by its number and deleted is gone', now.constraints.filter((row) => row[0] === 'lineDistance').length === 2);
+
+// The line's own length, made the same number as the circle's offset by
+// clicking that dimension while this one is open for typing.
+await tool('Dimension');
+await clickAt(-16, 10, 'the drawn line once more');
+await clickAt(-4, 12, 'somewhere to put its length');
+now = await stored();
+check('a length is placed, its number open', now.constraints.some((row) => row[0] === 'distance'));
+{
+  const at = await page.evaluate(() => {
+    const field = document.querySelector('.sketch-label-field[data-dimension="offset1"]');
+    const box = field.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  });
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+}
+now = await stored();
+const length = now.constraints.find((row) => row[0] === 'distance');
+check('clicking another dimension gives this one that number', length?.[3] === 'offset1', JSON.stringify(length));
+check('and the number it had is gone', !now.dims.includes('length1'), JSON.stringify(now.dims));
+points = await solved();
+check(
+  'so the line is as long as the circle is far from the edge',
+  near(Math.abs(points[2].v - points[1].v), 20),
+  `${Math.abs(points[2].v - points[1].v)} mm`,
+);
+check(
+  'both numbers are marked as shared',
+  (await page.locator('.sketch-label-field.is-linked').count()) === 2,
+);
+if (shots) await page.screenshot({ path: `${shots}/references-4-linked.png` });
+
+// Changing the shared number changes both.
+await page.evaluate(() => {
+  const field = document.querySelector('.sketch-label-field[data-dimension="offset1"]');
+  field.focus();
+  field.value = '22';
+  field.dispatchEvent(new Event('change'));
+  field.blur();
+});
+await page.waitForTimeout(400);
+points = await solved();
+check(
+  'changing one changes the other',
+  near(points[0].u - points[3].u, 22) && near(Math.abs(points[2].v - points[1].v), 22),
+  JSON.stringify(points.slice(0, 4)),
+);
+await page.evaluate(() => {
+  const field = document.querySelector('.sketch-label-field[data-dimension="offset1"]');
+  field.focus();
+  field.value = '20';
+  field.dispatchEvent(new Event('change'));
+  field.blur();
+});
+await page.waitForTimeout(400);
+
+// The loose line goes, and what was measured to it with it.
+await tool('Select');
+points = await solved();
+await clickAt(points[1].u, (points[1].v + points[2].v) / 2, 'the drawn line, to delete it');
+await page.keyboard.press('Delete');
+await page.waitForTimeout(300);
+now = await stored();
+check(
+  'deleting the line leaves the circle\u2019s dimensions alone',
+  now.entities.filter((row) => row[0] === 'line' && row[3] !== 'reference').length === 0 &&
+    now.constraints.some((row) => row[3] === 'offset1') &&
+    now.constraints.some((row) => row[0] === 'verticalDistance'),
+  JSON.stringify(now.constraints),
+);
 
 // An edge clicked and never measured from does not stay.
 await tool('Select');

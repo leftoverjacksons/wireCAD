@@ -112,6 +112,20 @@ is ready, typically around two seconds.
   sketch follows it. Clicking a second line instead of placing it makes an angle
   of the two. Pressing *Dimension* with something already selected dimensions
   that, which is the short way round.
+- **Offsets** — click two lines that run the same way and the dimension is the
+  gap between them rather than an angle, which two such lines do not have. One
+  of them can be an edge of the body, already in the sketch or not: that is how
+  a line is set a distance in from the edge of a face. The dimension brings
+  *parallel* with it, since a gap is only a gap while the two stay the same way
+  round — unless something already says so, as two edges both drawn upright do,
+  in which case it is not said twice.
+- **One number for two dimensions** — while a dimension's number is open for
+  typing, which it is the moment it is placed, clicking another dimension makes
+  this one the same as that one. Not a copy of the value: the two rules now hold
+  one number, so changing either changes both, and the node shows one port
+  where it showed two. Their numbers are drawn with a doubled border, so a
+  change here that moves something over there has an explanation on screen. An
+  angle and a length cannot be linked. Deleting one of the two parts them.
 - **What a placement means** — two points are three dimensions at once, and
   which one is wanted is said by where the dimension is put: out to the side of
   a diagonal gives its own length, straight up or down gives the width it
@@ -586,6 +600,23 @@ A reference whose edge can no longer be found fails the sketch with a reason
 rather than leaving the point where it last was, and an edge that has changed
 from a span into a rim, or the reverse, is not the edge that was referred to.
 
+## Two dimensions, one number
+
+A rule has always named its number rather than owned it: a constraint carries
+the name of a dimension, and the node grows one port per name. Nothing said two
+rules could not carry the same name, and removing a rule already checked whether
+another still used its number before dropping it. So linking one dimension to
+another is renaming — the rule is given the other's name, its own number goes if
+nothing else holds it, and the solver, the node's ports and the worker need no
+change at all.
+
+What did need changing is everything that had quietly used the name as an
+identity for the *drawn* dimension: its text field, where it was dragged to,
+which rule a click on its number means. Two rules with one name would have
+shared one field, laid over whichever was drawn last. A drawn dimension is now
+known by a key — the name, with a count on the end for each rule after the
+first that shares it — and the name is only ever the number's.
+
 ## Solving a sketch
 
 A `Sketch` node holds points, the lines and circles joining them, and the rules
@@ -797,6 +828,12 @@ of it are built.
   box, or adds a similar edge next to it, can leave the sketch measuring from
   the wrong one or failing to find it.
 - Laying an edge into a sketch and dimensioning to it are two steps to undo.
+- Two dimensions sharing a number are parted by deleting one and placing it
+  again. There is no unlink that leaves it where it was with a number of its
+  own.
+- A gap is the distance from one end of a line to the other line. Where the two
+  are held parallel that is the gap everywhere; a gap dimension placed on lines
+  that merely happen to be parallel adds the rule that keeps them so.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a
