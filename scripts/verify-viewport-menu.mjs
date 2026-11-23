@@ -70,6 +70,9 @@ await page.evaluate(() => {
     const rect = window.wirecad.viewport.canvas.getBoundingClientRect();
     for (let y = rect.top + 20; y < rect.bottom - 20; y += 7) {
       for (let x = rect.left + 20; x < rect.right - 20; x += 7) {
+        // The ray goes through whatever floats over the canvas; a click does
+        // not. A point under the toolbar or a panel is not one to aim at.
+        if (document.elementFromPoint(x, y) !== window.wirecad.viewport.canvas) continue;
         const hit = window.wirecad.faceAt(x, y);
         if (hit === null || hit.nodeId !== bore || hit.faceIndex === null) continue;
         const face = mesh.faces[hit.faceIndex];

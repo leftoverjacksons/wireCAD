@@ -526,6 +526,9 @@ const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
   viewport.clearChosenEdges();
   dialog.open(spec, selected);
 });
+// The view centres what it frames in the part of the canvas the toolbar
+// leaves uncovered.
+toolbar.onHeightChange((below) => viewport.setTopInset(below));
 
 // --------------------------------------------------------------- file actions
 

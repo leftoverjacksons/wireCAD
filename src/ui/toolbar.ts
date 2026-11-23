@@ -7,6 +7,7 @@ export class Toolbar {
   private readonly groupsRow: HTMLElement;
   private readonly tabButtons = new Map<string, HTMLButtonElement>();
   private active: string;
+  private readonly heightListeners: Array<(below: number) => void> = [];
 
   constructor(
     container: HTMLElement,
@@ -51,11 +52,21 @@ export class Toolbar {
     const measure = (): void => {
       const below = this.element.offsetTop + this.element.offsetHeight + 8;
       container.style.setProperty('--below-toolbar', `${below}px`);
+      for (const listener of this.heightListeners) listener(below);
     };
+    this.remeasure = measure;
     if (typeof ResizeObserver === 'function') new ResizeObserver(measure).observe(this.element);
 
     this.select(this.active);
     measure();
+  }
+
+  private readonly remeasure: () => void;
+
+  /** Told how far down the toolbar reaches, now and whenever that changes. */
+  onHeightChange(listener: (below: number) => void): void {
+    this.heightListeners.push(listener);
+    this.remeasure();
   }
 
   appendAction(element: HTMLElement): void {

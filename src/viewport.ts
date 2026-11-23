@@ -213,6 +213,12 @@ export class Viewport {
   /** While set, only this body's edges can be picked. */
   private edgeSource: NodeId | null = null;
   private framed = false;
+  /**
+   * How much of the top of the canvas is covered by the toolbar, in pixels.
+   * What is framed is centred in the rest, because the middle of the glass is
+   * not the middle of what can be seen through it.
+   */
+  private topInset = 0;
   private pickingEnabled = true;
   /** Every arrow currently offered. Three of them, along X, Y and Z, is a gizmo. */
   private handles: DragHandle[] = [];
@@ -1132,7 +1138,7 @@ export class Viewport {
     this.controls.target.copy(origin);
     this.camera.position.copy(origin).add(normal.multiplyScalar(Math.max(span * 4, 500)));
     this.camera.zoom = 1;
-    this.viewHeight = this.heightFor(span);
+    this.viewHeight = this.uncovered(this.heightFor(span));
     this.applyFrustum();
     this.controls.enableRotate = false;
     this.controls.update();
@@ -1622,9 +1628,8 @@ export class Viewport {
     // only to what is in front of it, so it stands well back.
     this.camera.position.copy(center).add(ISOMETRIC.clone().multiplyScalar(Math.max(span * 4, 500)));
     this.camera.zoom = 1;
-    // Room around it: the toolbar floats over the top of the viewport, so a
-    // model framed to the glass is a model half under the toolbar.
-    this.viewHeight = this.heightFor(span * 1.5);
+    // Room around it, in the part of the viewport the toolbar leaves showing.
+    this.viewHeight = this.uncovered(this.heightFor(span * 1.5));
     this.applyFrustum();
     this.controls.update();
     this.framed = true;
@@ -1642,11 +1647,36 @@ export class Viewport {
 
     const half = this.viewHeight / 2;
     const aspect = width / height;
+    // Lifting the frustum by half the covered strip puts the point the camera
+    // looks at in the middle of what is left uncovered, rather than behind the
+    // toolbar's lower edge. Panning, zooming and picking all go through the
+    // same projection, so nothing else has to know.
+    const lift = (Math.min(this.topInset, height * 0.5) / 2) * (this.viewHeight / height);
     this.camera.left = -half * aspect;
     this.camera.right = half * aspect;
-    this.camera.top = half;
-    this.camera.bottom = -half;
+    this.camera.top = half + lift;
+    this.camera.bottom = -half + lift;
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Tells the view how much of its top the toolbar covers. Called whenever the
+   * toolbar changes height, which a tab with fewer tools or a narrow window can
+   * make it do.
+   */
+  setTopInset(pixels: number): void {
+    if (!Number.isFinite(pixels) || Math.abs(pixels - this.topInset) < 0.5) return;
+    this.topInset = Math.max(pixels, 0);
+    this.applyFrustum();
+    this.cameraChanged();
+  }
+
+  /** A height big enough that `height` of it fits below the toolbar. */
+  private uncovered(height: number): number {
+    const glass = this.container.clientHeight;
+    if (glass === 0) return height;
+    const showing = Math.max(glass - Math.min(this.topInset, glass * 0.5), 1);
+    return height * (glass / showing);
   }
 
   /**

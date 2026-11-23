@@ -28,7 +28,11 @@ architecture is in `README.md`.
   here were clicks landing on the toolbar or the sketch panel. Check with
   `document.elementFromPoint` and fail loudly rather than silently missing.
 - The toolbar floats over the top of the viewport, and the node editor takes the
-  bottom half. Useful canvas is smaller than the canvas.
+  bottom half. Useful canvas is smaller than the canvas. The camera centres what
+  it frames below the toolbar (`Viewport.setTopInset`, fed the toolbar's
+  measured height), so anything that resizes the toolbar is handled; a probe
+  that ray-casts the canvas still has to ask `elementFromPoint` whether a click
+  there would reach it.
 
 ## The kernel lies quietly
 
