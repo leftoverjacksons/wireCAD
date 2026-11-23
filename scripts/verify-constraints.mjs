@@ -134,6 +134,18 @@ function detail(entry) {
   return entry.error ?? `${entry.volume?.toFixed(0)} mm3`;
 }
 
+/** Refuses a click that would land on anything but the drawing. */
+async function onCanvas(at, what) {
+  const under = await page.evaluate(
+    ([x, y]) => {
+      const found = document.elementFromPoint(x, y);
+      return found === null ? 'nothing' : `${found.tagName}.${found.className}`;
+    },
+    [at.x, at.y],
+  );
+  if (!under.startsWith('CANVAS')) throw new Error(`${what} is under ${under}, not the drawing`);
+}
+
 let failures = 0;
 for (const [name, ok, extra] of checks) {
   if (!ok) failures += 1;
@@ -479,11 +491,13 @@ const circle = await page.evaluate(() => {
   const points = window.wirecad.sketch.solvedPoints();
   return window.wirecad.screenOfSketch(points[3].u + 6, points[3].v);
 });
+await onCanvas(circle, 'the circle being dimensioned');
 await page.mouse.click(circle.x, circle.y);
 const leader = await page.evaluate(() => {
   const points = window.wirecad.sketch.solvedPoints();
   return window.wirecad.screenOfSketch(points[3].u + 18, points[3].v - 18);
 });
+await onCanvas(leader, 'where the radius is laid out');
 await page.mouse.move(leader.x, leader.y);
 await page.mouse.click(leader.x, leader.y);
 await page.waitForTimeout(500);
