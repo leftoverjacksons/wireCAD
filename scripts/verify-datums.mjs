@@ -55,11 +55,39 @@ const at = (x, y, z) =>
     [x, y, z],
   );
 
+/**
+ * A point on screen that the view itself says is on an origin square, with the
+ * canvas exposed there and the point well inside the square's edges.
+ *
+ * Aiming at a hand-picked model point is not enough: the squares are only 20 mm
+ * across round a starter block, and a corner of one is also a corner of the
+ * block's silhouette, so whether such a click counts was decided by how a
+ * pixel happened to round — and changed when the framing did.
+ */
+const pointOnSquare = (axis, place) =>
+  page.evaluate(
+    ([axis, place]) => {
+      const view = window.wirecad.viewport;
+      for (let a = -8; a <= 8; a += 1) {
+        for (let b = -8; b <= 8; b += 1) {
+          const model =
+            place === 'xy' ? { x: a, y: b, z: 0 } : place === 'yz' ? { x: 0, y: a, z: b } : { x: a, y: 0, z: b };
+          const at = view.screenPositionOf(model);
+          if (document.elementFromPoint(at.x, at.y) !== view.canvas) continue;
+          if (view.datumAt(at.x, at.y) === axis) return at;
+        }
+      }
+      return null;
+    },
+    [axis, place],
+  );
+
 console.log('the origin planes:');
 check('a fresh model has none    ', (await planeNodes()).length === 0, (await planeNodes()).join(',') || 'no plane nodes');
 
-// A corner of the XY square, out where the block is not.
-const onXY = await at(-10, -10, 0);
+// Somewhere on the XY square the block is not in front of.
+const onXY = await pointOnSquare('xy', 'xy');
+if (onXY === null) throw new Error('no part of the XY square is showing to click');
 await page.mouse.click(onXY.x, onXY.y);
 await page.waitForTimeout(600);
 
@@ -141,8 +169,9 @@ await page.getByRole('button', { name: 'Sketch', exact: true }).click();
 await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog').waitFor({ state: 'visible', timeout: 5_000 });
 
-// The YZ square, on the far side of the origin from the block.
-const onYZ = await at(0, -10, 10);
+// The YZ square, wherever it is showing.
+const onYZ = await pointOnSquare('yz', 'yz');
+if (onYZ === null) throw new Error('no part of the YZ square is showing to click');
 await page.mouse.click(onYZ.x, onYZ.y);
 await page.waitForTimeout(600);
 
