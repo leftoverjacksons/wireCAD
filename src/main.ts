@@ -38,6 +38,7 @@ import { NodeEditor } from './ui/node-editor.js';
 import type { NodeMenuAction } from './ui/node-menu.js';
 import { nodeMenu } from './ui/node-menu.js';
 import { SketchSession } from './ui/sketch-session.js';
+import { actionGlyph, brandMark } from './ui/icons.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
 import type { FaceHit, GhostMode } from './viewport.js';
@@ -83,6 +84,7 @@ if (!restoredFromAutosave) buildStarterModel(graph);
 const viewportEl = document.getElementById('viewport')!;
 const viewport = new Viewport(viewportEl);
 const statsEl = document.getElementById('stats')!;
+document.getElementById('brand-mark')?.replaceWith(brandMark());
 const statusEl = document.getElementById('kernel-status')!;
 const controls = document.getElementById('controls')!;
 
@@ -527,11 +529,18 @@ const toolbar = new Toolbar(viewportEl, tabs, (spec) => {
 
 // --------------------------------------------------------------- file actions
 
-function actionButton(label: string, title: string, onClick: () => void): HTMLButtonElement {
+function actionButton(
+  label: string,
+  title: string,
+  onClick: () => void,
+  glyph?: string,
+): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'tool-button';
-  button.textContent = label;
+  const drawn = glyph === undefined ? null : actionGlyph(glyph);
+  if (drawn !== null) button.append(drawn);
+  button.append(label);
   button.title = title;
   button.addEventListener('click', onClick);
   return button;
@@ -594,14 +603,14 @@ function requestExport(format: ExportFormat): void {
   worker.postMessage(message);
 }
 
-toolbar.appendAction(actionButton('New', 'Empty document', newDocument));
-toolbar.appendAction(actionButton('Open', 'Open a saved document', () => void openDocument()));
-toolbar.appendAction(actionButton('Save', 'Download this document', saveDocument));
-toolbar.appendAction(actionButton('STL', 'Export mesh for printing', () => requestExport('stl')));
-toolbar.appendAction(actionButton('STEP', 'Export solid for CAD', () => requestExport('step')));
+toolbar.appendAction(actionButton('New', 'Empty document', newDocument, 'new'));
+toolbar.appendAction(actionButton('Open', 'Open a saved document', () => void openDocument(), 'open'));
+toolbar.appendAction(actionButton('Save', 'Download this document', saveDocument, 'save'));
+toolbar.appendAction(actionButton('STL', 'Export mesh for printing', () => requestExport('stl'), 'export'));
+toolbar.appendAction(actionButton('STEP', 'Export solid for CAD', () => requestExport('step'), 'export'));
 
-const undoButton = actionButton('Undo', 'Ctrl+Z', () => applyHistory('undo'));
-const redoButton = actionButton('Redo', 'Ctrl+Shift+Z', () => applyHistory('redo'));
+const undoButton = actionButton('Undo', 'Ctrl+Z', () => applyHistory('undo'), 'undo');
+const redoButton = actionButton('Redo', 'Ctrl+Shift+Z', () => applyHistory('redo'), 'redo');
 toolbar.appendAction(undoButton);
 toolbar.appendAction(redoButton);
 
@@ -1259,6 +1268,8 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   }
 
   const errors = message.reports.filter((report) => report.error !== undefined);
+  // The headline the sidebar puts above these numbers.
+  statsEl.dataset.state = message.stats.errored > 0 ? 'error' : 'ok';
   statsEl.textContent =
     `${message.stats.evaluated} evaluated · ${message.stats.cached} cached · ` +
     `${message.stats.errored} errored` +

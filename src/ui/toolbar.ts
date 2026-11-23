@@ -1,4 +1,5 @@
 import type { FeatureSpec, FeatureTab } from './features.js';
+import { attachIconMotion, featureIcon } from './icons.js';
 
 export class Toolbar {
   readonly element: HTMLElement;
@@ -43,7 +44,18 @@ export class Toolbar {
     this.element.append(tabsRow, this.groupsRow);
     container.append(this.element);
 
+    // The dialogs and the sketch panel open just under the toolbar, and how
+    // tall the toolbar is depends on its icons, its font and the tab showing.
+    // Measured rather than written down, so a restyle cannot leave a dialog
+    // underneath it.
+    const measure = (): void => {
+      const below = this.element.offsetTop + this.element.offsetHeight + 8;
+      container.style.setProperty('--below-toolbar', `${below}px`);
+    };
+    if (typeof ResizeObserver === 'function') new ResizeObserver(measure).observe(this.element);
+
     this.select(this.active);
+    measure();
   }
 
   appendAction(element: HTMLElement): void {
@@ -75,8 +87,16 @@ export class Toolbar {
       for (const spec of group.features) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'tool-button';
-        button.textContent = spec.label;
+        button.className = 'tool-tile';
+        // The icon is decoration to a screen reader, so the button's name is
+        // its label and nothing else — which is also what the tests find it by.
+        const icon = featureIcon(spec.id);
+        if (icon !== null) button.append(icon);
+        const label = document.createElement('span');
+        label.className = 'tool-tile-label';
+        label.textContent = spec.label;
+        button.append(label);
+        attachIconMotion(button);
         button.addEventListener('click', () => this.onChoose(spec));
         buttons.append(button);
       }

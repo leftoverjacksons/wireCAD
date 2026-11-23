@@ -1,15 +1,21 @@
 :root {
   color-scheme: dark;
-  /* Sunset over a grid: deep indigo ground, magenta and cyan doing the work. */
-  --bg: #07081c;
-  --panel: #0f1235;
-  --panel-raised: #171b45;
-  --line: #2a2f63;
-  --line-bright: #3d4488;
-  --text: #e8ecff;
-  --muted: #8a93c8;
+  /* Deep navy ground with cyan doing the work, magenta kept for what is picked. */
+  --bg: #080d1f;
+  --panel: #0c1430;
+  --panel-raised: #13203b;
+  --line: #1e2d50;
+  --line-bright: #3a5582;
+  --text: #e9f2ff;
+  --muted: #86a0c4;
   /* Cyan carries the interface; magenta is saved for things that want the eye. */
-  --accent: #5cecff;
+  --accent: #36dff2;
+  --accent-soft: rgba(54, 223, 242, 0.14);
+  /* Panels are lit from the top left, like the solids in the icons. */
+  --card: linear-gradient(145deg, #13203be8, #0b1327f0);
+  --card-border: #2c4470;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --highlight: #ff61c6;
   --evaluated: #5cecff;
   --cached: #4a7fa8;
@@ -43,7 +49,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 13px/1.5 var(--sans);
   display: grid;
   grid-template-columns: 290px 1fr;
   height: 100vh;
@@ -52,28 +58,76 @@ body {
 
 aside {
   border-right: 1px solid var(--line);
-  background: var(--panel);
-  padding: 16px;
+  background: linear-gradient(180deg, #0d1734, #0a1128);
+  padding: 14px 12px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px 4px;
+}
+
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  filter: drop-shadow(0 0 6px rgba(54, 223, 242, 0.35));
+}
+
+.brand-hex {
+  fill: rgba(54, 223, 242, 0.06);
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.brand-cube {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
 }
 
 h1 {
-  font-size: 14px;
-  margin: 0 0 2px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.brand-tagline {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.side-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
 }
 
 h2 {
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   color: var(--muted);
-  margin: 20px 0 10px;
+  margin: 0 0 10px;
   font-weight: 600;
 }
 
 #kernel-status {
   color: var(--muted);
   font-size: 12px;
+  padding: 0 4px;
+  white-space: pre-line;
 }
 
 main {
@@ -93,14 +147,16 @@ main {
 
 .toolbar {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
+  top: 10px;
+  left: 10px;
+  right: 10px;
   display: flex;
   flex-direction: column;
-  background: #1c2027f2;
-  border: 1px solid var(--line-bright);
-  border-radius: 6px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px #0008;
+  backdrop-filter: blur(6px);
   overflow: hidden;
   z-index: 3;
 }
@@ -112,75 +168,133 @@ main {
 
 .toolbar-tabs {
   border-bottom: 1px solid var(--line);
-  padding: 0 4px;
+  padding: 5px 6px;
   align-items: center;
+  gap: 2px;
 }
 
 .toolbar-tab {
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: var(--muted);
   font: inherit;
-  font-size: 12px;
-  padding: 7px 13px 5px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 16px;
   cursor: pointer;
 }
 
 .toolbar-tab:hover {
   color: var(--text);
+  background: #ffffff08;
 }
 
 .toolbar-tab.is-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--text);
+  background: linear-gradient(180deg, #1d3a63, #142a4b);
+  border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 6px;
+  gap: 4px;
+  margin-left: auto;
+  padding: 0 2px;
+}
+
+.toolbar-actions .tool-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+}
+
+.action-glyph {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .toolbar-groups {
-  padding: 8px 6px 5px;
-  align-items: flex-start;
+  padding: 6px 6px 4px;
+  align-items: stretch;
 }
 
 .tool-group {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 8px;
 }
 
 .group-buttons {
   display: flex;
-  gap: 5px;
+  gap: 4px;
 }
 
 .group-label {
   font-size: 9px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.12em;
   color: var(--muted);
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
 .group-divider {
   width: 1px;
   background: var(--line);
-  margin: 2px 0 16px;
+  margin: 4px 0 6px;
+}
+
+/* A feature: what it does, drawn, over what it is called. */
+.tool-tile {
+  min-width: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 7px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tool-tile:hover,
+.tool-tile:focus-visible {
+  outline: none;
+  background: linear-gradient(160deg, #1b3256, #10213e);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 0 16px rgba(0, 223, 255, 0.12);
+}
+
+.tool-tile-label {
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .tool-button {
-  background: #242b36;
+  background: #13203b;
   border: 1px solid var(--line-bright);
-  border-radius: 5px;
+  border-radius: 7px;
   color: var(--text);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   padding: 5px 11px;
   cursor: pointer;
 }
@@ -199,34 +313,79 @@ main {
   width: 14px;
 }
 
+/* ------------------------------------------------------------------ icons */
+
+.feature-icon {
+  width: 54px;
+  height: 44px;
+  overflow: visible;
+}
+
+.feature-icon * {
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.ic-top { fill: #5d7bb1; stroke: #d5e3ff; stroke-width: 1; }
+.ic-front { fill: #243d6d; stroke: #96b4e3; stroke-width: 1; }
+.ic-side { fill: #1a2e57; stroke: #7ea3d7; stroke-width: 1; }
+.ic-feature { fill: #20d9f2; stroke: #9ff4ff; stroke-width: 1; filter: drop-shadow(0 0 2px #29e4f8); }
+.ic-arrow { stroke: var(--accent); stroke-width: 1.8; }
+.ic-arrow-head { fill: var(--accent); }
+.ic-axis { stroke: #cfe0ff; stroke-width: 1.2; }
+.ic-axis-head { fill: #cfe0ff; }
+.ic-guide { stroke: rgba(150, 180, 255, 0.5); stroke-width: 1; stroke-dasharray: 2 2.5; }
+.ic-sketch { fill: rgba(32, 217, 242, 0.08); stroke: var(--accent); stroke-width: 1.4; }
+.ic-plane { fill: rgba(120, 150, 220, 0.12); stroke: #4d6aa0; stroke-width: 1; }
+.ic-sheet { fill: rgba(32, 217, 242, 0.16); stroke: var(--accent); stroke-width: 1.4; }
+.ic-grid { stroke: rgba(54, 223, 242, 0.45); stroke-width: 0.8; }
+.ic-tool { fill: rgba(167, 139, 250, 0.28); stroke: #b9a4ff; stroke-width: 1; stroke-dasharray: 2.5 2; }
+.ic-ghost { fill: rgba(93, 123, 177, 0.22); stroke: #7f9bd0; stroke-width: 1; }
+.ic-result .ic-top, .ic-joined .ic-top { fill: #2fd8ee; stroke: #c8fbff; }
+.ic-result .ic-front, .ic-joined .ic-front { fill: #1595b0; stroke: #8ff0ff; }
+.ic-result .ic-side, .ic-joined .ic-side { fill: #0f7189; stroke: #7de6f7; }
+.ic-glow { filter: drop-shadow(0 0 3px rgba(41, 228, 248, 0.6)); }
+.ic-cavity { fill: #0a1226; }
+.ic-inner { fill: #2c4a80; }
+.ic-inner-dim { fill: #1d345f; }
+.ic-rim { fill: none; stroke: var(--accent); stroke-width: 1.6; filter: drop-shadow(0 0 2px #29e4f8); }
+.ic-stroke { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.ic-fill { fill: rgba(32, 217, 242, 0.12); }
+.ic-vertex { fill: #e9f2ff; }
+.ic-handle { fill: var(--highlight); stroke: #ffd2ef; stroke-width: 0.8; }
+.ic-radius { stroke: #e9f2ff; stroke-width: 1; stroke-dasharray: 2 2; }
+
 .tool-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1b1408;
+  color: #04202a;
   font-weight: 600;
 }
 
 .tool-primary:hover {
-  color: #1b1408;
+  color: #04202a;
   filter: brightness(1.1);
 }
 
 .feature-dialog {
   position: absolute;
-  top: 110px;
-  left: 12px;
-  width: 268px;
-  background: #1c2027f2;
-  border: 1px solid var(--line-bright);
-  border-radius: 6px;
-  padding: 12px;
+  top: var(--below-toolbar, 132px);
+  left: 10px;
+  width: 280px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 14px;
+  backdrop-filter: blur(6px);
   z-index: 3;
   box-shadow: 0 8px 26px #0009;
 }
 
 .feature-title {
-  font-size: 13px;
-  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
 }
 
 .feature-row {
@@ -253,13 +412,13 @@ main {
 .feature-number {
   flex: 1;
   min-width: 0;
-  background: #171b21;
-  border: 1px solid var(--line);
-  border-radius: 3px;
+  background: #0a1226;
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
   color: var(--text);
   font: inherit;
-  font-size: 11px;
-  padding: 3px 5px;
+  font-size: 12px;
+  padding: 4px 7px;
 }
 
 .feature-chip {
@@ -321,19 +480,20 @@ body.sketching #viewport canvas {
 
 .sketch-panel {
   position: absolute;
-  top: 110px;
-  left: 12px;
+  top: var(--below-toolbar, 132px);
+  left: 10px;
   width: 300px;
   /* Taller than the viewport allows, it scrolls, and Finish sticks to the
      bottom so leaving the sketch is never something you have to scroll for. */
   display: flex;
   flex-direction: column;
   /* Its own offset from the top, plus the same margin again at the bottom. */
-  max-height: calc(100% - 122px);
+  max-height: calc(100% - var(--below-toolbar, 132px) - 10px);
   overflow-y: auto;
-  background: #0f1235f2;
+  background: var(--card);
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: 12px;
+  backdrop-filter: blur(6px);
   padding: 12px;
   /* Above the numbers laid over the canvas: a dimension near the left edge
      would otherwise cover the panel and take the clicks meant for it. */
@@ -427,7 +587,7 @@ body.sketching #viewport canvas {
   bottom: -12px;
   margin-top: auto;
   padding: 6px 0;
-  background: var(--panel);
+  background: #0d1834;
 }
 
 .sketch-list {
@@ -512,10 +672,29 @@ input[type='range'] {
 }
 
 #stats {
-  margin-top: 10px;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
+}
+
+/* What the last solve came to, at a glance, before the numbers. */
+#stats::before {
+  content: 'Waiting for the kernel';
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#stats[data-state='ok']::before {
+  content: '\25CF\00a0 Solved';
+  color: #3ee08f;
+}
+
+#stats[data-state='error']::before {
+  content: '\25CF\00a0 Errors in the model';
+  color: var(--error);
 }
 
 /* ------------------------------------------------------------ node editor */
@@ -590,9 +769,9 @@ input[type='range'] {
 
 .node {
   position: absolute;
-  background: var(--panel-raised);
+  background: linear-gradient(160deg, #172848, #101c36);
   border: 1px solid var(--line-bright);
-  border-radius: 6px;
+  border-radius: 8px;
   box-shadow: 0 4px 14px #0008;
   user-select: none;
 }
@@ -648,7 +827,7 @@ input[type='range'] {
   justify-content: space-between;
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
-  border-radius: 5px 5px 0 0;
+  border-radius: 7px 7px 0 0;
   cursor: move;
   font-size: 12px;
 }
@@ -1035,9 +1214,9 @@ input[type='range'] {
   z-index: 20;
   min-width: 200px;
   padding: 4px;
-  border: 1px solid var(--line-bright);
-  border-radius: 6px;
-  background: var(--panel);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: linear-gradient(145deg, #13203b, #0b1327);
   box-shadow: 0 8px 24px #000a;
   font-size: 12px;
 }
@@ -1092,3 +1271,12 @@ input[type='range'] {
   font-size: 10px;
   text-align: right;
 }
+
+/* Numbers that change while being looked at keep their columns still. */
+.port-value,
+.feature-number,
+.sketch-label-field,
+#stats {
+  font-variant-numeric: tabular-nums;
+}
+

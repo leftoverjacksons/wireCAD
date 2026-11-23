@@ -53,6 +53,14 @@ is ready, typically around two seconds.
   content is a place in space — so selecting one draws that place: one of the
   three lights up the square already there, and any other plane, an offset or a
   face's, gets a square of its own drawn where it actually is.
+- **Icons that show what they do** — every toolbar feature is drawn as what it
+  makes, and hovering one plays a few seconds of it happening: a profile
+  rising into a block, a sharp edge rounding over, a box hollowing out, a tool
+  sliding into a body. The icon at rest is the result, because that is what has
+  to be recognised at a glance; the motion is for whoever does not yet know
+  what "fillet" or "shell" means. They are SVG drawn through one isometric
+  projection in `src/ui/icons.ts`, with their motion declared inside each
+  drawing, and they stay still for anyone whose system asks for less motion.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
