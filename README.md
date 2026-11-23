@@ -44,6 +44,11 @@ is ready, typically around two seconds.
   squares go away while a sketch has the view. They scale with what is in the
   scene, because a square fixed in millimetres is either lost inside a large
   model or swamps a small one.
+- **Offsetting a plane** — *Offset Plane* draws the plane it will make while
+  the dialog is open, where it will be, and puts an arrow on the plane it is
+  offset from, along that plane's normal: drag it and the distance follows, and
+  the drawn plane with it. Pick a face of a body instead of a plane node and
+  the offset stands out from that face.
 - **Selecting a plane shows it.** A plane node makes no geometry — its whole
   content is a place in space — so selecting one draws that place: one of the
   three lights up the square already there, and any other plane, an offset or a
@@ -386,6 +391,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:viewport-menu` | Checks a right-click on a body offers what the node offers, scoped to the face under the cursor, and that right-dragging still pans |
 | `npm run verify:references` | Checks a sketch on a face can be dimensioned to the body's edges, and follows the body when it changes |
 | `npm run verify:operation` | Checks an extrude defaults to cutting what it runs into and joining what it stands on, and that a choice made by hand stays |
+| `npm run verify:offset` | Checks an offset plane is drawn while it is set up, from a datum or a face, and that its arrow drags the distance |
 | `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
