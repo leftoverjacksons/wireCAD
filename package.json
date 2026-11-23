@@ -28,7 +28,8 @@
     "verify:rollback": "node scripts/verify-rollback.mjs",
     "verify:viewport-menu": "node scripts/verify-viewport-menu.mjs",
     "verify:references": "node scripts/verify-references.mjs",
-    "verify:operation": "node scripts/verify-operation.mjs"
+    "verify:operation": "node scripts/verify-operation.mjs",
+    "verify:offset": "node scripts/verify-offset.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",

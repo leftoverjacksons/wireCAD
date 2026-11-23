@@ -404,11 +404,22 @@ function handleAxes(spec: FeatureSpec, previewNodeId: NodeId): HandleAxis[] {
     }));
   }
 
-  const single = handleAxis(spec);
+  const single = handleAxis(spec, previewNodeId);
   return single === null ? [] : [single];
 }
 
-function handleAxis(spec: FeatureSpec): HandleAxis | null {
+function handleAxis(spec: FeatureSpec, previewNodeId: NodeId): HandleAxis | null {
+  if (spec.nodeType === 'plane.offset') {
+    // From the plane being offset, along its normal: the way the distance
+    // actually moves it. Read off what the preview is wired to rather than off
+    // the dialog's choice, because a face chosen in the view only becomes a
+    // plane once the face node the preview made for it has been solved.
+    const source = graph.incomingEdge(previewNodeId, 'plane');
+    const base = source === undefined ? WORLD_XY : lastPlanes[source.from.node];
+    if (base === undefined) return null;
+    return { origin: base.origin, direction: base.normal, port: 'distance' };
+  }
+
   if (spec.nodeType === 'solid.extrude') {
     const profile = dialog.operandNode('profile');
     if (profile === null) return null;
@@ -708,11 +719,21 @@ function bodyBehindSelection(nodeId: NodeId): NodeId | null {
  * it would appear only when something else happened to redraw.
  */
 function refreshPlaneHighlight(): void {
-  if (selected === null || dialog.isOpen) return;
-  const node = graph.getNode(selected) ?? null;
-  if (node === null) return;
-  if (!graph.schemaOf(node.id).outputs.some((port) => port.type === 'plane')) return;
-  viewport.setSelectedPlane(lastPlanes[node.id] ?? null);
+  const makesPlane = (nodeId: NodeId | null): nodeId is NodeId =>
+    nodeId !== null &&
+    graph.getNode(nodeId) !== undefined &&
+    graph.schemaOf(nodeId).outputs.some((port) => port.type === 'plane');
+
+  // A dialog building a plane shows the plane it is building, as it goes. A
+  // plane makes no geometry, so without this its preview is the one preview
+  // with nothing on screen.
+  if (dialog.isOpen) {
+    const preview = dialog.previewNodeId;
+    if (makesPlane(preview)) viewport.setSelectedPlane(lastPlanes[preview] ?? null);
+    return;
+  }
+
+  viewport.setSelectedPlane(makesPlane(selected) ? (lastPlanes[selected] ?? null) : null);
 }
 
 /** Lights up the edges a selected edge selection refers to, once they are drawn. */
