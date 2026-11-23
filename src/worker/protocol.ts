@@ -24,6 +24,30 @@ export interface SolveRequest {
    * already exists after a solve.
    */
   rolledBackTo?: NodeId;
+  /**
+   * An extrude being set up, whose bare prism should be measured against the
+   * bodies on screen so the dialog can default its operation and target.
+   */
+  contact?: ContactRequest;
+}
+
+export interface ContactRequest {
+  /** The node whose profile is extruded. */
+  profile: NodeId;
+  distance: number;
+  /**
+   * The preview's own nodes. They are not bodies the extrusion could meet —
+   * they are the extrusion — and while one cuts a body it stands in that
+   * body's place on screen, which must not hide it from the question.
+   */
+  ignore: NodeId[];
+}
+
+export interface ContactAnswer {
+  profile: NodeId;
+  distance: number;
+  overlaps: Array<{ nodeId: NodeId; volume: number }>;
+  touches: NodeId[];
 }
 
 export type ExportFormat = 'stl' | 'step';
@@ -90,6 +114,8 @@ export interface SolvedMessage {
   /** Resolved planes, so the interface can sketch on whatever a node produced. */
   planes: Record<NodeId, PlaneValue>;
   stats: EvalStats;
+  /** The answer to the request's `contact`, when it had one and it could be given. */
+  contact?: ContactAnswer;
   solveMs: number;
   meshMs: number;
   triangles: number;

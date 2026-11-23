@@ -27,7 +27,8 @@
     "verify:edit": "node scripts/verify-edit.mjs",
     "verify:rollback": "node scripts/verify-rollback.mjs",
     "verify:viewport-menu": "node scripts/verify-viewport-menu.mjs",
-    "verify:references": "node scripts/verify-references.mjs"
+    "verify:references": "node scripts/verify-references.mjs",
+    "verify:operation": "node scripts/verify-operation.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.3",

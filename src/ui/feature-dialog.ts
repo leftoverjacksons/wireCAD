@@ -13,6 +13,9 @@ import {
   specForNode,
 } from './features.js';
 import { EDGE_STRIDE } from '../nodes/edges.js';
+import type { ContactAnswer, ContactRequest } from '../worker/protocol.js';
+import type { Stipulated } from './extrude-default.js';
+import { defaultExtrude } from './extrude-default.js';
 
 export interface FeatureDialogCallbacks {
   onBeforeChange(): void;
@@ -78,6 +81,13 @@ export class FeatureDialog {
   private readonly numberFields = new Map<string, HTMLInputElement>();
   /** The node a new feature goes in after, when the view is rolled back to one. */
   private spliceAt: NodeId | null = null;
+  /**
+   * What the person has set by hand, which the geometry then leaves alone. The
+   * rest of an automatic feature's operation and target follows what it meets.
+   */
+  private stipulated: Stipulated = {};
+  /** Why the operation and target are what they are, when nobody chose them. */
+  private autoReason: string | null = null;
 
   constructor(
     container: HTMLElement,
@@ -135,6 +145,8 @@ export class FeatureDialog {
     this.choices.clear();
     this.armedOperand = null;
     this.edges = null;
+    this.stipulated = {};
+    this.autoReason = null;
     this.edgeListener?.(null);
 
     for (const number of spec.numbers) this.numbers.set(number.id, number.value);
@@ -485,6 +497,7 @@ export class FeatureDialog {
     }
 
     this.chosen.set(armed, { kind: 'node', nodeId });
+    if (this.isAutomatic && armed === 'target') this.stipulated.target = nodeId;
     this.advance();
     return true;
   }
@@ -525,6 +538,93 @@ export class FeatureDialog {
     return true;
   }
 
+  /** True for a new feature whose operation and target follow the geometry. */
+  private get isAutomatic(): boolean {
+    return this.spec?.autoOperation === true && this.editing === null;
+  }
+
+  /**
+   * What the worker should measure for this dialog, if anything: the bare
+   * prism of the chosen profile, against every body but this feature's own.
+   */
+  contactRequest(): ContactRequest | null {
+    if (!this.isAutomatic) return null;
+    const profile = this.chosen.get('profile');
+    const distance = this.numbers.get('distance');
+    if (profile === undefined || profile.kind !== 'node') return null;
+    if (distance === undefined || distance === 0 || !Number.isFinite(distance)) return null;
+    return { profile: profile.nodeId, distance, ignore: [...this.previewNodes()] };
+  }
+
+  /** The last answer applied, kept so a hand-made choice can be followed up at once. */
+  private lastContact: ContactAnswer | null = null;
+
+  /**
+   * Takes the worker's measurement and sets whatever the person has not set.
+   *
+   * Changing the operation or the target rebuilds the preview, which asks
+   * again — and gets the same answer, because the question is about the bare
+   * prism and the bodies without it. Nothing is changed the second time, which
+   * is what stops this going round.
+   */
+  applyContact(answer: ContactAnswer): void {
+    const request = this.contactRequest();
+    if (request === null) return;
+    if (answer.profile !== request.profile || answer.distance !== request.distance) return;
+    this.lastContact = answer;
+    this.reconsider();
+  }
+
+  /** Works the defaults out again from the last measurement and what was set by hand. */
+  private reconsider(): void {
+    const answer = this.lastContact;
+    const request = this.contactRequest();
+    if (answer === null || request === null || answer.profile !== request.profile) return;
+
+    const decided = defaultExtrude(
+      answer,
+      this.stipulated,
+      (nodeId) => this.isSketchedOn(request.profile, nodeId),
+      (nodeId) => this.describeNode(nodeId),
+    );
+
+    const operation = this.choices.get('operation');
+    const target = this.chosen.get('target');
+    const currentTarget = target?.kind === 'node' ? target.nodeId : null;
+    this.autoReason = decided.reason;
+    if (operation === decided.operation && currentTarget === decided.target) {
+      this.render();
+      return;
+    }
+
+    this.choices.set('operation', decided.operation);
+    if (decided.target === null) this.chosen.delete('target');
+    else this.chosen.set('target', { kind: 'node', nodeId: decided.target });
+    if (this.armedOperand === 'target') {
+      this.armedOperand = null;
+      this.callbacks.onArmedChanged(false);
+    }
+    this.render();
+    this.refreshPreview();
+  }
+
+  /**
+   * Whether a body is the one the profile was drawn on, or what that body has
+   * since become: the face a sketch sits on, or the body it measures from, may
+   * have been filleted or bored since, and the result is still that body.
+   */
+  private isSketchedOn(profile: NodeId, body: NodeId): boolean {
+    const bases: NodeId[] = [];
+    const measured = this.graph.incomingEdge(profile, 'body');
+    if (measured !== undefined) bases.push(measured.from.node);
+    const plane = this.graph.incomingEdge(profile, 'plane');
+    if (plane !== undefined && this.graph.getNode(plane.from.node)?.type === 'face.plane') {
+      const solid = this.graph.incomingEdge(plane.from.node, 'solid');
+      if (solid !== undefined) bases.push(solid.from.node);
+    }
+    return bases.some((base) => base === body || this.graph.downstreamOf(base).has(body));
+  }
+
   private advance(): void {
     this.armedOperand = null;
     this.render();
@@ -535,7 +635,12 @@ export class FeatureDialog {
   private armNextEmpty(): void {
     const spec = this.spec;
     if (spec === null) return;
-    const next = spec.operands.find((operand) => !this.chosen.has(operand.id));
+    // An automatic feature fills its optional operands itself, so arming one
+    // would only make the next click in the view say something nobody meant.
+    const next = spec.operands.find(
+      (operand) =>
+        !this.chosen.has(operand.id) && !(this.isAutomatic && operand.optional === true),
+    );
     this.armedOperand = next?.id ?? null;
     this.render();
     this.callbacks.onArmedChanged(this.armedOperand !== null);
@@ -591,6 +696,10 @@ export class FeatureDialog {
     const label = document.createElement('span');
     label.className = 'feature-label';
     label.textContent = operand.optional === true ? `${operand.label} (opt)` : operand.label;
+    if (this.isAutomatic && operand.id === 'target' && this.stipulated.target === undefined) {
+      label.textContent = `${operand.label} (auto)`;
+      label.title = 'Chosen from what the extrusion meets. Pick one to choose it yourself.';
+    }
     row.append(label);
 
     const editing = this.editing;
@@ -658,6 +767,10 @@ export class FeatureDialog {
       select.addEventListener('change', () => {
         if (select.value === '') this.chosen.delete(operand.id);
         else this.chosen.set(operand.id, { kind: 'node', nodeId: select.value });
+        if (this.isAutomatic && operand.id === 'target') {
+          this.stipulated.target = select.value === '' ? null : select.value;
+          this.reconsider();
+        }
         this.advance();
       });
       row.append(select);
@@ -704,6 +817,12 @@ export class FeatureDialog {
       const label = document.createElement('span');
       label.className = 'feature-label';
       label.textContent = choice.label;
+      const automatic =
+        this.isAutomatic && choice.id === 'operation' && this.stipulated.operation === undefined;
+      if (automatic) {
+        label.textContent = `${choice.label} (auto)`;
+        label.title = 'Chosen from what the extrusion meets. Choose one to set it yourself.';
+      }
 
       const select = document.createElement('select');
       select.className = 'feature-select';
@@ -716,6 +835,11 @@ export class FeatureDialog {
       select.value = this.choices.get(choice.id) ?? choice.value;
       select.addEventListener('change', () => {
         this.choices.set(choice.id, select.value);
+        if (this.isAutomatic && choice.id === 'operation') {
+          this.stipulated.operation = select.value;
+          this.reconsider();
+          this.render();
+        }
         this.refreshPreview();
       });
 
@@ -749,6 +873,7 @@ export class FeatureDialog {
 
     const message = document.createElement('div');
     message.className = 'feature-message';
+    if (this.autoReason !== null) message.textContent = this.autoReason;
     if (this.armedOperand !== null) {
       const operand = spec.operands.find((candidate) => candidate.id === this.armedOperand);
       if (operand?.type === 'edges') {
