@@ -7,6 +7,7 @@ import { NodeRegistry } from '../core/registry.js';
 import type { NodeId, PlaneValue } from '../core/types.js';
 import { isPlane } from '../core/types.js';
 import { compoundOf } from '../geometry/build.js';
+import { probeExtrude } from '../geometry/contact.js';
 import type { OpenCascadeInstance, Shape } from '../geometry/kernel.js';
 import { disposeCacheEntry, isGeometry, loadKernel, tessellate } from '../geometry/kernel.js';
 import { writeStep } from '../geometry/step.js';
@@ -18,7 +19,10 @@ import { createEdgeNodes } from '../nodes/edges.js';
 import { createModifyNodes } from '../nodes/modify.js';
 import { planeNodes } from '../nodes/plane.js';
 import { createGeometryNodes } from '../nodes/solid.js';
+import type { EvalResult } from '../core/evaluator.js';
 import type {
+  ContactAnswer,
+  ContactRequest,
   ExportRequest,
   MainToWorker,
   MeshPayload,
@@ -128,6 +132,8 @@ function solve(request: SolveRequest): void {
     if (!stillVisible.has(nodeId)) sentHashes.delete(nodeId);
   }
 
+  const contact = request.contact === undefined ? undefined : measureContact(request, graph, result);
+
   post(
     {
       type: 'solved',
@@ -139,12 +145,96 @@ function solve(request: SolveRequest): void {
       meshes,
       planes,
       stats: result.stats,
+      ...(contact === undefined ? {} : { contact }),
       solveMs,
       meshMs: performance.now() - meshStart,
       triangles,
     },
     transfer,
   );
+}
+
+/**
+ * Answers for the last few extrusions measured. Dragging a distance asks the
+ * same question on every solve, and the answer only changes when the profile,
+ * the distance or one of the bodies does — all of which the key holds.
+ */
+const contactAnswers = new Map<string, ContactAnswer>();
+
+/**
+ * What an extrude being set up would run into, and what it would stand on.
+ *
+ * Asked of the bodies that would be on screen without the extrude itself: a
+ * preview cutting a body takes that body's place on screen, and the question
+ * is about the body, not about what the preview has already done to it.
+ */
+function measureContact(
+  request: SolveRequest,
+  graph: Graph,
+  result: EvalResult,
+): ContactAnswer | undefined {
+  const asked = request.contact as ContactRequest;
+  const profileResult = result.results.get(asked.profile);
+  if (profileResult === undefined || profileResult.status === 'error') return undefined;
+  if (profileResult.status === 'skipped') return undefined;
+
+  const port = graph.schemaOf(asked.profile).outputs.find((entry) => entry.type === 'sketch');
+  const profile = port === undefined ? undefined : profileResult.outputs[port.id];
+  if (profile === undefined || !isGeometry(profile)) return undefined;
+
+  const ignore = new Set(asked.ignore);
+  const document = request.document;
+  const without = Graph.fromJSON(registry, {
+    ...document,
+    nodes: document.nodes.filter((node) => !ignore.has(node.id)),
+    edges: document.edges.filter((edge) => !ignore.has(edge.from.node) && !ignore.has(edge.to.node)),
+  });
+
+  // Anything built from this profile already is this extrusion's sibling, not
+  // something it could be meant to cut.
+  const fromProfile = graph.downstreamOf(asked.profile);
+  const bodies: Array<{ nodeId: NodeId; hash: string; shape: Shape }> = [];
+  for (const [nodeId, shown] of planDisplay(without, { rolledBackTo: request.rolledBackTo ?? null })) {
+    if (shown.mode !== 'model' || shown.kind !== 'solid') continue;
+    if (ignore.has(nodeId) || fromProfile.has(nodeId)) continue;
+    const nodeResult = result.results.get(nodeId);
+    const value = nodeResult?.outputs[shown.portId];
+    if (nodeResult === undefined || value === undefined || !isGeometry(value)) continue;
+    bodies.push({ nodeId, hash: nodeResult.hash, shape: value.handle as Shape });
+  }
+
+  const key = [
+    profileResult.hash,
+    asked.distance,
+    ...bodies.map((body) => `${body.nodeId}:${body.hash}`),
+  ].join('|');
+  const known = contactAnswers.get(key);
+  if (known !== undefined) return known;
+
+  const answer: ContactAnswer = {
+    profile: asked.profile,
+    distance: asked.distance,
+    overlaps: [],
+    touches: [],
+  };
+  const normal = profile.plane?.normal ?? { x: 0, y: 0, z: 1 };
+  const probe = probeExtrude(oc, profile.handle as Shape, normal, asked.distance);
+  if (probe !== null) {
+    try {
+      for (const body of bodies) {
+        const contact = probe.against(body.shape);
+        if (contact === null) continue;
+        if (contact.overlap > 0) answer.overlaps.push({ nodeId: body.nodeId, volume: contact.overlap });
+        else if (contact.touches) answer.touches.push(body.nodeId);
+      }
+    } finally {
+      probe.dispose();
+    }
+  }
+
+  contactAnswers.set(key, answer);
+  while (contactAnswers.size > 16) contactAnswers.delete(contactAnswers.keys().next().value!);
+  return answer;
 }
 
 /** Export re-solves, which is nearly free: every shape is already cached. */

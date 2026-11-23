@@ -1126,6 +1126,10 @@ function requestSolve(): void {
     pinned: pinnedNodes(),
     ...(rolledBackTo === null ? {} : { rolledBackTo }),
   };
+  // An extrude being set up asks what it would run into, so its operation and
+  // target can default to what the geometry implies.
+  const contact = dialog.isOpen ? dialog.contactRequest() : null;
+  if (contact !== null) message.contact = contact;
   worker.postMessage(message);
 }
 
@@ -1157,6 +1161,7 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
 
   lastPlanes = message.planes;
   lastReports = message.reports;
+  if (message.contact !== undefined && dialog.isOpen) dialog.applyContact(message.contact);
   for (const mesh of message.meshes) {
     lastMeshes.set(mesh.nodeId, mesh);
     const centre = centreOfMesh(mesh.positions);

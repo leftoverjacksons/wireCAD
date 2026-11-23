@@ -15,9 +15,9 @@ architecture is in `README.md`.
   CHROMIUM_PATH=/opt/pw-browsers/chromium npm run verify:browser
   ```
 
-  There are eighteen, one `verify:<name>` script each: `browser shell edges
+  There are nineteen, one `verify:<name>` script each: `browser shell edges
   profile extrude links constraints preview ghost drag glyphs datums menu move
-  edit rollback viewport-menu references`. They take several minutes together
+  edit rollback viewport-menu references operation`. They take several minutes together
   and they are the only thing that actually tests geometry, because the kernel
   is WebAssembly and does not run in the unit suite.
 - Anything about the interface is claimed only after looking at a screenshot.

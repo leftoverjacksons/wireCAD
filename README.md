@@ -87,6 +87,15 @@ is ready, typically around two seconds.
   it, so the starter model is four nodes rather than a block, a plug and a
   boolean. The *Combine* buttons are still there for putting two bodies that
   already exist together.
+- **What an extrude does, by default** — the dialog works it out from what the
+  extrusion would meet. One that runs into a body cuts it; one standing on a
+  body's face and reaching away from it joins it; one that meets nothing is a
+  new body. The body is put in *Target* for you, preferring the one the sketch
+  was drawn on, and both fields say *(auto)* while they are being chosen for
+  you, with the reason underneath. Drag the distance through the face and the
+  join turns into a cut. Set either field by hand and it stays as you set it;
+  the other still follows the geometry. Reopening an extrude never changes
+  either.
 - **Planes** — sketches sit on a plane rather than at a world Z offset, and an
   extrude follows its profile's normal. A rectangle drawn on the XZ plane
   extrudes along −Y. Sketch dimensions are in the plane's own U/V axes.
@@ -376,6 +385,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:edit` | Checks a feature reopens on its own values, changes live, and is put back by Cancel |
 | `npm run verify:viewport-menu` | Checks a right-click on a body offers what the node offers, scoped to the face under the cursor, and that right-dragging still pans |
 | `npm run verify:references` | Checks a sketch on a face can be dimensioned to the body's edges, and follows the body when it changes |
+| `npm run verify:operation` | Checks an extrude defaults to cutting what it runs into and joining what it stands on, and that a choice made by hand stays |
 | `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
@@ -599,6 +609,35 @@ that is how it was found.
 A reference whose edge can no longer be found fails the sketch with a reason
 rather than leaving the point where it last was, and an edge that has changed
 from a span into a rim, or the reverse, is not the edge that was referred to.
+
+## Defaulting an extrude's operation
+
+Which operation an extrude wants is a guess about intent, and most of it is
+answered by the geometry. So while the dialog is open the worker builds the bare
+prism — the profile swept by the distance, combined with nothing — and asks the
+kernel what it shares with every body on screen. A shared volume means the
+extrusion runs into that body. Failing that, two slabs a micron thick, one just
+behind the profile and one just past the far end, are tested the same way: if
+either shares volume with a body, the extrusion lies against it without entering.
+
+It is asked of the kernel rather than read off which face the sketch is on,
+because a sketch on one body can reach another, and a body that is not convex
+can be run into by an extrusion pointing away from it.
+
+Two details keep it honest. The bodies are the ones that would be on screen
+*without* the extrude: a preview cutting a body takes that body's place, and the
+question is about the body, not about what the preview has already done to it.
+That also makes the answer independent of the operation it chooses, so choosing
+one — which rebuilds the preview and asks again — gets the same answer back and
+changes nothing, which is what stops it going round. And a boolean the kernel
+would not finish counts as no answer rather than as no overlap, because with
+exceptions off a failure returns something wrong, and read as "nothing there" it
+would quietly leave the extrusion a new body inside another.
+
+The rule from that answer to an operation and a target lives in
+`src/ui/extrude-default.ts`, tested on its own. Running into a body outranks
+resting on one, because an extrusion that enters a body and is left a new body is
+two solids in the same space, which is never what was meant.
 
 ## Two dimensions, one number
 
@@ -834,6 +873,9 @@ of it are built.
 - A gap is the distance from one end of a line to the other line. Where the two
   are held parallel that is the gap everywhere; a gap dimension placed on lines
   that merely happen to be parallel adds the rule that keeps them so.
+- An extrude's default only tests contact at the two ends of the prism. One
+  that lies along a body's side without entering it is not counted as touching,
+  so it defaults to a new body rather than a join.
 - Sketch entities are lines and circles. No arcs, splines, or trimming, so a
   rounded outline is a fillet on the solid rather than in the sketch.
 - Lines have to meet exactly two at a point. A sketch that branches or trails a

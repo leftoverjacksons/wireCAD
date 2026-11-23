@@ -65,6 +65,12 @@ export interface FeatureSpec {
    * where nothing is reading the operand, it is an ordinary connect.
    */
   splice?: boolean;
+  /**
+   * Whether Operation and Target default from what the extrusion meets: cut
+   * what it runs into, join what it stands on. Only what the person has not
+   * set by hand is decided this way.
+   */
+  autoOperation?: boolean;
 }
 
 export interface FeatureGroup {
@@ -165,6 +171,7 @@ export const tabs: readonly FeatureTab[] = [
             id: 'extrude',
             label: 'Extrude',
             nodeType: 'solid.extrude',
+            autoOperation: true,
             operands: [
               { id: 'profile', label: 'Profile', type: 'sketch' },
               { id: 'target', label: 'Target body', type: 'geometry', optional: true },
