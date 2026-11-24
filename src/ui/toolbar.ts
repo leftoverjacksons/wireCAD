@@ -74,7 +74,18 @@ export class Toolbar {
       for (const listener of this.heightListeners) listener(below);
     };
     this.remeasure = measure;
-    if (typeof ResizeObserver === 'function') new ResizeObserver(measure).observe(this.element);
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(measure).observe(this.element);
+      // A narrower window can turn one row of tiles into two. Watched on the
+      // container, whose width is what decides it, rather than on the toolbar,
+      // whose height this changes.
+      let width = container.clientWidth;
+      new ResizeObserver(() => {
+        if (container.clientWidth === width) return;
+        width = container.clientWidth;
+        this.fit();
+      }).observe(container);
+    }
 
     this.select(this.active);
     measure();
@@ -143,7 +154,7 @@ export class Toolbar {
     this.groupsRow.replaceChildren();
     if (context !== null && context.id === tabId) {
       this.layOut(context.groups);
-      this.remeasure?.();
+      this.fit();
       return;
     }
 
@@ -156,6 +167,25 @@ export class Toolbar {
         buttons: group.features.map((spec) => this.featureTile(spec)),
       })),
     );
+    this.fit();
+  }
+
+  /**
+   * Keeps the tools on one row where they can be. A second row of tiles takes
+   * a band off the top of the view as tall as the first, and on a laptop-sized
+   * window that is close to half of it — so when the full-size tiles would
+   * wrap, they are drawn smaller first, and only wrap if even that is not
+   * enough.
+   */
+  private fit(): void {
+    const wraps = (): boolean => {
+      const tiles = this.groupsRow.querySelectorAll<HTMLElement>('.tool-tile');
+      const first = tiles[0];
+      const last = tiles[tiles.length - 1];
+      return first !== undefined && last !== undefined && last.offsetTop > first.offsetTop + 4;
+    };
+    this.element.classList.remove('is-compact');
+    if (wraps()) this.element.classList.add('is-compact');
     this.remeasure?.();
   }
 

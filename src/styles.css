@@ -1348,3 +1348,25 @@ input[type='range'] {
 .ic-cross-out { stroke: var(--highlight); stroke-width: 1.8; }
 .ic-check { fill: none; stroke: #3ee08f; stroke-width: 2.6; }
 
+/* Drawn smaller when the full-size tiles would not fit on one row. */
+.toolbar.is-compact .tool-tile {
+  min-width: 40px;
+  padding: 2px 2px 3px;
+  font-size: 10px;
+}
+
+.toolbar.is-compact .feature-icon,
+.toolbar.is-compact .tool-tile .sketch-icon {
+  width: 34px;
+  height: 27px;
+}
+
+.toolbar.is-compact .tool-group {
+  padding: 0 3px;
+}
+
+.toolbar.is-compact .group-label {
+  font-size: 8px;
+  margin-top: 1px;
+}
+
