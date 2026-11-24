@@ -64,7 +64,7 @@ await page.evaluate(async () => {
   window.wirecad.select('sk');
 });
 
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 const panel = page.locator('.sketch-panel');
 await panel.waitFor({ state: 'visible', timeout: 10_000 });

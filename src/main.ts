@@ -263,6 +263,10 @@ function startSketch(choice: PlaneChoice): void {
 const sketchSession = new SketchSession(viewportEl, graph, viewport, {
   onBeforeChange: () => history.capture(),
   onChanged: () => requestSolve(),
+  // The session's tools get a tab of their own while it is open, opened for
+  // them, and taken away when the sketch is finished.
+  showTools: (groups, finish) => toolbar.showContext('sketch', 'Sketch', groups, finish),
+  hideTools: () => toolbar.hideContext(),
   visibleSolids: () =>
     [...lastMeshes.values()].filter((mesh) => mesh.kind === 'solid').map((mesh) => mesh.nodeId),
   onExit: () => {

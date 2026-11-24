@@ -40,10 +40,22 @@ import type { Pull, SolveResult } from '../sketch/solver.js';
 import { solveSketch } from '../sketch/solver.js';
 import type { Viewport } from '../viewport.js';
 
+/** A labelled run of the session's buttons, as the toolbar lays them out. */
+export interface ToolGroup {
+  label: string;
+  buttons: HTMLElement[];
+}
+
 export interface SketchSessionCallbacks {
   onBeforeChange(): void;
   onChanged(): void;
   onExit(): void;
+  /**
+   * The sketch's tools, to be put where the person works: they belong to the
+   * session, so they appear when it starts and go when it ends.
+   */
+  showTools(groups: ReadonlyArray<ToolGroup>, finish: HTMLElement): void;
+  hideTools(): void;
   /** The solid bodies on screen, which a sketch on no face may measure from. */
   visibleSolids(): NodeId[];
 }
@@ -273,6 +285,9 @@ export class SketchSession {
   private readonly hintEl: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly toolButtons = new Map<ToolId, HTMLButtonElement>();
+  /** Everything the toolbar shows while this session is open. */
+  private readonly toolGroups: ToolGroup[];
+  private readonly finishButton: HTMLButtonElement;
   /** The numbers drawn on the sketch, one field per dimension. */
   private readonly labelLayer: HTMLElement;
   private readonly labels = new Map<string, HTMLInputElement>();
@@ -340,33 +355,45 @@ export class SketchSession {
     this.statusEl.className = 'sketch-status';
     heading.append(title, this.statusEl);
 
-    const draw = this.group('Draw');
+    // The tools live in the toolbar while the session is open, the way the
+    // rest of the program's tools do; the panel keeps what is about this
+    // sketch in particular — its state, its rules, and what the tool in hand
+    // is asking for.
+    const tile = (id: string, label: string, onClick: () => void): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'tool-tile sketch-tool';
+      this.decorate(button, id, label);
+      button.addEventListener('click', onClick);
+      return button;
+    };
+
+    const draw: HTMLElement[] = [];
     for (const tool of DRAW_TOOLS) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'tool-button';
-      this.decorate(button, tool.id, tool.label);
-      button.addEventListener('click', () => this.setTool(tool.id));
+      const button = tile(tool.id, tool.label, () => this.setTool(tool.id));
       this.toolButtons.set(tool.id, button);
-      draw.row.append(button);
+      draw.push(button);
     }
+    const relations = RELATIONS.map((relation) =>
+      tile(relation.id, relation.label, () => this.applyRelation(relation)),
+    );
+    this.toolGroups = [
+      { label: 'Draw', buttons: draw },
+      { label: 'Constrain', buttons: relations },
+      { label: 'Edit', buttons: [tile('delete', 'Delete', () => this.deletePicked())] },
+    ];
 
-    const relations = this.group('Constrain');
-    for (const relation of RELATIONS) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'tool-button';
-      this.decorate(button, relation.id, relation.label);
-      button.addEventListener('click', () => this.applyRelation(relation));
-      relations.row.append(button);
-    }
-
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'tool-button';
-    remove.textContent = 'Delete';
-    remove.addEventListener('click', () => this.deletePicked());
-    relations.row.append(remove);
+    // Leaving is not one tool among the others, so it sits by the tab rather
+    // than in it: where it can be found from any tab, and not mistaken for
+    // something to draw with.
+    const finish = document.createElement('button');
+    finish.type = 'button';
+    finish.className = 'tool-button tool-primary toolbar-finish';
+    const check = sketchToolIcon('finish');
+    if (check !== null) finish.append(check);
+    finish.append('Finish Sketch');
+    finish.addEventListener('click', () => this.exit());
+    this.finishButton = finish;
 
     this.dialogue = document.createElement('div');
     this.dialogue.className = 'sketch-dialogue';
@@ -419,15 +446,7 @@ export class SketchSession {
     // The dimension tool's panel goes directly under the tools, rather than
     // below the relations: it belongs to the tool in hand, and a panel that
     // opens below the fold has not opened as far as the person is concerned.
-    this.panel.append(
-      heading,
-      draw.el,
-      this.dialogue,
-      relations.el,
-      this.hintEl,
-      this.listEl,
-      actions,
-    );
+    this.panel.append(heading, this.dialogue, this.hintEl, this.listEl, actions);
 
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
@@ -442,31 +461,12 @@ export class SketchSession {
    */
   private decorate(button: HTMLButtonElement, id: string, label: string): void {
     const icon = sketchToolIcon(id);
-    if (icon === null) {
-      button.textContent = label;
-      return;
-    }
-    button.classList.add('sketch-tile');
+    if (icon !== null) button.append(icon);
     const name = document.createElement('span');
-    name.className = 'sketch-tile-label';
+    name.className = 'tool-tile-label';
     name.textContent = label;
-    button.append(icon, name);
-    attachIconMotion(button);
-  }
-
-  private group(label: string): { el: HTMLElement; row: HTMLElement } {
-    const el = document.createElement('div');
-    el.className = 'sketch-group';
-
-    const caption = document.createElement('div');
-    caption.className = 'sketch-group-label';
-    caption.textContent = label;
-
-    const row = document.createElement('div');
-    row.className = 'sketch-tools';
-
-    el.append(caption, row);
-    return { el, row };
+    button.append(name);
+    if (icon !== null) attachIconMotion(button);
   }
 
   get isActive(): boolean {
@@ -520,6 +520,9 @@ export class SketchSession {
     this.placing = null;
     this.endGrab();
 
+    // Before the camera is aligned, because the toolbar grows to hold the
+    // tools and the view frames the sketch in whatever room that leaves.
+    this.callbacks.showTools(this.toolGroups, this.finishButton);
     this.panel.hidden = false;
     this.labelLayer.hidden = false;
     this.releaseCamera = this.viewport.onCameraChange(() => this.followCamera());
@@ -586,6 +589,7 @@ export class SketchSession {
     this.preview = null;
 
     this.panel.hidden = true;
+    this.callbacks.hideTools();
     this.viewport.clearSketchOverlay();
     this.viewport.clearSketchPreview();
     this.viewport.setDimmed(false);

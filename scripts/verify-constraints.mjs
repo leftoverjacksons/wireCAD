@@ -173,7 +173,7 @@ const cameraAt = () =>
   });
 const cameraBefore = await cameraAt();
 
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
 await page.getByRole('button', { name: 'Create', exact: true }).click();
@@ -185,13 +185,13 @@ const canvas = await page.locator('canvas').first().boundingBox();
 const at = (fx, fy) => [canvas.x + canvas.width * fx, canvas.y + canvas.height * fy];
 
 // A rectangle...
-await panel.getByRole('button', { name: 'Rectangle', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Rectangle', exact: true }).click();
 await page.mouse.click(...at(0.36, 0.34));
 await page.mouse.click(...at(0.64, 0.62));
 const afterRectangle = await panel.isVisible();
 
 // ...and a circle inside it, in the same session.
-await panel.getByRole('button', { name: 'Circle', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Circle', exact: true }).click();
 await page.mouse.click(...at(0.5, 0.48));
 await page.mouse.click(...at(0.54, 0.48));
 
@@ -272,7 +272,7 @@ const abandoned = await (async () => {
     graph.addNode('plane.xy', { id: 'xy', label: 'XY Plane' });
     await window.__settle();
   });
-  await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+  await page.getByRole('button', { name: 'Solid', exact: true }).click();
   await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
   await page.locator('.feature-dialog select').first().selectOption({ label: 'XY Plane' });
   await page.getByRole('button', { name: 'Create', exact: true }).click();
@@ -324,7 +324,7 @@ const edit = await page.evaluate(async () => {
 });
 
 await page.evaluate(() => window.wirecad.select('sk'));
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 
 const editor = page.locator('.sketch-panel');
@@ -349,7 +349,7 @@ const pickEdge = async (a, b) => {
 
 await pickEdge(1, 2);
 await pickEdge(2, 0);
-await editor.getByRole('button', { name: 'Equal', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Equal', exact: true }).click();
 const afterEqual = await editor.locator('.sketch-status').innerText();
 
 // A dimension is picked out, then put somewhere: where it lands is part of
@@ -372,7 +372,7 @@ const placeOut = async (a, b, outU, outV) => {
 };
 
 await pickEdge(0, 1);
-await editor.getByRole('button', { name: 'Dimension', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Dimension', exact: true }).click();
 await placeOut(0, 1, 0, -18);
 const afterDimension = await editor.locator('.sketch-status').innerText();
 
@@ -434,7 +434,7 @@ await page.evaluate(async () => {
   window.wirecad.select('sk');
 });
 
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 const drawing = page.locator('.sketch-panel');
 await drawing.waitFor({ state: 'visible', timeout: 10_000 });
@@ -453,7 +453,7 @@ const freedomOf = async () =>
   );
 const looseBefore = await freedomOf();
 
-await drawing.getByRole('button', { name: 'Dimension', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Dimension', exact: true }).click();
 const base = await midOf(0, 1);
 await page.mouse.click(base.x, base.y);
 const waiting = await page.locator('.sketch-label-field').count();
@@ -551,7 +551,7 @@ await page.evaluate(async () => {
 });
 
 await page.evaluate(() => window.wirecad.select('sk'));
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 const reopenPanel = page.locator('.sketch-panel');
 await reopenPanel.waitFor({ state: 'visible', timeout: 10_000 });
@@ -565,7 +565,7 @@ const baseAt = await page.evaluate(() => {
   );
 });
 await page.mouse.click(baseAt.x, baseAt.y);
-await reopenPanel.getByRole('button', { name: 'Dimension', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Dimension', exact: true }).click();
 const settle = { x: baseAt.x, y: baseAt.y + 70 };
 await page.mouse.move(settle.x, settle.y);
 await page.mouse.click(settle.x, settle.y);

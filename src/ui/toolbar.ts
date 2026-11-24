@@ -1,4 +1,20 @@
 import type { FeatureSpec, FeatureTab } from './features.js';
+
+/**
+ * A tab that belongs to something happening rather than to the program: it
+ * appears when that starts, opens itself, and goes when it ends. Its buttons
+ * are handed over ready-made, because they belong to whoever is running it.
+ */
+interface ContextTab {
+  id: string;
+  label: string;
+  groups: ReadonlyArray<{ label: string; buttons: HTMLElement[] }>;
+  button: HTMLButtonElement;
+  /** Shown beside the tab for as long as it is up: how to end what it is for. */
+  extra: HTMLElement | null;
+  /** The tab that was open before this one opened itself, to go back to. */
+  returnTo: string;
+}
 import { attachIconMotion, featureIcon } from './icons.js';
 
 export class Toolbar {
@@ -8,6 +24,8 @@ export class Toolbar {
   private readonly tabButtons = new Map<string, HTMLButtonElement>();
   private active: string;
   private readonly heightListeners: Array<(below: number) => void> = [];
+  private readonly tabsRow: HTMLElement;
+  private context: ContextTab | null = null;
 
   constructor(
     container: HTMLElement,
@@ -21,6 +39,7 @@ export class Toolbar {
 
     const tabsRow = document.createElement('div');
     tabsRow.className = 'toolbar-row toolbar-tabs';
+    this.tabsRow = tabsRow;
 
     for (const tab of tabs) {
       const button = document.createElement('button');
@@ -55,22 +74,73 @@ export class Toolbar {
       for (const listener of this.heightListeners) listener(below);
     };
     this.remeasure = measure;
-    if (typeof ResizeObserver === 'function') new ResizeObserver(measure).observe(this.element);
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(measure).observe(this.element);
+      // A narrower window can turn one row of tiles into two. Watched on the
+      // container, whose width is what decides it, rather than on the toolbar,
+      // whose height this changes.
+      let width = container.clientWidth;
+      new ResizeObserver(() => {
+        if (container.clientWidth === width) return;
+        width = container.clientWidth;
+        this.fit();
+      }).observe(container);
+    }
 
     this.select(this.active);
     measure();
   }
 
-  private readonly remeasure: () => void;
+  private remeasure: (() => void) | undefined;
 
   /** Told how far down the toolbar reaches, now and whenever that changes. */
   onHeightChange(listener: (below: number) => void): void {
     this.heightListeners.push(listener);
-    this.remeasure();
+    this.remeasure?.();
   }
 
   appendAction(element: HTMLElement): void {
     this.actions.append(element);
+  }
+
+  /**
+   * Shows a tab for something that has just started, and opens it. Showing it
+   * again while it is up — a session picking itself back up after an undo —
+   * keeps it rather than adding a second.
+   */
+  showContext(
+    id: string,
+    label: string,
+    groups: ContextTab['groups'],
+    extra: HTMLElement | null = null,
+  ): void {
+    if (this.context !== null && this.context.id === id) {
+      this.context.groups = groups;
+      this.select(id);
+      return;
+    }
+    this.hideContext();
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toolbar-tab toolbar-tab-context';
+    button.textContent = label;
+    button.addEventListener('click', () => this.select(id));
+    this.tabsRow.prepend(button);
+    if (extra !== null) button.after(extra);
+
+    this.context = { id, label, groups, button, extra, returnTo: this.active };
+    this.select(id);
+  }
+
+  /** Takes the tab away again, and goes back to the tab that was open before it. */
+  hideContext(): void {
+    const context = this.context;
+    if (context === null) return;
+    this.context = null;
+    context.button.remove();
+    context.extra?.remove();
+    this.select(this.active === context.id ? context.returnTo : this.active);
   }
 
   select(tabId: string): void {
@@ -78,12 +148,66 @@ export class Toolbar {
     for (const [id, button] of this.tabButtons) {
       button.classList.toggle('is-active', id === tabId);
     }
+    const context = this.context;
+    context?.button.classList.toggle('is-active', context.id === tabId);
 
     this.groupsRow.replaceChildren();
+    if (context !== null && context.id === tabId) {
+      this.layOut(context.groups);
+      this.fit();
+      return;
+    }
+
     const tab = this.tabs.find((candidate) => candidate.id === tabId);
     if (tab === undefined) return;
 
-    tab.groups.forEach((group, index) => {
+    this.layOut(
+      tab.groups.map((group) => ({
+        label: group.label,
+        buttons: group.features.map((spec) => this.featureTile(spec)),
+      })),
+    );
+    this.fit();
+  }
+
+  /**
+   * Keeps the tools on one row where they can be. A second row of tiles takes
+   * a band off the top of the view as tall as the first, and on a laptop-sized
+   * window that is close to half of it — so when the full-size tiles would
+   * wrap, they are drawn smaller first, and only wrap if even that is not
+   * enough.
+   */
+  private fit(): void {
+    const wraps = (): boolean => {
+      const tiles = this.groupsRow.querySelectorAll<HTMLElement>('.tool-tile');
+      const first = tiles[0];
+      const last = tiles[tiles.length - 1];
+      return first !== undefined && last !== undefined && last.offsetTop > first.offsetTop + 4;
+    };
+    this.element.classList.remove('is-compact');
+    if (wraps()) this.element.classList.add('is-compact');
+    this.remeasure?.();
+  }
+
+  private featureTile(spec: FeatureSpec): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tool-tile';
+    // The icon is decoration to a screen reader, so the button's name is its
+    // label and nothing else — which is also what the tests find it by.
+    const icon = featureIcon(spec.id);
+    if (icon !== null) button.append(icon);
+    const label = document.createElement('span');
+    label.className = 'tool-tile-label';
+    label.textContent = spec.label;
+    button.append(label);
+    attachIconMotion(button);
+    button.addEventListener('click', () => this.onChoose(spec));
+    return button;
+  }
+
+  private layOut(groups: ReadonlyArray<{ label: string; buttons: HTMLElement[] }>): void {
+    groups.forEach((group, index) => {
       if (index > 0) {
         const divider = document.createElement('div');
         divider.className = 'group-divider';
@@ -95,22 +219,7 @@ export class Toolbar {
 
       const buttons = document.createElement('div');
       buttons.className = 'group-buttons';
-      for (const spec of group.features) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'tool-tile';
-        // The icon is decoration to a screen reader, so the button's name is
-        // its label and nothing else — which is also what the tests find it by.
-        const icon = featureIcon(spec.id);
-        if (icon !== null) button.append(icon);
-        const label = document.createElement('span');
-        label.className = 'tool-tile-label';
-        label.textContent = spec.label;
-        button.append(label);
-        attachIconMotion(button);
-        button.addEventListener('click', () => this.onChoose(spec));
-        buttons.append(button);
-      }
+      buttons.append(...group.buttons);
 
       const label = document.createElement('div');
       label.className = 'group-label';

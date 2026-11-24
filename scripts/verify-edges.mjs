@@ -179,7 +179,7 @@ if (target === null) {
   console.log(`${picked ? 'PASS' : 'FAIL'}  clicking an edge selects it → ${afterClick.split('\n')[1] ?? ''}`);
   if (!picked) process.exitCode = 1;
 
-  await page.getByRole('button', { name: 'Create' }).click();
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
   const built = await page.evaluate(async () => {
     await window.__settle();
     const types = window.wirecad.graph.allNodes().map((n) => n.type);

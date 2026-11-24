@@ -99,7 +99,7 @@ await page.evaluate(async () => {
   window.wirecad.select('sk');
 });
 
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 const panel = page.locator('.sketch-panel');
 await panel.waitFor({ state: 'visible', timeout: 10_000 });
@@ -143,7 +143,8 @@ async function typeDimension(value) {
   await page.waitForTimeout(400);
 }
 
-const tool = (name) => panel.getByRole('button', { name, exact: true }).click();
+// The sketch's tools are in the toolbar's Sketch tab while it is open.
+const tool = (name) => page.locator('.toolbar').getByRole('button', { name, exact: true }).click();
 const boreId = await page.evaluate(
   () => window.wirecad.graph.allNodes().find((node) => node.label === 'Bore').id,
 );

@@ -66,11 +66,19 @@ is ready, typically around two seconds.
   beside its edge, Horizontal swings a line level. Each relation ends on the
   mark the sketch draws for that rule, so the icon also teaches what the bar,
   ∥, ⊥, =, diamond, ring and triangle mean when they turn up on a drawing.
-- **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
-  Rectangle and Circle) and a **Solid** tab, whose
-  groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*
-  (Fillet, Chamfer, Shell, Move) and *Construct* (XY/XZ/YZ datum planes, Offset
-  Plane). Each button opens a dialog.
+- **Toolbar** — the **Solid** tab's groups are *Create* (Create Sketch, Edit
+  Sketch, Extrude), *Profile* (parametric Rectangle and Circle nodes), *Modify*
+  (Fillet, Chamfer, Shell, Move), *Combine* (Cut, Union, Intersect) and
+  *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each button opens a dialog.
+  A sketch comes first because it is what an extrude is made from.
+- **The Sketch tab** — is only there while a sketch is. Starting or reopening
+  one puts it at the front of the toolbar and opens it, holding everything for
+  drawing: *Draw* (Select, Line, Rectangle, Circle, Point, Dimension),
+  *Constrain* (the nine relations) and *Edit* (Delete), with **Finish Sketch**
+  beside the tab where it can be reached from any tab. Finishing takes the tab
+  away and goes back to the one that was open before. The small panel over the
+  view keeps what is about this sketch in particular: how constrained it is,
+  what the tool in hand is asking for, and its list of rules.
   Operands are chosen by clicking a body or sketch in the 3D view, by clicking a
   node in the graph, or from the dropdown. Selecting something before pressing a
   button pre-fills the first operand.
@@ -121,8 +129,8 @@ is ready, typically around two seconds.
   the 3D view. That creates a `Face Plane` node holding the reference, and the
   sketch rides the face when the model changes underneath it.
 - **Sketching** — *Create Sketch* asks for a plane or a face, aligns the camera
-  to it, dims everything else and opens a session. It stays open until you press
-  *Finish*: draw as many things as you like, constrain and dimension them as you
+  to it, dims everything else and opens a session, with its tools in the Sketch
+  tab. It stays open until you press *Finish Sketch*: draw as many things as you like, constrain and dimension them as you
   go, in any order. The tools are Line, Rectangle, Circle and Point, with Select
   for picking what is already there. Points snap to a 1 mm grid, and a click
   landing on a point already drawn reuses it, which is how edges join. A line
