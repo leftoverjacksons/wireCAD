@@ -545,6 +545,134 @@ function svg(body: string, className: string, viewBox = '0 0 64 52'): SVGSVGElem
   return holder.firstElementChild as SVGSVGElement;
 }
 
+// ------------------------------------------------------- the sketch panel
+
+/**
+ * The sketch panel's icons. A sketch is drawn looking straight down on it, so
+ * these are flat: the same view the person is in when they press the button.
+ *
+ * Each relation ends on the mark the sketch itself draws for that rule — the
+ * bar, the stroke, ∥, ⊥, =, the diamond, the ring, the triangle — so hovering
+ * one also says what that mark means when it turns up on a drawing.
+ */
+
+function rotate(from: number, to: number, cx: number, cy: number): string {
+  const a = `${from} ${cx} ${cy}`;
+  const b = `${to} ${cx} ${cy}`;
+  return (
+    `<animateTransform attributeName="transform" type="rotate" values="${a};${b};${b};${a}" ` +
+    `keyTimes="${LOOP.keyTimes}" keySplines="${LOOP.keySplines}" calcMode="spline" ` +
+    `dur="${LOOP.dur}" begin="indefinite" repeatCount="indefinite"/>`
+  );
+}
+
+function seg(x1: number, y1: number, x2: number, y2: number, cls = 'ic-stroke'): string {
+  return `<line class="${cls}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+}
+
+function dot(x: number, y: number, cls = 'ic-vertex', r = 1.8): string {
+  return `<circle class="${cls}" cx="${x}" cy="${y}" r="${r}"/>`;
+}
+
+/** A relation's mark, drawn as the sketch draws it, fading in once the rule holds. */
+function mark(body: string): string {
+  return `<g class="ic-mark">${body}${animate('opacity', '0', '1')}</g>`;
+}
+
+const SKETCH_DRAWINGS: Record<string, () => string> = {
+  select: () =>
+    // A point taken hold of and moved: what Select is for, beyond picking.
+    seg(6, 24, 20, 12, 'ic-stroke-dim') +
+    `<g>${dot(20, 12, 'ic-handle', 2.4)}` +
+    `<path class="ic-cursor" d="M21 13 l0 9 l2.4 -2.2 l1.8 4 l1.6 -0.8 l-1.8 -3.9 l3.3 -0.3 z"/>` +
+    `${animateTranslate([-8, 6], [0, 0])}</g>`,
+
+  line: () => {
+    const d = 'M6 24 L16 9 L27 21 L35 8';
+    return (
+      `<path class="ic-stroke" pathLength="100" stroke-dasharray="100" d="${d}">` +
+      `${animate('stroke-dashoffset', '100', '0')}</path>` +
+      dot(6, 24) + dot(16, 9) + dot(27, 21) + dot(35, 8)
+    );
+  },
+
+  rectangle: () =>
+    `<rect class="ic-stroke ic-fill" x="7" y="7" width="26" height="18">` +
+    `${animate('width', '1', '26')}${animate('height', '1', '18')}</rect>` +
+    dot(7, 7) +
+    `<circle class="ic-handle" cx="33" cy="25" r="2">${animate('cx', '8', '33')}${animate('cy', '8', '25')}</circle>`,
+
+  circle: () =>
+    `<circle class="ic-stroke ic-fill" cx="20" cy="16" r="11">${animate('r', '0.5', '11')}</circle>` +
+    `<line class="ic-radius" x1="20" y1="16" x2="31" y2="16">${animate('x2', '20.5', '31')}</line>` +
+    dot(20, 16),
+
+  point: () =>
+    `<g class="ic-guide-lines">${seg(20, 5, 20, 27, 'ic-cross')}${seg(9, 16, 31, 16, 'ic-cross')}</g>` +
+    `<circle class="ic-handle" cx="20" cy="16" r="3">${animate('r', '0', '3')}</circle>`,
+
+  dimension: () =>
+    // An edge, and its length coming out to stand beside it with a number on.
+    seg(8, 24, 32, 24) + dot(8, 24) + dot(32, 24) +
+    `<g>${seg(8, 21, 8, 9, 'ic-witness')}${seg(32, 21, 32, 9, 'ic-witness')}` +
+    `${seg(10, 12, 30, 12, 'ic-dim')}` +
+    `<path class="ic-dim-head" d="M8 12 l3.5 -1.6 v3.2 z M32 12 l-3.5 -1.6 v3.2 z"/>` +
+    `<rect class="ic-number" x="15" y="8" width="10" height="8" rx="1.5"/>` +
+    `${animateTranslate([0, 10], [0, 0])}${animate('opacity', '0', '1')}</g>`,
+
+  horizontal: () =>
+    `<g>${seg(8, 18, 32, 18)}${dot(8, 18)}${dot(32, 18)}${rotate(-24, 0, 20, 18)}</g>` +
+    mark(seg(16, 23, 24, 23, 'ic-glyph')),
+
+  vertical: () =>
+    `<g>${seg(18, 5, 18, 27)}${dot(18, 5)}${dot(18, 27)}${rotate(28, 0, 18, 16)}</g>` +
+    mark(seg(23, 12, 23, 20, 'ic-glyph')),
+
+  parallel: () =>
+    `<g>${seg(6, 12, 30, 6)}</g>` +
+    `<g>${seg(10, 24, 34, 18)}${rotate(26, 0, 22, 21)}</g>` +
+    mark(`<path class="ic-glyph" d="M31 25 l-2 6 M35 25 l-2 6"/>`),
+
+  perpendicular: () =>
+    seg(6, 24, 34, 24) +
+    `<g>${seg(14, 24, 14, 5)}${rotate(38, 0, 14, 24)}</g>` +
+    mark(`<path class="ic-glyph" d="M14 19 h5 v5"/>`),
+
+  equal: () =>
+    seg(6, 10, 30, 10) + dot(6, 10) + dot(30, 10) +
+    `<line class="ic-stroke" x1="6" y1="22" x2="30" y2="22">${animate('x2', '15', '30')}</line>` +
+    dot(6, 22) +
+    `<circle class="ic-vertex" cx="30" cy="22" r="1.8">${animate('cx', '15', '30')}</circle>` +
+    mark(`<path class="ic-glyph" d="M32 14 h5 M32 18 h5"/>`),
+
+  coincident: () =>
+    seg(5, 26, 20, 16) + seg(20, 16, 35, 24, 'ic-stroke-dim') +
+    dot(20, 16) +
+    `<g>${dot(20, 16, 'ic-handle', 2.2)}${animateTranslate([8, -8], [0, 0])}</g>` +
+    mark(`<path class="ic-glyph" d="M20 7 l3 3 l-3 3 l-3 -3 z"/>`),
+
+  concentric: () =>
+    `<circle class="ic-stroke" cx="20" cy="16" r="11"/>` + dot(20, 16) +
+    `<g><circle class="ic-stroke" cx="20" cy="16" r="5"/>${animateTranslate([7, -4], [0, 0])}</g>` +
+    mark(`<circle class="ic-glyph" cx="33" cy="6" r="2.6"/>`),
+
+  pointOnLine: () =>
+    seg(5, 24, 35, 12) +
+    `<g>${dot(20, 18, 'ic-handle', 2.4)}${animateTranslate([-3, -9], [0, 0])}</g>`,
+
+  midpoint: () =>
+    seg(6, 22, 34, 22) + dot(6, 22) + dot(34, 22) +
+    `<g>${dot(20, 22, 'ic-handle', 2.4)}${animateTranslate([-9, -8], [0, 0])}</g>` +
+    mark(`<path class="ic-glyph" d="M20 9 l3 5 h-6 z"/>`),
+};
+
+/** The icon for a sketch panel tool or relation, or null for one that has none. */
+export function sketchToolIcon(id: string): SVGSVGElement | null {
+  const draw = SKETCH_DRAWINGS[id];
+  if (draw === undefined) return null;
+  return svg(draw(), 'sketch-icon', '0 0 40 32');
+}
+
 // ------------------------------------------------------------ small glyphs
 
 /**

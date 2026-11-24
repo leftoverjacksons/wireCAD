@@ -61,6 +61,11 @@ is ready, typically around two seconds.
   what "fillet" or "shell" means. They are SVG drawn through one isometric
   projection in `src/ui/icons.ts`, with their motion declared inside each
   drawing, and they stay still for anyone whose system asks for less motion.
+  The sketch panel's tools and relations have them too, drawn flat because a
+  sketch is seen straight on: Line draws a chain, Dimension brings a length out
+  beside its edge, Horizontal swings a line level. Each relation ends on the
+  mark the sketch draws for that rule, so the icon also teaches what the bar,
+  ∥, ⊥, =, diamond, ring and triangle mean when they turn up on a drawing.
 - **Toolbar** — a **Sketch** tab (Create Sketch, Edit Sketch, and parametric
   Rectangle and Circle) and a **Solid** tab, whose
   groups are *Create* (Extrude), *Combine* (Cut, Union, Intersect), *Modify*

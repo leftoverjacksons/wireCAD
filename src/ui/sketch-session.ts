@@ -35,6 +35,7 @@ import type { ReferenceHit } from '../sketch/references.js';
 import { addReference, outlineOf, placeReferences, referenceAt } from '../sketch/references.js';
 import { matchEdgeRefs } from '../nodes/edges.js';
 import { outputPortFor } from './features.js';
+import { attachIconMotion, sketchToolIcon } from './icons.js';
 import type { Pull, SolveResult } from '../sketch/solver.js';
 import { solveSketch } from '../sketch/solver.js';
 import type { Viewport } from '../viewport.js';
@@ -344,7 +345,7 @@ export class SketchSession {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'tool-button';
-      button.textContent = tool.label;
+      this.decorate(button, tool.id, tool.label);
       button.addEventListener('click', () => this.setTool(tool.id));
       this.toolButtons.set(tool.id, button);
       draw.row.append(button);
@@ -355,7 +356,7 @@ export class SketchSession {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'tool-button';
-      button.textContent = relation.label;
+      this.decorate(button, relation.id, relation.label);
       button.addEventListener('click', () => this.applyRelation(relation));
       relations.row.append(button);
     }
@@ -433,6 +434,24 @@ export class SketchSession {
     this.onDragMove = this.onDragMove.bind(this);
     this.onDragUp = this.onDragUp.bind(this);
     this.onKeyDown = this.onKeyDown.bind(this);
+  }
+
+  /**
+   * Puts a tool's icon over its name. The name stays the button's only text,
+   * which is what a screen reader announces and what the tests find it by.
+   */
+  private decorate(button: HTMLButtonElement, id: string, label: string): void {
+    const icon = sketchToolIcon(id);
+    if (icon === null) {
+      button.textContent = label;
+      return;
+    }
+    button.classList.add('sketch-tile');
+    const name = document.createElement('span');
+    name.className = 'sketch-tile-label';
+    name.textContent = label;
+    button.append(icon, name);
+    attachIconMotion(button);
   }
 
   private group(label: string): { el: HTMLElement; row: HTMLElement } {
