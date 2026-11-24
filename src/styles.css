@@ -1280,3 +1280,47 @@ input[type='range'] {
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------------- sketch panel tiles */
+
+/* Three to a row: wide enough for "Perpendicular", narrow enough to fit. */
+.sketch-tools .tool-button.sketch-tile {
+  width: calc((100% - 8px) / 3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 2px 2px 3px;
+  font-size: 11px;
+}
+
+.sketch-tile-label {
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.sketch-icon {
+  width: 32px;
+  height: 24px;
+  overflow: visible;
+}
+
+.sketch-icon * {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The tool in hand is magenta, so its drawing turns dark to stay readable. */
+.sketch-tools .tool-button.is-active .sketch-icon {
+  filter: brightness(0.35) saturate(0.4);
+}
+
+.ic-stroke-dim { stroke: #4d6aa0; stroke-width: 1.4; }
+.ic-cursor { fill: #e9f2ff; stroke: #0a1226; stroke-width: 0.8; }
+.ic-cross { stroke: rgba(150, 180, 255, 0.45); stroke-width: 1; stroke-dasharray: 2 2; }
+.ic-witness { stroke: #86a0c4; stroke-width: 1; }
+.ic-dim { stroke: var(--accent); stroke-width: 1; }
+.ic-dim-head { fill: var(--accent); }
+.ic-number { fill: #0a1226; stroke: var(--accent); stroke-width: 1; }
+.ic-glyph { fill: none; stroke: #9ff4ff; stroke-width: 1.4; }
+
