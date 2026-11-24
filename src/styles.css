@@ -232,12 +232,12 @@ main {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 5px;
 }
 
 .group-buttons {
   display: flex;
-  gap: 4px;
+  gap: 1px;
 }
 
 .group-label {
@@ -257,12 +257,12 @@ main {
 
 /* A feature: what it does, drawn, over what it is called. */
 .tool-tile {
-  min-width: 64px;
+  min-width: 54px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1px;
-  padding: 3px 7px 4px;
+  padding: 3px 4px 4px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -1280,27 +1280,30 @@ input[type='range'] {
   font-variant-numeric: tabular-nums;
 }
 
-/* ------------------------------------------------- sketch panel tiles */
+/* --------------------------------------------- the sketch's own tab */
 
-/* Three to a row: wide enough for "Perpendicular", narrow enough to fit. */
-.sketch-tools .tool-button.sketch-tile {
-  width: calc((100% - 8px) / 3);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-  padding: 2px 2px 3px;
-  font-size: 11px;
+/* A tab that is only there while a sketch is: tinted so it reads as a mode
+   the program is in, not one more place to look for things. */
+.toolbar-tab-context {
+  color: #ffd2ef;
 }
 
-.sketch-tile-label {
-  white-space: nowrap;
-  line-height: 1.2;
+.toolbar-tab-context.is-active {
+  background: linear-gradient(180deg, #4a1d4a, #2c1236);
+  border-color: var(--highlight);
+  box-shadow: inset 0 -2px 0 var(--highlight);
 }
 
-.sketch-icon {
-  width: 32px;
-  height: 24px;
+/* Seventeen tools are more than some windows are wide: they wrap to a second
+   row rather than run off the end, and the view makes room below them. */
+.toolbar-groups {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.tool-tile .sketch-icon {
+  width: 46px;
+  height: 37px;
   overflow: visible;
 }
 
@@ -1310,9 +1313,28 @@ input[type='range'] {
   stroke-linejoin: round;
 }
 
-/* The tool in hand is magenta, so its drawing turns dark to stay readable. */
-.sketch-tools .tool-button.is-active .sketch-icon {
-  filter: brightness(0.35) saturate(0.4);
+/* How to leave the sketch, beside its tab. */
+.toolbar-finish {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 10px 0 6px;
+  padding: 3px 12px 3px 6px;
+}
+
+.toolbar-finish .sketch-icon {
+  width: 22px;
+  height: 18px;
+}
+
+.toolbar-finish .ic-check {
+  stroke: #04202a;
+}
+
+/* The tool in hand. */
+.tool-tile.sketch-tool.is-active {
+  background: linear-gradient(160deg, #5a1f55, #3a1340);
+  border-color: var(--highlight);
 }
 
 .ic-stroke-dim { stroke: #4d6aa0; stroke-width: 1.4; }
@@ -1323,4 +1345,6 @@ input[type='range'] {
 .ic-dim-head { fill: var(--accent); }
 .ic-number { fill: #0a1226; stroke: var(--accent); stroke-width: 1; }
 .ic-glyph { fill: none; stroke: #9ff4ff; stroke-width: 1.4; }
+.ic-cross-out { stroke: var(--highlight); stroke-width: 1.8; }
+.ic-check { fill: none; stroke: #3ee08f; stroke-width: 2.6; }
 

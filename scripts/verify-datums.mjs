@@ -165,7 +165,7 @@ check(
 console.log('');
 console.log('sketching on one:');
 
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Create Sketch', exact: true }).click();
 await page.locator('.feature-dialog').waitFor({ state: 'visible', timeout: 5_000 });
 

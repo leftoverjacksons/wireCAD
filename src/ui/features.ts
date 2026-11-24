@@ -111,11 +111,13 @@ function datumPlane(id: string, label: string): FeatureSpec {
 /** Operand and number ids are the target node's input port ids, so building is generic. */
 export const tabs: readonly FeatureTab[] = [
   {
-    id: 'sketch',
-    label: 'Sketch',
+    id: 'solid',
+    label: 'Solid',
     groups: [
       {
         label: 'Create',
+        // A sketch first: it is what an extrude is made from, and starting one
+        // opens a tab of its own with everything for drawing in it.
         features: [
           {
             id: 'sketch',
@@ -133,6 +135,32 @@ export const tabs: readonly FeatureTab[] = [
             operands: [],
             numbers: [],
           },
+          {
+            id: 'extrude',
+            label: 'Extrude',
+            nodeType: 'solid.extrude',
+            autoOperation: true,
+            operands: [
+              { id: 'profile', label: 'Profile', type: 'sketch' },
+              { id: 'target', label: 'Target body', type: 'geometry', optional: true },
+            ],
+            numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
+            choices: [
+              {
+                id: 'operation',
+                label: 'Operation',
+                options: EXTRUDE_OPERATIONS,
+                value: 'New body',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        // Ready-made profiles: a rectangle or a circle as a node of their own,
+        // sized by their ports rather than drawn. Drawing is in Create Sketch.
+        label: 'Profile',
+        features: [
           {
             id: 'rectangle',
             label: 'Rectangle',
@@ -154,36 +182,6 @@ export const tabs: readonly FeatureTab[] = [
               { id: 'radius', label: 'Radius', value: 8 },
               { id: 'u', label: 'U', value: 0 },
               { id: 'v', label: 'V', value: 0 },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'solid',
-    label: 'Solid',
-    groups: [
-      {
-        label: 'Create',
-        features: [
-          {
-            id: 'extrude',
-            label: 'Extrude',
-            nodeType: 'solid.extrude',
-            autoOperation: true,
-            operands: [
-              { id: 'profile', label: 'Profile', type: 'sketch' },
-              { id: 'target', label: 'Target body', type: 'geometry', optional: true },
-            ],
-            numbers: [{ id: 'distance', label: 'Distance', value: 10 }],
-            choices: [
-              {
-                id: 'operation',
-                label: 'Operation',
-                options: EXTRUDE_OPERATIONS,
-                value: 'New body',
-              },
             ],
           },
         ],

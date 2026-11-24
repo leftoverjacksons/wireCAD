@@ -660,6 +660,15 @@ const SKETCH_DRAWINGS: Record<string, () => string> = {
     seg(5, 24, 35, 12) +
     `<g>${dot(20, 18, 'ic-handle', 2.4)}${animateTranslate([-3, -9], [0, 0])}</g>`,
 
+  delete: () =>
+    // What is picked goes: an edge, its ends, and nothing left behind.
+    `<g>${seg(6, 22, 26, 10)}${dot(6, 22)}${dot(26, 10)}${animate('opacity', '1', '0')}</g>` +
+    `<g>${seg(26, 18, 34, 26, 'ic-cross-out')}${seg(34, 18, 26, 26, 'ic-cross-out')}${animate('opacity', '0.4', '1')}</g>`,
+
+  finish: () =>
+    `<path class="ic-check" pathLength="100" stroke-dasharray="100" d="M9 17 L17 25 L32 8">` +
+    `${animate('stroke-dashoffset', '100', '0')}</path>`,
+
   midpoint: () =>
     seg(6, 22, 34, 22) + dot(6, 22) + dot(34, 22) +
     `<g>${dot(20, 22, 'ic-handle', 2.4)}${animateTranslate([-9, -8], [0, 0])}</g>` +

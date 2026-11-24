@@ -64,7 +64,7 @@ async function openWedge() {
     window.wirecad.select('sk');
   });
 
-  await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+  await page.getByRole('button', { name: 'Solid', exact: true }).click();
   await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
   const panel = page.locator('.sketch-panel');
   await panel.waitFor({ state: 'visible', timeout: 10_000 });
@@ -170,7 +170,7 @@ console.log('what a placement means:');
 
 await page.evaluate(() => window.wirecad.sketch.exit());
 await openWedge();
-await panel.getByRole('button', { name: 'Dimension', exact: true }).click();
+await page.locator('.toolbar').getByRole('button', { name: 'Dimension', exact: true }).click();
 
 // The sloping edge, which covers a width and a height as well as its own length.
 const slope = await page.evaluate(() => {
@@ -296,7 +296,7 @@ check(
 await panel.getByRole('button', { name: 'Finish', exact: true }).click();
 await page.waitForTimeout(300);
 await page.evaluate(() => window.wirecad.select('sk'));
-await page.getByRole('button', { name: 'Sketch', exact: true }).click();
+await page.getByRole('button', { name: 'Solid', exact: true }).click();
 await page.getByRole('button', { name: 'Edit Sketch', exact: true }).click();
 await page.locator('.sketch-panel').waitFor({ state: 'visible', timeout: 10_000 });
 await page.waitForTimeout(400);
