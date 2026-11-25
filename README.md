@@ -46,9 +46,13 @@ is ready, typically around two seconds.
   access to its `hidraw` node, and where 3Dconnexion's own driver holds the
   device exclusively the browser gets nothing from it. With 3Dconnexion's
   driver installed, pushing the cap also makes the driver send scroll-wheel
-  events of its own, which would zoom the view a second time, in steps; the
-  wheel is ignored while the cap is moving and for a quarter of a second
-  after.
+  events of its own, which would zoom the view a second time, in steps. While a
+  SpaceMouse is connected, a wheel event over the view or the node editor is
+  held for 80 ms and dropped if the cap moved within a quarter of a second
+  either side of it — the driver's first event of a push can arrive before the
+  report that shows the cap moving. *Record input* in the button's menu saves
+  ten seconds of raw reports, wheel and key events and the zoom per frame, for
+  a fault that only shows on someone else's hardware.
 - **The origin planes** — the three planes through the origin are drawn as
   translucent squares and can be clicked like anything else. A model has to
   start somewhere, and before there is a face to sketch on the only somewheres
