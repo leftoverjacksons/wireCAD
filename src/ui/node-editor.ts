@@ -22,6 +22,12 @@ import {
 export interface NodeEditorCallbacks {
   /** Called immediately before a mutation, so history can snapshot the old state. */
   onBeforeChange(): void;
+  /** A node is being dragged by hand, and is here now. */
+  onNodeDragged?(nodeId: NodeId, at: { x: number; y: number }): void;
+  /** A drag is over; `moved` is false for a press that never went anywhere. */
+  onNodeDropped?(nodeId: NodeId, moved: boolean): void;
+  /** Where a node is on its way to, when the layout is moving it. */
+  targetOf?(nodeId: NodeId): { x: number; y: number } | null;
   onDocumentChanged(): void;
   onSelectionChanged(nodeId: NodeId | null): void;
   /**
@@ -300,6 +306,10 @@ export class NodeEditor {
         this.graph.setSuppressed(nodeId, action === 'suppress');
         this.callbacks.onDocumentChanged();
         return;
+      case 'unpin':
+        this.callbacks.onBeforeChange();
+        this.graph.setPinned(nodeId, false);
+        return;
       case 'delete':
         this.deleteNode(nodeId);
         return;
@@ -425,9 +435,30 @@ export class NodeEditor {
       eye = button;
     }
 
+    // A node the person put somewhere says so, and pressing the pin hands it
+    // back to the layout.
+    let pin: HTMLElement | null = null;
+    if (this.graph.requireNode(nodeId).pinned === true) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'node-pin';
+      button.title = 'Placed by hand — click to let the layout place it';
+      button.setAttribute('aria-label', 'Unpin');
+      button.innerHTML =
+        '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 1.5h4l-.6 3.2 1.8 1.6H2.8l1.8-1.6z M6 6.3v4.2"/></svg>';
+      button.addEventListener('pointerdown', (event) => event.stopPropagation());
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.callbacks.onBeforeChange();
+        this.graph.setPinned(nodeId, false);
+      });
+      pin = button;
+    }
+
     header.append(title);
     if (badge !== null) header.append(badge);
     header.append(statusEl);
+    if (pin !== null) header.append(pin);
     if (eye !== null) header.append(eye);
     element.append(header);
 
@@ -734,6 +765,7 @@ export class NodeEditor {
         this.callbacks.onBeforeChange();
       }
       this.graph.setPosition(drag.nodeId, next);
+      this.callbacks.onNodeDragged?.(drag.nodeId, next);
       return;
     }
 
@@ -751,6 +783,7 @@ export class NodeEditor {
     }
 
     this.endDrag();
+    if (drag.kind === 'node') this.callbacks.onNodeDropped?.(drag.nodeId, drag.captured);
   }
 
   private completeWire(drag: Extract<Drag, { kind: 'wire' }>, port: HTMLElement | null): void {
@@ -911,9 +944,13 @@ export class NodeEditor {
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
 
+    // Where the node is going rather than where it is: a node just made is
+    // gliding to its place, and revealing the start of the glide would leave
+    // it off the edge by the time it arrives.
+    const position = this.callbacks.targetOf?.(nodeId) ?? node.position;
     const schema = this.graph.schemaOf(nodeId);
-    const left = this.pan.x + node.position.x * this.zoom;
-    const top = this.pan.y + node.position.y * this.zoom;
+    const left = this.pan.x + position.x * this.zoom;
+    const top = this.pan.y + position.y * this.zoom;
     const right = left + NODE_WIDTH * this.zoom;
     const bottom = top + nodeHeight(schema) * this.zoom;
     const margin = 32;

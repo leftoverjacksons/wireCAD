@@ -118,6 +118,12 @@ export interface GraphNode {
    * for an extrude to hand on but the solid it was asked not to make.
    */
   suppressed?: boolean;
+  /**
+   * Whether the person put this node where it is. The graph is laid out by
+   * its wiring, but a node someone dragged stays where they dropped it and
+   * everything else is laid out around it.
+   */
+  pinned?: boolean;
 }
 
 export interface PortRef {

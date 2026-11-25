@@ -19,6 +19,7 @@ export type GraphChange =
   | { kind: 'node-renamed'; nodeId: NodeId }
   | { kind: 'node-visibility'; nodeId: NodeId }
   | { kind: 'node-suppressed'; nodeId: NodeId }
+  | { kind: 'node-pinned'; nodeId: NodeId }
   | { kind: 'input-changed'; nodeId: NodeId; portId: PortId }
   | { kind: 'edge-added'; edgeId: EdgeId }
   | { kind: 'edge-removed'; edgeId: EdgeId }
@@ -39,6 +40,7 @@ export interface AddNodeOptions {
   inputs?: Record<PortId, Value>;
   visible?: boolean;
   suppressed?: boolean;
+  pinned?: boolean;
   /**
    * Drop literals for ports this node does not have, instead of refusing.
    *
@@ -110,6 +112,7 @@ export class Graph {
     if (options.label !== undefined) node.label = options.label;
     if (options.visible !== undefined) node.visible = options.visible;
     if (options.suppressed !== undefined) node.suppressed = options.suppressed;
+    if (options.pinned === true) node.pinned = true;
 
     this.nodes.set(id, node);
     this.outgoing.set(id, new Set());
@@ -248,6 +251,15 @@ export class Graph {
     if (suppressed === undefined || !suppressed) delete node.suppressed;
     else node.suppressed = true;
     this.emit({ kind: 'node-suppressed', nodeId });
+  }
+
+  /** Holds a node where it is, or hands it back to the automatic layout. */
+  setPinned(nodeId: NodeId, pinned: boolean): void {
+    const node = this.requireNode(nodeId);
+    if (pinned === (node.pinned === true)) return;
+    if (pinned) node.pinned = true;
+    else delete node.pinned;
+    this.emit({ kind: 'node-pinned', nodeId });
   }
 
   /** The reason this connection would be refused, or null if it is allowed. */
@@ -416,6 +428,7 @@ export class Graph {
           ...(node.label !== undefined ? { label: node.label } : {}),
           ...(node.visible !== undefined ? { visible: node.visible } : {}),
           ...(node.suppressed !== undefined ? { suppressed: node.suppressed } : {}),
+          ...(node.pinned === true ? { pinned: true } : {}),
         });
       }
       for (const edge of data.edges) this.connect(edge.from, edge.to, edge.id);

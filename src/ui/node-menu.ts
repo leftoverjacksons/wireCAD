@@ -26,6 +26,7 @@ export type NodeMenuAction =
   | 'auto'
   | 'suppress'
   | 'unsuppress'
+  | 'unpin'
   | 'delete'
   | 'delete-branch';
 
@@ -167,6 +168,10 @@ export function nodeMenu(graph: Graph, nodeId: NodeId, state: NodeMenuState): No
       label: 'Suppress',
       detail: `hands its ${passing(through.type)} on untouched`,
     });
+  }
+
+  if (node.pinned === true) {
+    items.push({ action: 'unpin', label: 'Unpin', detail: 'let the layout place it' });
   }
 
   const damage = describeDelete(deleteOutcome(graph, nodeId));

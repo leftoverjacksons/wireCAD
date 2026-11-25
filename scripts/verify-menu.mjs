@@ -82,6 +82,11 @@ const check = (name, ok, detail) => {
 /** Right-click a node's header and read back what the menu offers. */
 async function openMenu(label) {
   const id = await page.evaluate((name) => window.__idOf(name), label);
+  // The graph lays itself out, so a node added behind the interface's back can
+  // be anywhere, including outside the part of the graph on screen. Bring it
+  // into view first, as a person would scroll to it.
+  await page.evaluate((nodeId) => window.wirecad.editor.reveal(nodeId), id);
+  await page.waitForTimeout(450);
   await page.locator(`.node[data-node-id="${id}"] .node-header`).click({ button: 'right' });
   await page.locator('.menu').waitFor({ state: 'visible' });
   return page.evaluate(() => {
