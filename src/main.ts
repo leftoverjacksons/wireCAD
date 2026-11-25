@@ -1400,6 +1400,9 @@ worker.onmessage = (event: MessageEvent<WorkerToMain>) => {
   // alone, because a faint solid of nearly the same shape is a smear rather
   // than a second reading of it.
   for (const nodeId of message.rolledBack) ghosts.set(nodeId, 'edges');
+  // What is built on the point being looked at is drawn, not offered: a click
+  // there means the body being worked on, which it sits on top of.
+  viewport.setOutlined(message.rolledBack);
   viewport.setGhosts(ghosts);
 
   // When such a node's result is still the model, there is nothing to ghost;

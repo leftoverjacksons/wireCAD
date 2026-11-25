@@ -264,6 +264,56 @@ check(
 );
 await page.evaluate(() => window.wirecad.rollBack(null));
 
+// ---------------------------- picking in the view while rolled back
+
+// What is built on the point being looked at is drawn as an outline lying on
+// the body being worked on, and shares most of its edges. A click on one of
+// those edges means the body at the marker: the fillet goes in there, and the
+// bore that was cut from the block is cut from the filleted block instead.
+await page.evaluate(() => window.__reset());
+await page.evaluate(async () => {
+  window.wirecad.rollBack(window.__idOf('Body'));
+  await window.__settle();
+});
+await page.getByRole('button', { name: 'Fillet', exact: true }).click();
+await page.locator('.feature-dialog').waitFor({ state: 'visible' });
+const topEdge = await page.evaluate(() => {
+  const view = window.wirecad.viewport;
+  const edge = view
+    .edgesOf(window.__idOf('Body'))
+    .find((e) => Math.abs(e.direction.x) > 0.99 && e.midpoint.z > 19 && e.midpoint.y < 1);
+  return edge === undefined ? null : view.screenPositionOf(edge.midpoint);
+});
+const underEdge = topEdge === null
+  ? 'no edge'
+  : await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName ?? 'nothing', [topEdge.x, topEdge.y]);
+if (underEdge !== 'CANVAS') throw new Error(`the edge to fillet is under ${underEdge}, not the view`);
+await page.mouse.click(topEdge.x, topEdge.y);
+await page.waitForTimeout(500);
+await page.locator('.feature-dialog').getByRole('button', { name: 'Create', exact: true }).click();
+await page.evaluate(() => window.__settle());
+const picked = await page.evaluate(() => {
+  const { graph } = window.wirecad;
+  const fillet = graph.allNodes().find((n) => n.type === 'solid.fillet');
+  const bore = window.__idOf('Bore');
+  return {
+    on: fillet === undefined ? 'no fillet' : window.__name(graph.incomingEdge(fillet.id, 'solid')?.from.node),
+    boreReads: window.__name(graph.incomingEdge(bore, 'target')?.from.node),
+    boreError: window.wirecad.reports().find((r) => r.nodeId === bore)?.error ?? null,
+  };
+});
+check(
+  'an edge clicked while rolled back is on the body at the marker',
+  picked.on === 'Body',
+  `fillet built on ${picked.on}`,
+);
+check(
+  'so the fillet goes in before what came after',
+  picked.boreReads !== 'Body' && picked.boreError === null,
+  `Bore cuts ${picked.boreReads}${picked.boreError === null ? '' : ` · ${picked.boreError}`}`,
+);
+await page.evaluate(() => window.wirecad.rollBack(null));
+
 console.log(pageErrors.length === 0 ? 'no page errors' : pageErrors.slice(0, 3));
 await browser.close();
 if (failures > 0 || pageErrors.length > 0) process.exitCode = 1;

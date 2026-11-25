@@ -225,6 +225,13 @@ export class Viewport {
   private litFaces: NodeId | null = null;
   /** While set, only this body's edges can be picked. */
   private edgeSource: NodeId | null = null;
+  /**
+   * Bodies drawn only as an outline because the view is rolled back past them.
+   * They are a picture of what is built on the point being looked at, not
+   * something to work on, and they sit almost exactly where the body being
+   * worked on is: left pickable, they took clicks meant for it.
+   */
+  private outlined = new Set<NodeId>();
   private framed = false;
   /** Where six-axis motion comes from, asked once a frame. */
   private motionSource: (() => Motion) | null = null;
@@ -566,7 +573,7 @@ export class Viewport {
     );
     this.raycaster.setFromCamera(ndc, this.camera);
 
-    const hit = this.raycaster.intersectObjects([...this.meshes.values()], false)[0];
+    const hit = this.raycaster.intersectObjects(this.pickableMeshes(), false)[0];
     if (hit === undefined) return null;
 
     const nodeId = hit.object.userData.nodeId;
@@ -694,7 +701,7 @@ export class Viewport {
 
     // A body in front of a plane wins: the square is behind it, and so is the
     // click. Otherwise a plane through a solid would take every click on it.
-    const solid = this.raycaster.intersectObjects([...this.meshes.values()], false)[0];
+    const solid = this.raycaster.intersectObjects(this.pickableMeshes(), false)[0];
     if (solid !== undefined && solid.distance < datum.distance) return null;
 
     const axis = datum.object.userData.datum;
@@ -796,11 +803,23 @@ export class Viewport {
     return Math.max(box.getSize(new THREE.Vector3()).length() * 0.006, 1e-4);
   }
 
+  /** Which bodies are only an outline of what comes after the point looked at. */
+  setOutlined(nodeIds: readonly NodeId[]): void {
+    this.outlined = new Set(nodeIds);
+  }
+
+  private pickableMeshes(): THREE.Object3D[] {
+    return [...this.meshes]
+      .filter(([nodeId]) => !this.outlined.has(nodeId))
+      .map(([, mesh]) => mesh);
+  }
+
   private pickEdge(): EdgeHit | null {
     // Only bodies have edges worth filleting; a profile's outline sitting in the
     // same place would otherwise swallow the click.
     const lines = [...this.edgeLines]
       .filter(([nodeId]) => this.kinds.get(nodeId) === 'solid')
+      .filter(([nodeId]) => !this.outlined.has(nodeId))
       .filter(([nodeId]) => this.edgeSource === null || nodeId === this.edgeSource)
       .map(([, lines]) => lines);
     if (lines.length === 0) return null;
