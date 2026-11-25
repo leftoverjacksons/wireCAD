@@ -392,7 +392,19 @@ const wheel = await page.evaluate(async () => {
   spin();
   await sleep(300);
   const afterRest = viewport.camera.zoom;
-  return { before, whileMoving, rested, afterRest };
+
+  // The driver's first event of a push can beat the HID report that shows the
+  // cap moving. It is held long enough for the report to condemn it.
+  await sleep(600);
+  const beforeRace = viewport.camera.zoom;
+  spin();
+  await sleep(20);
+  window.__send(1, [120, 0, 0, 0, 0, 0]);
+  await sleep(300);
+  const afterRace = viewport.camera.zoom;
+  window.__send(1, [0, 0, 0, 0, 0, 0]);
+  await sleep(600);
+  return { before, whileMoving, rested, afterRest, beforeRace, afterRace };
 });
 check(
   'the driver\'s wheel events are ignored while the cap moves',
@@ -403,6 +415,41 @@ check(
   'and a wheel turned with the cap at rest still zooms',
   wheel.error === undefined && wheel.afterRest < wheel.rested * 0.98,
   wheel.error ?? `zoom ${fmt(wheel.rested)} → ${fmt(wheel.afterRest)}`,
+);
+
+check(
+  'even one that arrives before the report showing the cap moved',
+  wheel.error === undefined && wheel.afterRace === wheel.beforeRace,
+  wheel.error ?? `zoom ${fmt(wheel.beforeRace)} → ${fmt(wheel.afterRace)}`,
+);
+
+// ------------------------------------------------------------- recording
+
+await page.mouse.click(button.x, button.y);
+await page.waitForTimeout(200);
+const downloading = page.waitForEvent('download', { timeout: 20_000 });
+await page.locator('.menu-item[data-action="record"]').click();
+await page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(300);
+  window.__send(1, [0, -150, 0, 0, 0, 0]);
+  await sleep(200);
+  window.__send(1, [0, 0, 0, 0, 0, 0]);
+});
+const saved = await downloading;
+const recorded = JSON.parse(
+  await import('node:fs').then((fs) => saved.path().then((path) => fs.readFileSync(path, 'utf8'))),
+);
+const kinds = new Set(recorded.entries.map((entry) => entry.kind));
+const hid = recorded.entries.find((entry) => entry.kind === 'hid');
+check(
+  'recording input saves the raw reports and the zoom frame by frame',
+  saved.suggestedFilename().endsWith('.input.json') &&
+    kinds.has('hid') &&
+    kinds.has('frame') &&
+    hid?.id === 1 &&
+    hid.bytes.length === 12,
+  `${saved.suggestedFilename()}: ${[...kinds].join(',')}, ${recorded.entries.length} entries`,
 );
 
 // ------------------------------------------------------------ disconnected

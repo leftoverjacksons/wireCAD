@@ -95,9 +95,14 @@ export class SpaceMouse {
   private settingsValue: SpaceMouseSettings;
   private readonly buttonListeners = new Set<(button: number) => void>();
   private readonly stateListeners = new Set<() => void>();
+  private readonly reportListeners = new Set<(reportId: number, bytes: number[]) => void>();
 
   private readonly onReport = (event: Event): void => {
     const { reportId, data } = event as HidInputReportEvent;
+    if (this.reportListeners.size > 0) {
+      const bytes = Array.from(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+      for (const listener of this.reportListeners) listener(reportId, bytes);
+    }
     const before = this.buttons;
     const next = readReport(this.axes, this.buttons, reportId, data);
     this.axes = next.axes;
@@ -163,18 +168,19 @@ export class SpaceMouse {
   }
 
   /**
-   * Whether the cap is being moved, or was moments ago.
-   *
-   * Raw counts, not shaped motion: the driver's own dead zone is not ours, and
-   * anything it does in response to the cap starts as soon as the cap leaves
-   * centre. The grace after release covers events it sends a little late.
-   * A cap still off centre counts however long ago it last reported, in case a
-   * device reports only on change and is being held perfectly still.
+   * Whether the cap has been off centre at any time since `time`, by
+   * `performance.now()`, or is now.
    */
-  movedWithin(milliseconds: number, now = performance.now()): boolean {
+  movedSince(time: number): boolean {
     if (this.device === null) return false;
     if (Object.values(this.axes).some((v) => v !== 0)) return true;
-    return now - this.lastMoved <= milliseconds;
+    return this.lastMoved >= time;
+  }
+
+  /** Every report as it arrives, raw, for recording what a device really sends. */
+  onRawReport(listener: (reportId: number, bytes: number[]) => void): () => void {
+    this.reportListeners.add(listener);
+    return () => this.reportListeners.delete(listener);
   }
 
   onButton(listener: (button: number) => void): () => void {

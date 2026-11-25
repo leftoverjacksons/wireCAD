@@ -13,6 +13,8 @@ import { edgeSchemas, matchEdgeRefs, unpackEdgeRefs } from './nodes/edges.js';
 import { modifySchemas } from './nodes/modify.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
+import { installDriverScrollFilter } from './input/driver-scroll.js';
+import { InputRecorder } from './input/recorder.js';
 import { SpaceMouse } from './input/spacemouse-hid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
@@ -651,22 +653,67 @@ function refreshSpaceMouseButton(): void {
 spaceMouse.onChange(refreshSpaceMouseButton);
 refreshSpaceMouseButton();
 
-// 3Dconnexion's driver, for an application it has no profile for, turns
-// pushing the cap into scroll-wheel events. Here the wheel zooms, in steps, so
-// a push zoomed twice — smoothly through WebHID and in jumps through the
-// driver — and the view snapped. Nobody turns a wheel while pushing the cap,
-// so while the cap is moving the wheel is not listened to, anywhere on the
-// page: the driver scrolls whatever is under the pointer, the node editor
-// included. Captured on the window so it is stopped before anything sees it.
-window.addEventListener(
-  'wheel',
-  (event) => {
-    if (!spaceMouse.movedWithin(250)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  },
-  { capture: true, passive: false },
+// The driver's own scroll events would zoom the view a second time; see
+// driver-scroll.ts. Held only over surfaces whose wheel does nothing native.
+const inputRecorder = new InputRecorder();
+installDriverScrollFilter(
+  spaceMouse,
+  [viewport.canvas, document.getElementById('node-editor')!],
+  (event, verdict) =>
+    inputRecorder.record('wheel', {
+      verdict,
+      dx: event.deltaX,
+      dy: event.deltaY,
+      mode: event.deltaMode,
+      ctrl: event.ctrlKey,
+      meta: event.metaKey,
+      trusted: event.isTrusted,
+    }),
 );
+spaceMouse.onRawReport((id, bytes) => inputRecorder.record('hid', { id, bytes }));
+window.addEventListener(
+  'keydown',
+  (event) =>
+    inputRecorder.record('key', {
+      key: event.key,
+      code: event.code,
+      ctrl: event.ctrlKey,
+      meta: event.metaKey,
+      alt: event.altKey,
+      shift: event.shiftKey,
+    }),
+  { capture: true },
+);
+window.addEventListener('resize', () =>
+  inputRecorder.record('resize', {
+    w: window.innerWidth,
+    h: window.innerHeight,
+    dpr: window.devicePixelRatio,
+  }),
+);
+
+function recordInput(): void {
+  const seconds = 10;
+  const frame = (): void => {
+    if (!inputRecorder.recording) return;
+    inputRecorder.record('frame', { zoom: viewport.zoom });
+    requestAnimationFrame(frame);
+  };
+  inputRecorder.run(seconds * 1000, (entries) => {
+    const report = {
+      what: 'wireCAD SpaceMouse input recording',
+      device: spaceMouse.name,
+      settings: spaceMouse.settings,
+      userAgent: navigator.userAgent,
+      devicePixelRatio: window.devicePixelRatio,
+      entries,
+    };
+    download(JSON.stringify(report, null, 1), timestampedName('input.json'), 'application/json');
+    statusEl.textContent = `input recorded: ${entries.length} events, saved`;
+  });
+  requestAnimationFrame(frame);
+  statusEl.textContent = `recording input for ${seconds} s — push the cap a few times`;
+}
 
 // The two buttons every model has. On a Compact they are the left and right
 // buttons; larger models put these first and number the rest after them.
@@ -709,7 +756,8 @@ function showSpaceMouseMenu(): void {
     { action: 'invert-pan', label: 'Invert pan', detail: onOff(invertPan), divide: true },
     { action: 'invert-zoom', label: 'Invert zoom', detail: onOff(invertZoom) },
     { action: 'invert-rotate', label: 'Invert rotation', detail: onOff(invertRotate) },
-    { action: 'disconnect', label: 'Disconnect', divide: true },
+    { action: 'record', label: 'Record input', detail: '10 s, saved as a file', divide: true },
+    { action: 'disconnect', label: 'Disconnect' },
   ];
   const rect = spaceMouseButton.getBoundingClientRect();
   closeSpaceMouseMenu = showMenu(viewportEl, {
@@ -724,6 +772,10 @@ function showSpaceMouseMenu(): void {
       if (action === 'invert-pan') spaceMouse.updateSettings({ invertPan: !invertPan });
       if (action === 'invert-zoom') spaceMouse.updateSettings({ invertZoom: !invertZoom });
       if (action === 'invert-rotate') spaceMouse.updateSettings({ invertRotate: !invertRotate });
+      if (action === 'record') {
+        recordInput();
+        return;
+      }
       if (action === 'disconnect') {
         void spaceMouse.disconnect();
         statusEl.textContent = 'SpaceMouse disconnected';

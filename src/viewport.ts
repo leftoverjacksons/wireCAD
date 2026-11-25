@@ -1136,6 +1136,11 @@ export class Viewport {
     this.pickingEnabled = enabled;
   }
 
+  /** The camera's zoom, for anything that wants to watch it change. */
+  get zoom(): number {
+    return this.camera.zoom;
+  }
+
   /** Look straight down a plane's normal, with the plane's V axis pointing up. */
   alignToPlane(plane: PlaneValue): void {
     // Only the first alignment saves: a session that re-enters mid-edit must
