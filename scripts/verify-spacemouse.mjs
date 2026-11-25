@@ -62,7 +62,8 @@ await page.evaluate(async () => {
     window.__send(1, axes);
     await sleep(ms);
     window.__send(1, [0, 0, 0, 0, 0, 0]);
-    await sleep(120);
+    // Long enough for the smoothing to bring the view to rest.
+    await sleep(500);
   };
   window.__press = async (mask) => {
     window.__send(3, [mask, 0], true);
@@ -172,6 +173,59 @@ pose = next;
 await page.evaluate(() => window.__hold([0, 300, 0, 0, 0, 0]));
 next = await page.evaluate(() => window.__pose());
 check('pulling it back zooms in', next.zoom > pose.zoom * 1.2, `zoom ${fmt(pose.zoom)} → ${fmt(next.zoom)}`);
+
+pose = await page.evaluate(() => window.__pose());
+await page.evaluate(() => window.__hold([0, -300, 0, 90, 0, 0]));
+next = await page.evaluate(() => window.__pose());
+check(
+  'a push forward that also tips the cap only zooms',
+  next.zoom < pose.zoom * 0.8 && Math.abs(next.polar - pose.polar) < 1e-3,
+  `zoom ${fmt(pose.zoom)} → ${fmt(next.zoom)}, polar ${fmt(next.polar - pose.polar)}`,
+);
+await page.evaluate(() => window.__hold([0, 300, 0, 0, 0, 0], 300));
+
+// ----------------------------------------------------------- smoothness
+
+// A cap held still with a few counts of noise on it, reports at 125 Hz: the
+// zoom's rate from frame to frame should barely vary.
+const steadiness = await page.evaluate(async () => {
+  const camera = window.wirecad.viewport.camera;
+  let flip = 0;
+  const noisy = setInterval(() => {
+    flip += 1;
+    window.__send(1, [0, -200 + (flip % 2 ? 12 : -12), 0, 0, 0, 0]);
+  }, 8);
+  await new Promise((r) => setTimeout(r, 300));
+  const rates = [];
+  let last = camera.zoom;
+  let lastTime = null;
+  await new Promise((resolve) => {
+    // Timed by the frame's own timestamp, which is what the view steps by;
+    // the clock read inside the callback wanders with the renderer's load.
+    const frame = (now) => {
+      const dt = lastTime === null ? 0 : (now - lastTime) / 1000;
+      if (dt > 0) rates.push(Math.log(last / camera.zoom) / dt);
+      last = camera.zoom;
+      lastTime = now;
+      if (rates.length < 30) requestAnimationFrame(frame);
+      else resolve();
+    };
+    requestAnimationFrame(frame);
+  });
+  clearInterval(noisy);
+  window.__send(1, [0, 0, 0, 0, 0, 0]);
+  await new Promise((r) => setTimeout(r, 500));
+  window.__hold([0, 300, 0, 0, 0, 0], 400);
+  await new Promise((r) => setTimeout(r, 1000));
+  const mean = rates.reduce((a, b) => a + b, 0) / rates.length;
+  const spread = Math.sqrt(rates.reduce((a, b) => a + (b - mean) ** 2, 0) / rates.length);
+  return { mean, spread };
+});
+check(
+  'a steady push with noisy reports zooms at a steady rate',
+  steadiness.mean > 0.2 && steadiness.spread / steadiness.mean < 0.1,
+  `rate ${fmt(steadiness.mean)}/s, spread ${fmt((100 * steadiness.spread) / steadiness.mean)}%`,
+);
 
 // --------------------------------------------------------------- rotation
 
@@ -309,6 +363,7 @@ check(
 const still = await page.evaluate(async () => {
   window.__send(1, [300, 300, 300, 300, 300, 300]);
   await window.wirecad.spaceMouse.disconnect();
+  await new Promise((r) => setTimeout(r, 500));
   const start = window.__pose();
   await new Promise((r) => setTimeout(r, 300));
   const end = window.__pose();

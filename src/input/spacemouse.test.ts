@@ -6,7 +6,10 @@ import {
   parseSettings,
   pressed,
   readReport,
+  STILL,
+  separate,
   shapeAxis,
+  smoothMotion,
   toMotion,
 } from './spacemouse.js';
 
@@ -133,5 +136,54 @@ describe('speed', () => {
     const fast = toMotion(axes, { ...DEFAULT_SETTINGS, speed: 2 });
     expect(fast.pan.x).toBeCloseTo(2);
     expect(fast.rotate.z).toBeCloseTo(-2);
+  });
+});
+
+describe('separate', () => {
+  it('leaves the stronger axis alone and all but removes an incidental weaker one', () => {
+    const [push, tip] = separate(0.8, 0.1);
+    expect(push).toBe(0.8);
+    expect(tip).toBeCloseTo(0.1 / 64);
+  });
+
+  it('passes both when both are meant, equally', () => {
+    expect(separate(-0.5, 0.5)).toEqual([-0.5, 0.5]);
+  });
+
+  it('keeps each sign', () => {
+    const [a, b] = separate(-0.9, -0.3);
+    expect(a).toBeLessThan(0);
+    expect(b).toBeLessThan(0);
+  });
+
+  it('stops a push forward from tipping the view', () => {
+    // A firm push with the tip a cap gives it on the way.
+    const motion = toMotion({ ...ZERO_AXES, ty: -300, rx: 90 }, DEFAULT_SETTINGS);
+    expect(motion.pan.y).toBeGreaterThan(0.7);
+    expect(Math.abs(motion.rotate.x)).toBeLessThan(0.002);
+  });
+});
+
+describe('smoothMotion', () => {
+  const full = { pan: { x: 1, y: 0, z: 0 }, rotate: { x: 0, y: 0, z: 0 } };
+
+  it('moves part of the way in one frame rather than jumping', () => {
+    const eased = smoothMotion(STILL, full, 1 / 60);
+    expect(eased.pan.x).toBeGreaterThan(0.2);
+    expect(eased.pan.x).toBeLessThan(0.4);
+  });
+
+  it('gets to the same place at any frame rate', () => {
+    let fast = STILL;
+    for (let i = 0; i < 12; i++) fast = smoothMotion(fast, full, 1 / 120);
+    let slow = STILL;
+    for (let i = 0; i < 6; i++) slow = smoothMotion(slow, full, 1 / 60);
+    expect(fast.pan.x).toBeCloseTo(slow.pan.x, 10);
+  });
+
+  it('comes to rest exactly once the cap is let go', () => {
+    let eased = full;
+    for (let i = 0; i < 30; i++) eased = smoothMotion(eased, STILL, 1 / 60);
+    expect(isStill(eased)).toBe(true);
   });
 });
