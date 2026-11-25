@@ -41,6 +41,7 @@ import { NodeEditor } from './ui/node-editor.js';
 import type { NodeMenuAction } from './ui/node-menu.js';
 import { nodeMenu } from './ui/node-menu.js';
 import { SketchSession } from './ui/sketch-session.js';
+import { LiveLayout } from './ui/live-layout.js';
 import { actionGlyph, brandMark } from './ui/icons.js';
 import { buildStarterModel } from './ui/starter.js';
 import { Toolbar } from './ui/toolbar.js';
@@ -126,8 +127,19 @@ function setRolledBack(nodeId: NodeId | null): void {
   requestSolve();
 }
 
+// Lays the graph out by its wiring after every change, and glides it there.
+const layout = new LiveLayout(graph);
+
 const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   onBeforeChange: () => history.capture(),
+  onNodeDragged: (nodeId, at) => layout.hold(nodeId, at),
+  // A node dragged somewhere is somewhere the person chose; it stays there,
+  // and a press that never moved it pins nothing.
+  onNodeDropped: (nodeId, moved) => {
+    if (moved) graph.setPinned(nodeId, true);
+    layout.release(nodeId);
+  },
+  targetOf: (nodeId) => layout.targetOf(nodeId),
   onDocumentChanged: () => requestSolve(),
   // The editor already holds this selection; only the viewport needs telling.
   onSelectionChanged: (nodeId) => applySelection(nodeId, false),
@@ -161,6 +173,9 @@ const editor = new NodeEditor(document.getElementById('node-editor')!, graph, {
   },
   onRollBack: (nodeId) => setRolledBack(nodeId),
 });
+// Whatever document the page opened with — the starter model, or the last
+// session — is laid out before it is first framed.
+layout.settle();
 editor.frame();
 
 let lastPlanes: Record<NodeId, PlaneValue> = {};

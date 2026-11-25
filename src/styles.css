@@ -1385,3 +1385,34 @@ input[type='range'] {
   margin-top: 1px;
 }
 
+/* A node placed by hand. Pressing the pin hands it back to the layout. */
+.node-pin {
+  z-index: 3;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 3px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+
+.node-pin + .node-eye {
+  margin-left: 2px;
+}
+
+.node-pin svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.node-pin:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+

@@ -325,6 +325,17 @@ stays cached, so it is cheap to adjust a radius and try again.
   is part of the document, so it saves and undoes with everything else — and it
   never applies to the node you have rolled the view back to, because asking to
   look at a feature is not the same question as asking whether it is in the way.
+- **The graph lays itself out** — after every change the node graph works out
+  where each node belongs and glides it there, then rests. Wiring decides the
+  columns: a node sits at least one column right of everything it reads, so a
+  feature spliced into the history gets a column of its own and what came
+  after it moves along. Within a column, each node is pulled level with the
+  ports it is wired to, which keeps wires short and straight, and sorting by
+  that pull takes most crossings out. Nodes never overlap, and keep a margin.
+- **Pinning a node** — drag a node somewhere and it stays where you drop it,
+  marked with a pin; everything else lays itself out around it, and makes room
+  while you drag. The pin, or *Unpin* in the node's menu, hands it back to the
+  layout. Pins are saved with the document.
 - **Node editor** — drag the background to pan, wheel to zoom, drag a node by its
   header. Drag between ports to wire them; drag away from a connected input to
   detach it; click a wire to cut it. Unwired numeric inputs are editable in
@@ -689,6 +700,37 @@ The rule from that answer to an operation and a target lives in
 resting on one, because an extrusion that enters a body and is left a new body is
 two solids in the same space, which is never what was meant.
 
+## Laying out the graph
+
+`planLayout` in `src/ui/layout.ts` is a pure function from a graph to where its
+nodes go, tested without a browser; `LiveLayout` reruns it after any change
+to the wiring and glides nodes to the answer.
+
+Columns come from a forward pass — at least one step right of every input — and
+a backward pass that pulls a node with nothing upstream of it (a profile, a
+parameter) right up against the first thing that reads it, instead of leaving
+it at the far left with a long wire. Heights come from rounds of relaxation:
+each node moves to where its ports line up with the ports it is wired to, each
+column is sorted by that (the barycentre heuristic, which is what removes most
+crossings), and then laid out top to bottom with a margin, each node as near as
+it can be to where it wants to be. Overlapping neighbours merge into a block
+placed at the weighted mean of what its members want, which is the least total
+movement that keeps them apart.
+
+Where a whole connected group sits is not something the wires decide — any
+height straightens them equally — so after each round each group is shifted
+back to keep its average height where its members already were. It is held per
+group rather than per node, and that was learned the hard way: a hold on each
+node strong enough to keep a group in place stops a chain lining up, and one
+weak enough to let it line up lets anything else drag the whole group after it —
+a new node made far below everything else, or a neighbour pinned somewhere
+new. New nodes do not count towards where their group sits, for the same reason.
+
+A pinned node is an obstacle in every column it overlaps, and its wires pull
+only weakly on what they reach, so the rest of the graph makes room for it
+rather than chasing it. A node after a pin moves only as far as the pin forces
+it, not to the next whole column, which would drag everything behind it along.
+
 ## Two dimensions, one number
 
 A rule has always named its number rather than owned it: a constraint carries
@@ -907,6 +949,9 @@ of it are built.
   corners it reads is fixed by the two lines' direction.
 - Dragging a circle moves it. There is no dragging its rim to change the radius,
   because only points are pulled, not the radius itself: dimension it or type it.
+- The graph's layout is one column grid and one set of rules. There is no way
+  yet to group nodes, fold a group away, or lay out a part of the graph
+  differently from the rest.
 - A sketch measures from one body. The first edge clicked decides which, and
   edges of another body are not offered after that.
 - Only an edge's ends, a straight edge's line and a closed edge's centre can be
