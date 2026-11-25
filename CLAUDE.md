@@ -78,6 +78,14 @@ architecture is in `README.md`.
   stand-in device; the raw axis signs come from the protocol as publicly
   described, not from a device. A report from someone holding one outranks the
   test.
+- Measured once (SpaceMouse Compact, Windows, Edge, 3DxWare installed, via
+  *Record input*): two 6-byte reports, ids 1 and 2, sent as a pair every 16 ms;
+  peaks near ±300. Cross-talk is large — a push forward reports tip, roll and
+  twist of 150–300 alongside it. 3DxWare also sends wheel events of ±100 about
+  every 100 ms while the cap moves; `driver-scroll.ts` drops them.
+- When the device misbehaves, ask for a *Record input* file before guessing.
+  Three guesses went into the zoom stutter; the recording would have named the
+  driver's wheel events in one.
 
 ## Style
 
