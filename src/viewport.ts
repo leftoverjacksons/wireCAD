@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { NodeId, PlaneValue, Vec3 } from './core/types.js';
+import type { Motion } from './input/spacemouse.js';
+import { isStill } from './input/spacemouse.js';
 import type { EdgeInfo, FaceInfo } from './geometry/kernel.js';
 import { planeYAxis } from './geometry/plane.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
@@ -11,6 +13,17 @@ import type { MeshKind, MeshPayload } from './worker/protocol.js';
  * 120° apart on screen.
  */
 const ISOMETRIC = new THREE.Vector3(1, -1, 1).normalize();
+
+/**
+ * How fast a six-axis controller moves the view at full deflection. Pan is in
+ * view heights a second, so it feels the same at any zoom; zoom is the natural
+ * log of the factor a second; rotation is radians a second.
+ */
+const MOTION_PAN_RATE = 1.2;
+const MOTION_ZOOM_RATE = 1.6;
+const MOTION_ROTATE_RATE = 2.2;
+/** How close to straight down or straight up a controller may tip the view. */
+const MOTION_POLE_MARGIN = 0.01;
 
 /** How close a pointer has to be to the handle's head, in pixels. */
 const HANDLE_GRAB = 16;
@@ -213,6 +226,9 @@ export class Viewport {
   /** While set, only this body's edges can be picked. */
   private edgeSource: NodeId | null = null;
   private framed = false;
+  /** Where six-axis motion comes from, asked once a frame. */
+  private motionSource: (() => Motion) | null = null;
+  private lastFrame: number | null = null;
   /**
    * How much of the top of the canvas is covered by the toolbar, in pixels.
    * What is framed is centred in the rest, because the middle of the glass is
@@ -411,7 +427,10 @@ export class Viewport {
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
 
-    this.renderer.setAnimationLoop(() => {
+    this.renderer.setAnimationLoop((time) => {
+      const seconds = this.lastFrame === null ? 0 : (time - this.lastFrame) / 1000;
+      this.lastFrame = time;
+      if (this.motionSource !== null) this.applyMotion(this.motionSource(), seconds);
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     });
@@ -1615,24 +1634,134 @@ export class Viewport {
     // would otherwise swing the view off the plane being drawn on.
     if (this.savedView !== null) return;
     if (this.framed || this.meshes.size === 0) return;
+    if (this.frameModel(ISOMETRIC)) this.framed = true;
+  }
 
+  /**
+   * Brings everything into view without turning it: the camera keeps the
+   * direction it looks from. While sketching that is the plane's normal, so the
+   * sketch stays square to the screen.
+   */
+  fitView(): void {
+    this.frameModel(null);
+  }
+
+  /**
+   * The isometric view, framed. Not while sketching: the view there belongs to
+   * the plane, and turning it would leave the drawing at an angle.
+   */
+  isometricView(): void {
+    if (this.savedView !== null) return;
+    this.camera.up.set(0, 0, 1);
+    this.frameModel(ISOMETRIC);
+  }
+
+  /**
+   * Where six-axis motion comes from. Asked every frame, so the source only has
+   * to say what the controller is doing now; `null` stops asking.
+   */
+  setMotionSource(source: (() => Motion) | null): void {
+    this.motionSource = source;
+  }
+
+  /**
+   * Moves the view the way a six-axis controller's cap is being pushed.
+   *
+   * The model follows the cap — push it right and the model goes right — so
+   * the camera moves the opposite way. Rotation is a turntable about the
+   * world's up and the screen's horizontal, as the mouse orbits, so the two
+   * never disagree about which way is up; the cap's roll is left unused for
+   * that reason.
+   */
+  private applyMotion(motion: Motion, seconds: number): void {
+    if (isStill(motion) || seconds <= 0) return;
+    // A tab that stalled — a long solve, a breakpoint — must not leap the view
+    // by everything the cap asked for in the meantime.
+    const dt = Math.min(seconds, 0.1);
+    const camera = this.camera;
+    const target = this.controls.target;
+
+    camera.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+
+    // In millimetres: what is on screen now, so a pan crosses the same share of
+    // the view however far in it is zoomed.
+    const visible = this.viewHeight / camera.zoom;
+    const step = visible * MOTION_PAN_RATE * dt;
+    const pan = new THREE.Vector3()
+      .addScaledVector(right, -motion.pan.x * step)
+      .addScaledVector(up, -motion.pan.z * step);
+    camera.position.add(pan);
+    target.add(pan);
+
+    let zoomed = false;
+    if (motion.pan.y !== 0) {
+      // Pushing away sends the model away. An orthographic camera shows the
+      // same thing from any distance, so that is a zoom, not a dolly.
+      const factor = Math.exp(-motion.pan.y * MOTION_ZOOM_RATE * dt);
+      camera.zoom = Math.min(Math.max(camera.zoom * factor, 1e-3), 1e4);
+      camera.updateProjectionMatrix();
+      zoomed = true;
+    }
+
+    // Sketching locks the view square to the plane; the controller obeys the
+    // same lock the mouse does, or one push would turn the drawing askew.
+    if (this.controls.enableRotate && (motion.rotate.x !== 0 || motion.rotate.z !== 0)) {
+      const offset = camera.position.clone().sub(target);
+      const worldUp = camera.up.clone().normalize();
+
+      // The model turns with the twist, so the camera goes round the other way.
+      offset.applyAxisAngle(worldUp, -motion.rotate.z * MOTION_ROTATE_RATE * dt);
+
+      // Tipping the camera about the screen's horizontal changes its angle from
+      // straight up by exactly the tip. Held short of the poles: past one,
+      // "up" points the wrong way and the view flips over in a single frame.
+      const tip = -motion.rotate.x * MOTION_ROTATE_RATE * dt;
+      const polar = offset.angleTo(worldUp);
+      const allowed =
+        Math.min(Math.max(polar + tip, MOTION_POLE_MARGIN), Math.PI - MOTION_POLE_MARGIN) - polar;
+      const horizontal = new THREE.Vector3().crossVectors(worldUp, offset).normalize();
+      // Turning about this axis by a positive angle carries the offset from
+      // `up` towards the horizon, which is what increases the polar angle.
+      if (horizontal.lengthSq() > 0) offset.applyAxisAngle(horizontal, allowed);
+
+      camera.position.copy(target).add(offset);
+    }
+
+    this.controls.update();
+    // A zoom alone leaves the camera where it was, which the controls do not
+    // count as a change, and anything drawn to a size in pixels has to hear it.
+    if (zoomed) this.cameraChanged();
+  }
+
+  /**
+   * Frames every body, and the sketch being drawn, from a direction: the one
+   * given, or the one the camera is already looking from.
+   */
+  private frameModel(direction: THREE.Vector3 | null): boolean {
     const box = new THREE.Box3();
     for (const mesh of this.meshes.values()) box.expandByObject(mesh);
-    if (box.isEmpty()) return;
+    if (this.sketchLine !== null) box.expandByObject(this.sketchLine);
+    if (this.sketchPoints !== null) box.expandByObject(this.sketchPoints);
+    if (box.isEmpty()) return false;
 
     const center = box.getCenter(new THREE.Vector3());
-    const span = box.getSize(new THREE.Vector3()).length();
+    const span = Math.max(box.getSize(new THREE.Vector3()).length(), 1);
+    const from =
+      direction?.clone() ?? this.camera.position.clone().sub(this.controls.target).normalize();
 
     this.controls.target.copy(center);
     // How far back the camera stands makes no difference to what it sees here,
     // only to what is in front of it, so it stands well back.
-    this.camera.position.copy(center).add(ISOMETRIC.clone().multiplyScalar(Math.max(span * 4, 500)));
+    this.camera.position.copy(center).add(from.multiplyScalar(Math.max(span * 4, 500)));
     this.camera.zoom = 1;
     // Room around it, in the part of the viewport the toolbar leaves showing.
     this.viewHeight = this.uncovered(this.heightFor(span * 1.5));
     this.applyFrustum();
     this.controls.update();
-    this.framed = true;
+    this.cameraChanged();
+    return true;
   }
 
   /**
