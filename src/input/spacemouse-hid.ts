@@ -90,6 +90,8 @@ export class SpaceMouse {
   private device: HidDevice | null = null;
   private axes: RawAxes = { ...ZERO_AXES };
   private buttons = 0;
+  /** When the cap last reported being off centre, by `performance.now()`. */
+  private lastMoved = -Infinity;
   private settingsValue: SpaceMouseSettings;
   private readonly buttonListeners = new Set<(button: number) => void>();
   private readonly stateListeners = new Set<() => void>();
@@ -100,6 +102,9 @@ export class SpaceMouse {
     const next = readReport(this.axes, this.buttons, reportId, data);
     this.axes = next.axes;
     this.buttons = next.buttons;
+    if (next.changed === 'axes' && Object.values(this.axes).some((v) => v !== 0)) {
+      this.lastMoved = performance.now();
+    }
     if (next.changed !== 'buttons') return;
     for (const button of pressed(before, this.buttons)) {
       for (const listener of this.buttonListeners) listener(button);
@@ -155,6 +160,21 @@ export class SpaceMouse {
     if (this.device === null) return STILL;
     const motion = toMotion(this.axes, this.settingsValue);
     return isStill(motion) ? STILL : motion;
+  }
+
+  /**
+   * Whether the cap is being moved, or was moments ago.
+   *
+   * Raw counts, not shaped motion: the driver's own dead zone is not ours, and
+   * anything it does in response to the cap starts as soon as the cap leaves
+   * centre. The grace after release covers events it sends a little late.
+   * A cap still off centre counts however long ago it last reported, in case a
+   * device reports only on change and is being held perfectly still.
+   */
+  movedWithin(milliseconds: number, now = performance.now()): boolean {
+    if (this.device === null) return false;
+    if (Object.values(this.axes).some((v) => v !== 0)) return true;
+    return now - this.lastMoved <= milliseconds;
   }
 
   onButton(listener: (button: number) => void): () => void {

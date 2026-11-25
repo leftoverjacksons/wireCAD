@@ -358,6 +358,53 @@ check(
   `zoom ${fmt(pose.zoom)} → ${fmt(next.zoom)}; stored ${stored}`,
 );
 
+// ------------------------------------------- the driver's own scrolling
+
+// 3DxWare turns a push into wheel events of its own. Those arriving while the
+// cap is moving are dropped; a wheel turned with the cap at rest still zooms.
+const wheel = await page.evaluate(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const { viewport } = window.wirecad;
+  const canvas = viewport.canvas;
+  const rect = canvas.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height * 0.3;
+  if (document.elementFromPoint(x, y) !== canvas) return { error: 'wheel would miss the canvas' };
+  const spin = () =>
+    canvas.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: 120, clientX: x, clientY: y, bubbles: true, cancelable: true }),
+    );
+
+  // A sideways push: it pans, so any change of zoom is the wheel's.
+  window.__send(1, [120, 0, 0, 0, 0, 0]);
+  await sleep(50);
+  const before = viewport.camera.zoom;
+  for (let i = 0; i < 5; i++) {
+    spin();
+    await sleep(30);
+  }
+  await sleep(150);
+  const whileMoving = viewport.camera.zoom;
+  window.__send(1, [0, 0, 0, 0, 0, 0]);
+  await sleep(600);
+
+  const rested = viewport.camera.zoom;
+  spin();
+  await sleep(300);
+  const afterRest = viewport.camera.zoom;
+  return { before, whileMoving, rested, afterRest };
+});
+check(
+  'the driver\'s wheel events are ignored while the cap moves',
+  wheel.error === undefined && wheel.whileMoving === wheel.before,
+  wheel.error ?? `zoom ${fmt(wheel.before)} → ${fmt(wheel.whileMoving)}`,
+);
+check(
+  'and a wheel turned with the cap at rest still zooms',
+  wheel.error === undefined && wheel.afterRest < wheel.rested * 0.98,
+  wheel.error ?? `zoom ${fmt(wheel.rested)} → ${fmt(wheel.afterRest)}`,
+);
+
 // ------------------------------------------------------------ disconnected
 
 const still = await page.evaluate(async () => {
