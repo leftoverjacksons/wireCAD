@@ -696,6 +696,8 @@ const GLYPHS: Record<string, string> = {
   export: '<path d="M10 3v10"/><path d="M6 9l4 4 4-4"/><path d="M3 15v2h14v-2"/>',
   undo: '<path d="M7 5L3 9l4 4"/><path d="M3 9h9a5 5 0 0 1 0 10h-3"/>',
   redo: '<path d="M13 5l4 4-4 4"/><path d="M17 9H8a5 5 0 0 0 0 10h3"/>',
+  spacemouse:
+    '<ellipse cx="10" cy="6.5" rx="5" ry="2.5"/><path d="M5 6.5v3.5c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5V6.5"/><path d="M2.5 13.5c0 2 3.4 3.5 7.5 3.5s7.5-1.5 7.5-3.5"/>',
 };
 
 export function actionGlyph(name: keyof typeof GLYPHS | string): SVGSVGElement | null {

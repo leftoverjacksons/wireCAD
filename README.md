@@ -32,6 +32,19 @@ is ready, typically around two seconds.
   foreshortened by being further from the eye. The view it opens on is a true
   isometric — from the near-right-top octant with Z up, which draws the three
   axes 120° apart and foreshortens each of them equally.
+- **A SpaceMouse** — the puck-shaped button at the end of the toolbar
+  connects a 3Dconnexion SpaceMouse through WebHID, so it works in Chrome and
+  Edge with no driver; the browser asks once which device, and remembers. The
+  model follows the cap: push it sideways or lift it and the model goes that
+  way, push it away and the view zooms out, twist or tip it and the model turns
+  as a turntable, the same way the mouse orbits. The cap's roll is unused, so
+  up stays up. While sketching it pans and zooms but does not turn the view off
+  the plane. The two buttons every model has go to the isometric view and fit
+  the model. Clicking the lit button sets the speed and inverts any of pan,
+  zoom and rotation, for a device that disagrees about which way is which. On
+  Linux the browser cannot open the device without a udev rule giving the user
+  access to its `hidraw` node, and where 3Dconnexion's own driver holds the
+  device exclusively the browser gets nothing from it.
 - **The origin planes** — the three planes through the origin are drawn as
   translucent squares and can be clicked like anything else. A model has to
   start somewhere, and before there is a face to sketch on the only somewheres
@@ -413,6 +426,7 @@ recomputed, blue for served from cache, red for failed.
 | `npm run verify:references` | Checks a sketch on a face can be dimensioned to the body's edges, and follows the body when it changes |
 | `npm run verify:operation` | Checks an extrude defaults to cutting what it runs into and joining what it stands on, and that a choice made by hand stays |
 | `npm run verify:offset` | Checks an offset plane is drawn while it is set up, from a datum or a face, and that its arrow drags the distance |
+| `npm run verify:spacemouse` | Feeds a SpaceMouse's reports to the app and checks the view pans, zooms, turns and stops the way the cap is pushed, and holds still while sketching |
 | `npm run verify:rollback` | Checks the view rolls back to a node, outlines what is built on it, and builds new features in at that point |
 
 Both `verify:` scripts need `npm run dev` already running. Set `CHROMIUM_PATH`
@@ -426,6 +440,7 @@ src/geometry/  OpenCASCADE loading, tessellation, shape disposal
 src/nodes/     node definitions (arithmetic, sketches, solids)
 src/worker/    kernel + evaluator in a Web Worker, mesh transfer protocol
 src/ui/        node editor canvas, CAD feature dialogs, layout
+src/input/     SpaceMouse: report parsing and shaping, and the WebHID glue
 ```
 
 The graph is the only source of truth. Evaluation is content-addressed rather

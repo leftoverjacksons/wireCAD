@@ -13,6 +13,7 @@ import { edgeSchemas, matchEdgeRefs, unpackEdgeRefs } from './nodes/edges.js';
 import { modifySchemas } from './nodes/modify.js';
 import { planeNodes } from './nodes/plane.js';
 import { geometrySchemas } from './nodes/solid.js';
+import { SpaceMouse } from './input/spacemouse-hid.js';
 import { FeatureDialog } from './ui/feature-dialog.js';
 import type { PickedFace } from './ui/feature-dialog.js';
 import type { FeatureSpec, PlaneChoice } from './ui/features.js';
@@ -620,6 +621,105 @@ const undoButton = actionButton('Undo', 'Ctrl+Z', () => applyHistory('undo'), 'u
 const redoButton = actionButton('Redo', 'Ctrl+Shift+Z', () => applyHistory('redo'), 'redo');
 toolbar.appendAction(undoButton);
 toolbar.appendAction(redoButton);
+
+// ------------------------------------------------------------ six-axis input
+
+const spaceMouse = new SpaceMouse();
+viewport.setMotionSource(() => spaceMouse.motion());
+
+// Only the glyph: the action row is already as wide as a laptop window allows,
+// and a word more pushed this button off the end of it.
+const spaceMouseButton = actionButton(
+  '',
+  'Connect a 3Dconnexion SpaceMouse',
+  () => void spaceMouseClicked(),
+  'spacemouse',
+);
+spaceMouseButton.setAttribute('aria-label', '3D Mouse');
+spaceMouseButton.classList.add('tool-button-glyph');
+toolbar.appendAction(spaceMouseButton);
+
+function refreshSpaceMouseButton(): void {
+  spaceMouseButton.classList.toggle('is-on', spaceMouse.connected);
+  spaceMouseButton.title = !spaceMouse.supported
+    ? 'A SpaceMouse needs WebHID, which this browser does not have — try Chrome or Edge'
+    : spaceMouse.connected
+      ? `${spaceMouse.name ?? 'SpaceMouse'} — click for settings`
+      : 'Connect a 3Dconnexion SpaceMouse';
+}
+
+spaceMouse.onChange(refreshSpaceMouseButton);
+refreshSpaceMouseButton();
+
+// The two buttons every model has. On a Compact they are the left and right
+// buttons; larger models put these first and number the rest after them.
+spaceMouse.onButton((button) => {
+  if (button === 0) viewport.isometricView();
+  if (button === 1) viewport.fitView();
+});
+
+let closeSpaceMouseMenu: () => void = () => undefined;
+
+async function spaceMouseClicked(): Promise<void> {
+  if (!spaceMouse.supported) {
+    statusEl.textContent = 'this browser has no WebHID, so no SpaceMouse — try Chrome or Edge';
+    return;
+  }
+  if (spaceMouse.connected) {
+    showSpaceMouseMenu();
+    return;
+  }
+  try {
+    await spaceMouse.request();
+    statusEl.textContent = spaceMouse.connected
+      ? `${spaceMouse.name ?? 'SpaceMouse'} connected`
+      : 'no SpaceMouse chosen';
+  } catch (thrown) {
+    // Most often the operating system refusing access: on Linux the device
+    // needs a udev rule before a browser may open it.
+    const reason = thrown instanceof Error ? thrown.message : String(thrown);
+    statusEl.textContent = `could not open the SpaceMouse: ${reason}`;
+  }
+}
+
+function showSpaceMouseMenu(): void {
+  closeSpaceMouseMenu();
+  const { speed, invertPan, invertZoom, invertRotate } = spaceMouse.settings;
+  const onOff = (on: boolean): string => (on ? 'on' : 'off');
+  const items: MenuItem[] = [
+    { action: 'faster', label: 'Faster', detail: `speed ×${speed.toFixed(2)}` },
+    { action: 'slower', label: 'Slower' },
+    { action: 'invert-pan', label: 'Invert pan', detail: onOff(invertPan), divide: true },
+    { action: 'invert-zoom', label: 'Invert zoom', detail: onOff(invertZoom) },
+    { action: 'invert-rotate', label: 'Invert rotation', detail: onOff(invertRotate) },
+    { action: 'disconnect', label: 'Disconnect', divide: true },
+  ];
+  const rect = spaceMouseButton.getBoundingClientRect();
+  closeSpaceMouseMenu = showMenu(viewportEl, {
+    title: spaceMouse.name ?? 'SpaceMouse',
+    items,
+    clientX: rect.left,
+    clientY: rect.bottom + 4,
+    onChoose: (action) => {
+      const step = 1.25;
+      if (action === 'faster') spaceMouse.updateSettings({ speed: Math.min(speed * step, 10) });
+      if (action === 'slower') spaceMouse.updateSettings({ speed: Math.max(speed / step, 0.1) });
+      if (action === 'invert-pan') spaceMouse.updateSettings({ invertPan: !invertPan });
+      if (action === 'invert-zoom') spaceMouse.updateSettings({ invertZoom: !invertZoom });
+      if (action === 'invert-rotate') spaceMouse.updateSettings({ invertRotate: !invertRotate });
+      if (action === 'disconnect') {
+        void spaceMouse.disconnect();
+        statusEl.textContent = 'SpaceMouse disconnected';
+        return;
+      }
+      // Speed is nudged in steps, so the menu stays up for the next one.
+      if (action === 'faster' || action === 'slower') showSpaceMouseMenu();
+    },
+  });
+}
+
+// A device granted on an earlier visit is picked up without asking again.
+spaceMouse.reconnect().catch(() => undefined);
 
 function refreshHistoryButtons(): void {
   undoButton.disabled = !history.canUndo;
@@ -1325,6 +1425,7 @@ if (import.meta.env.DEV) {
     viewport,
     editor,
     history,
+    spaceMouse,
     reports: () => lastReports,
     meshes: () => [...lastMeshes.values()],
     solves: () => solveCount,

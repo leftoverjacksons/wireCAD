@@ -15,9 +15,9 @@ architecture is in `README.md`.
   CHROMIUM_PATH=/opt/pw-browsers/chromium npm run verify:browser
   ```
 
-  There are twenty, one `verify:<name>` script each: `browser shell edges
+  There are twenty-one, one `verify:<name>` script each: `browser shell edges
   profile extrude links constraints preview ghost drag glyphs datums menu move
-  edit rollback viewport-menu references operation offset`. They take several minutes together
+  edit rollback viewport-menu references operation offset spacemouse`. They take several minutes together
   and they are the only thing that actually tests geometry, because the kernel
   is WebAssembly and does not run in the unit suite.
 - Anything about the interface is claimed only after looking at a screenshot.
@@ -70,6 +70,14 @@ architecture is in `README.md`.
 - **The camera's matrices are stale until something draws.** Call
   `updateMatrixWorld()` before projecting or raycasting, or you measure against
   the view before last.
+
+## Hardware nobody here has
+
+- The SpaceMouse is read through WebHID and no device is attached where the
+  suites run. `verify:spacemouse` feeds reports to the real handler through a
+  stand-in device; the raw axis signs come from the protocol as publicly
+  described, not from a device. A report from someone holding one outranks the
+  test.
 
 ## Style
 
