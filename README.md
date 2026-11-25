@@ -44,7 +44,11 @@ is ready, typically around two seconds.
   zoom and rotation, for a device that disagrees about which way is which. On
   Linux the browser cannot open the device without a udev rule giving the user
   access to its `hidraw` node, and where 3Dconnexion's own driver holds the
-  device exclusively the browser gets nothing from it.
+  device exclusively the browser gets nothing from it. With 3Dconnexion's
+  driver installed, pushing the cap also makes the driver send scroll-wheel
+  events of its own, which would zoom the view a second time, in steps; the
+  wheel is ignored while the cap is moving and for a quarter of a second
+  after.
 - **The origin planes** — the three planes through the origin are drawn as
   translucent squares and can be clicked like anything else. A model has to
   start somewhere, and before there is a face to sketch on the only somewheres

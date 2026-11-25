@@ -651,6 +651,23 @@ function refreshSpaceMouseButton(): void {
 spaceMouse.onChange(refreshSpaceMouseButton);
 refreshSpaceMouseButton();
 
+// 3Dconnexion's driver, for an application it has no profile for, turns
+// pushing the cap into scroll-wheel events. Here the wheel zooms, in steps, so
+// a push zoomed twice — smoothly through WebHID and in jumps through the
+// driver — and the view snapped. Nobody turns a wheel while pushing the cap,
+// so while the cap is moving the wheel is not listened to, anywhere on the
+// page: the driver scrolls whatever is under the pointer, the node editor
+// included. Captured on the window so it is stopped before anything sees it.
+window.addEventListener(
+  'wheel',
+  (event) => {
+    if (!spaceMouse.movedWithin(250)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  },
+  { capture: true, passive: false },
+);
+
 // The two buttons every model has. On a Compact they are the left and right
 // buttons; larger models put these first and number the rest after them.
 spaceMouse.onButton((button) => {
