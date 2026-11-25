@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { NodeId, PlaneValue, Vec3 } from './core/types.js';
 import type { Motion } from './input/spacemouse.js';
-import { isStill } from './input/spacemouse.js';
+import { STILL, isStill, smoothMotion } from './input/spacemouse.js';
 import type { EdgeInfo, FaceInfo } from './geometry/kernel.js';
 import { planeYAxis } from './geometry/plane.js';
 import type { MeshKind, MeshPayload } from './worker/protocol.js';
@@ -228,6 +228,8 @@ export class Viewport {
   private framed = false;
   /** Where six-axis motion comes from, asked once a frame. */
   private motionSource: (() => Motion) | null = null;
+  /** What the controller said, eased over the last few frames. */
+  private motion: Motion = STILL;
   private lastFrame: number | null = null;
   /**
    * How much of the top of the canvas is covered by the toolbar, in pixels.
@@ -430,7 +432,12 @@ export class Viewport {
     this.renderer.setAnimationLoop((time) => {
       const seconds = this.lastFrame === null ? 0 : (time - this.lastFrame) / 1000;
       this.lastFrame = time;
-      if (this.motionSource !== null) this.applyMotion(this.motionSource(), seconds);
+      if (this.motionSource !== null) {
+        // Bounded as applyMotion bounds it, or a stalled tab would let the
+        // smoothing jump straight to the new value and defeat itself.
+        this.motion = smoothMotion(this.motion, this.motionSource(), Math.min(seconds, 0.1));
+        this.applyMotion(this.motion, seconds);
+      }
       this.controls.update();
       this.renderer.render(this.scene, this.camera);
     });
@@ -1662,6 +1669,7 @@ export class Viewport {
    */
   setMotionSource(source: (() => Motion) | null): void {
     this.motionSource = source;
+    this.motion = STILL;
   }
 
   /**

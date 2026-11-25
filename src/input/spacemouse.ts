@@ -146,18 +146,65 @@ export function toMotion(axes: RawAxes, settings: SpaceMouseSettings): Motion {
   const pan = (settings.invertPan ? -1 : 1) * settings.speed;
   const zoom = (settings.invertZoom ? -1 : 1) * settings.speed;
   const turn = (settings.invertRotate ? -1 : 1) * settings.speed;
+  const [push, tip] = separate(shapeAxis(axes.ty), shapeAxis(axes.rx));
+  const [slide, roll] = separate(shapeAxis(axes.tx), shapeAxis(axes.ry));
   return {
     pan: {
-      x: pan * shapeAxis(axes.tx),
-      y: zoom * -shapeAxis(axes.ty),
+      x: pan * slide,
+      y: zoom * -push,
       z: pan * -shapeAxis(axes.tz),
     },
     rotate: {
-      x: turn * shapeAxis(axes.rx),
-      y: turn * -shapeAxis(axes.ry),
+      x: turn * tip,
+      y: turn * -roll,
       z: turn * -shapeAxis(axes.rz),
     },
   };
+}
+
+/**
+ * Pulls apart two axes the cap's mechanics tie together.
+ *
+ * The cap pivots as well as slides, so pushing it forward tips it a little and
+ * tipping it pushes it a little. Taken at face value, every zoom wobbles the
+ * view as that incidental tip crosses in and out of the dead zone. The weaker
+ * of the pair is scaled by the square of how weak it is relative to the other:
+ * the stronger is untouched, an incidental third of it is cut to a ninth, and
+ * both at once, deliberately and equally, still pass.
+ */
+export function separate(a: number, b: number): [number, number] {
+  const strongest = Math.max(Math.abs(a), Math.abs(b));
+  if (strongest === 0) return [a, b];
+  const weight = (v: number): number => (Math.abs(v) / strongest) ** 2;
+  return [a * weight(a), b * weight(b)];
+}
+
+/**
+ * Below this, a smoothed component is taken to have arrived at rest. Without
+ * it the exponential approach never quite reaches zero and the view keeps
+ * creeping long after the cap is let go.
+ */
+const SETTLED = 0.002;
+
+/**
+ * Eases motion towards what the cap now says, over about `tau` seconds.
+ *
+ * Reports arrive on the device's schedule, not the screen's, and each carries
+ * a few counts of noise; used raw, the speed of the view jumps with every one.
+ * Exponential smoothing by elapsed time behaves the same at any frame rate.
+ */
+export function smoothMotion(previous: Motion, next: Motion, seconds: number, tau = 0.05): Motion {
+  const keep = Math.exp(-Math.max(seconds, 0) / tau);
+  const ease = (from: number, to: number): number => {
+    const value = to + (from - to) * keep;
+    return to === 0 && Math.abs(value) < SETTLED ? 0 : value;
+  };
+  const vec = (from: Vec3, to: Vec3): Vec3 => ({
+    x: ease(from.x, to.x),
+    y: ease(from.y, to.y),
+    z: ease(from.z, to.z),
+  });
+  return { pan: vec(previous.pan, next.pan), rotate: vec(previous.rotate, next.rotate) };
 }
 
 export function isStill(motion: Motion): boolean {
