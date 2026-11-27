@@ -157,36 +157,6 @@ export const tabs: readonly FeatureTab[] = [
         ],
       },
       {
-        // Ready-made profiles: a rectangle or a circle as a node of their own,
-        // sized by their ports rather than drawn. Drawing is in Create Sketch.
-        label: 'Profile',
-        features: [
-          {
-            id: 'rectangle',
-            label: 'Rectangle',
-            nodeType: 'sketch.rectangle',
-            operands: [sketchPlane],
-            numbers: [
-              { id: 'width', label: 'Width', value: 40 },
-              { id: 'height', label: 'Height', value: 25 },
-              { id: 'u', label: 'U', value: 0 },
-              { id: 'v', label: 'V', value: 0 },
-            ],
-          },
-          {
-            id: 'circle',
-            label: 'Circle',
-            nodeType: 'sketch.circle',
-            operands: [sketchPlane],
-            numbers: [
-              { id: 'radius', label: 'Radius', value: 8 },
-              { id: 'u', label: 'U', value: 0 },
-              { id: 'v', label: 'V', value: 0 },
-            ],
-          },
-        ],
-      },
-      {
         label: 'Modify',
         features: [
           {
@@ -247,9 +217,43 @@ export const tabs: readonly FeatureTab[] = [
   },
 ];
 
-export const features: readonly FeatureSpec[] = tabs.flatMap((tab) =>
-  tab.groups.flatMap((group) => group.features),
-);
+/**
+ * Ready-made profiles: a rectangle or a circle as a node of its own, sized by
+ * its ports rather than drawn. They have no button — drawing a rectangle or a
+ * circle is what a sketch is for, and two ways to make one on the Solid tab
+ * was one too many — but documents are made of them, the starter model among
+ * them, so their dialog is kept for reopening such a node to edit it.
+ */
+const profileSpecs: readonly FeatureSpec[] = [
+  {
+    id: 'rectangle',
+    label: 'Rectangle',
+    nodeType: 'sketch.rectangle',
+    operands: [sketchPlane],
+    numbers: [
+      { id: 'width', label: 'Width', value: 40 },
+      { id: 'height', label: 'Height', value: 25 },
+      { id: 'u', label: 'U', value: 0 },
+      { id: 'v', label: 'V', value: 0 },
+    ],
+  },
+  {
+    id: 'circle',
+    label: 'Circle',
+    nodeType: 'sketch.circle',
+    operands: [sketchPlane],
+    numbers: [
+      { id: 'radius', label: 'Radius', value: 8 },
+      { id: 'u', label: 'U', value: 0 },
+      { id: 'v', label: 'V', value: 0 },
+    ],
+  },
+];
+
+export const features: readonly FeatureSpec[] = [
+  ...tabs.flatMap((tab) => tab.groups.flatMap((group) => group.features)),
+  ...profileSpecs,
+];
 
 /**
  * The dialog a node of this type was built by, where there is one.
