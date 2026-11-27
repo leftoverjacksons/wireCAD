@@ -88,10 +88,13 @@ is ready, typically around two seconds.
   mark the sketch draws for that rule, so the icon also teaches what the bar,
   ∥, ⊥, =, diamond, ring and triangle mean when they turn up on a drawing.
 - **Toolbar** — the **Solid** tab's groups are *Create* (Create Sketch, Edit
-  Sketch, Extrude), *Profile* (parametric Rectangle and Circle nodes), *Modify*
-  (Fillet, Chamfer, Shell, Move), *Combine* (Cut, Union, Intersect) and
-  *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each button opens a dialog.
-  A sketch comes first because it is what an extrude is made from.
+  Sketch, Extrude), *Modify* (Fillet, Chamfer, Shell, Move), *Combine* (Cut,
+  Union, Intersect) and *Construct* (XY/XZ/YZ datum planes, Offset Plane). Each
+  button opens a dialog. A sketch comes first because it is what an extrude is
+  made from, and drawing a rectangle or a circle is done in one. The older
+  ready-made Rectangle and Circle profile nodes — the starter model is built
+  from two — have no button any more, but still reopen in their dialog from
+  their menu's *Edit*.
 - **The Sketch tab** — is only there while a sketch is. Starting or reopening
   one puts it at the front of the toolbar and opens it, holding everything for
   drawing: *Draw* (Select, Line, Rectangle, Circle, Point, Dimension),
